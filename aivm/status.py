@@ -1,3 +1,5 @@
+"""Probe and rendering logic for host/VM/network/firewall status reporting."""
+
 from __future__ import annotations
 
 import shlex
@@ -6,9 +8,9 @@ from pathlib import Path
 
 from .config import AgentVMConfig
 from .host import check_commands
-from .registry import load_registry, registry_path
 from .runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
-from .util import run_cmd
+from .store import load_store, store_path
+from .util import run_cmd, which
 from .vm import get_ip_cached, vm_share_mappings
 
 
@@ -32,6 +34,90 @@ def clip(text: str, *, max_lines: int = 60) -> str:
     keep: list[str] = list(lines[:max_lines])
     keep.append(f'... ({len(lines) - max_lines} more lines)')
     return '\n'.join(keep)
+
+
+def probe_runtime_environment() -> ProbeOutcome:
+    """Best-effort detection of whether we are on bare metal or in a VM."""
+    diag_lines: list[str] = []
+    if which('systemd-detect-virt'):
+        det = run_cmd(
+            ['systemd-detect-virt'], sudo=False, check=False, capture=True
+        )
+        raw = (det.stdout or det.stderr).strip()
+        if raw:
+            diag_lines.append(f'systemd-detect-virt: {raw} (code={det.code})')
+        kind = (det.stdout or '').strip().lower()
+        if kind and kind != 'none':
+            return ProbeOutcome(
+                True,
+                f'virtualized guest ({kind})',
+                '\n'.join(diag_lines),
+            )
+        if det.code == 0 and kind == 'none':
+            return ProbeOutcome(
+                True,
+                'host system (no virtualization detected)',
+                '\n'.join(diag_lines),
+            )
+    else:
+        diag_lines.append('systemd-detect-virt unavailable')
+
+    cpuinfo_path = Path('/proc/cpuinfo')
+    if cpuinfo_path.exists():
+        try:
+            cpuinfo = cpuinfo_path.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            cpuinfo = ''
+        if cpuinfo:
+            has_hypervisor_flag = False
+            for line in cpuinfo.splitlines():
+                low = line.strip().lower()
+                if low.startswith('flags') or low.startswith('features'):
+                    if 'hypervisor' in low.split():
+                        has_hypervisor_flag = True
+                        break
+            diag_lines.append(
+                f'cpuinfo_hypervisor_flag={"yes" if has_hypervisor_flag else "no"}'
+            )
+            if has_hypervisor_flag:
+                return ProbeOutcome(
+                    True,
+                    'virtualized guest (cpu hypervisor flag)',
+                    '\n'.join(diag_lines),
+                )
+
+    dmi_path = Path('/sys/class/dmi/id/product_name')
+    if dmi_path.exists():
+        try:
+            product_name = dmi_path.read_text(
+                encoding='utf-8', errors='ignore'
+            ).strip()
+        except Exception:
+            product_name = ''
+        if product_name:
+            diag_lines.append(f'dmi_product_name={product_name}')
+            lower = product_name.lower()
+            vm_signals = (
+                'kvm',
+                'qemu',
+                'vmware',
+                'virtualbox',
+                'bochs',
+                'xen',
+                'hyper-v',
+            )
+            if any(sig in lower for sig in vm_signals):
+                return ProbeOutcome(
+                    True,
+                    f'virtualized guest ({product_name})',
+                    '\n'.join(diag_lines),
+                )
+
+    return ProbeOutcome(
+        None,
+        'unable to determine host vs guest',
+        '\n'.join(diag_lines),
+    )
 
 
 def probe_network(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
@@ -215,6 +301,9 @@ def render_status(
         host_detail += f' (optional missing: {", ".join(missing_opt)})'
     lines.append(status_line(host_ok, 'Host dependencies', host_detail))
 
+    env = probe_runtime_environment()
+    lines.append(status_line(env.ok, 'Runtime environment', env.detail))
+
     net = probe_network(cfg, use_sudo=use_sudo)
     if net.ok is not None:
         total += 1
@@ -327,6 +416,12 @@ def render_status(
         lines.append(
             f'- optional missing: {", ".join(missing_opt) if missing_opt else "(none)"}'
         )
+        lines.append(f'- runtime environment: {env.detail}')
+        if env.diag:
+            lines.append('- runtime diagnostics:')
+            lines.append('```text')
+            lines.append(clip(env.diag))
+            lines.append('```')
         lines.append('')
 
         net_info = run_cmd(
@@ -459,7 +554,7 @@ def render_status(
         if (not img_ok) and (vm_out.ok is not True):
             next_steps.append(f'aivm host image_fetch --config {cfg_arg}')
         if not vm_out.ok:
-            next_steps.append(f'aivm vm up --config {cfg_arg}')
+            next_steps.append(f'aivm vm create --config {cfg_arg}')
         if vm_out.ok and not ip:
             next_steps.append(f'aivm vm wait_ip --config {cfg_arg}')
         if vm_out.ok and ip and not ssh.ok:
@@ -486,10 +581,12 @@ def render_global_status() -> str:
     if missing_opt:
         host_detail += f' (optional missing: {", ".join(missing_opt)})'
     lines.append(status_line(host_ok, 'Host dependencies', host_detail))
+    env = probe_runtime_environment()
+    lines.append(status_line(env.ok, 'Runtime environment', env.detail))
 
-    reg_path = registry_path()
-    reg = load_registry(reg_path)
-    lines.append(status_line(True, 'Registry', str(reg_path)))
+    reg_path = store_path()
+    reg = load_store(reg_path)
+    lines.append(status_line(True, 'Config store', str(reg_path)))
     lines.append('')
     lines.append('📦 Managed Resources')
     lines.append(f'- VMs: {len(reg.vms)}')
@@ -502,6 +599,7 @@ def render_global_status() -> str:
     lines.append('')
     lines.append('ℹ️ No in-scope VM config found for this directory.')
     lines.append(
-        'Use `aivm config init --config .aivm.toml` or `aivm status --vm <name>`.'
+        'Use `aivm config init`, then `aivm vm create`, or run '
+        '`aivm status --vm <name>`.'
     )
     return '\n'.join(lines)

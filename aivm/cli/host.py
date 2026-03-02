@@ -1,3 +1,5 @@
+"""CLI commands for host setup, dependency checks, and host operations."""
+
 from __future__ import annotations
 
 import sys

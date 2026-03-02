@@ -1,3 +1,5 @@
+"""Shared utility helpers for subprocess execution, paths, and command formatting."""
+
 from __future__ import annotations
 
 import os
@@ -43,11 +45,21 @@ def run_cmd(
     env: Optional[dict[str, str]] = None,
 ) -> CmdResult:
     original_cmd = cmd
+    log.opt(depth=1).trace(
+        'run_cmd entry sudo={} check={} capture={} text={} cmd={}',
+        sudo,
+        check,
+        capture,
+        text,
+        shell_join(cmd),
+    )
     if sudo and os.geteuid() != 0:
         # Non-interactive sudo: fail fast if password/TTY is required.
         cmd = ['sudo', '-n', *cmd]
-        log.debug('Running with sudo: {}', shell_join(original_cmd))
-    log.debug('RUN: {}', shell_join(cmd))
+        log.opt(depth=1).debug(
+            'Running with sudo: {}', shell_join(original_cmd)
+        )
+    log.opt(depth=1).debug('RUN: {}', shell_join(cmd))
     p = subprocess.run(
         cmd,
         input=input_text if input_text is not None else None,
@@ -56,8 +68,15 @@ def run_cmd(
         env=env,
     )
     res = CmdResult(p.returncode, p.stdout or '', p.stderr or '')
+    log.opt(depth=1).trace(
+        'run_cmd result code={} stdout_len={} stderr_len={} cmd={}',
+        res.code,
+        len(res.stdout),
+        len(res.stderr),
+        shell_join(cmd),
+    )
     if check and p.returncode != 0:
-        log.error(
+        log.opt(depth=1).error(
             'Command failed code={} cmd={} stderr={} stdout={}',
             p.returncode,
             shell_join(cmd),
@@ -66,7 +85,7 @@ def run_cmd(
         )
         raise CmdError(cmd, res)
     if p.returncode == 0:
-        log.debug('Command ok code=0 cmd={}', shell_join(cmd))
+        log.opt(depth=1).debug('Command ok code=0 cmd={}', shell_join(cmd))
     return res
 
 

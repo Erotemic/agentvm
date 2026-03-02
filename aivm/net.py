@@ -1,3 +1,5 @@
+"""Libvirt network create/destroy/status helpers for the managed NAT network."""
+
 from __future__ import annotations
 
 import ipaddress

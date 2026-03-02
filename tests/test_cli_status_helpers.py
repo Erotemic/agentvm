@@ -1,6 +1,14 @@
+"""Tests for test cli status helpers."""
+
 from __future__ import annotations
 
-from aivm.cli.vm import _check_firewall, _check_network, _check_vm_state
+from aivm.cli.vm import (
+    _check_firewall,
+    _check_network,
+    _check_vm_state,
+    _parse_dominfo_hardware,
+    _vm_hardware_drift,
+)
 from aivm.config import AgentVMConfig
 from aivm.util import CmdResult
 
@@ -76,3 +84,25 @@ def test_check_vm_state_branches(monkeypatch) -> None:
     assert defined is True
     assert 'state=running' in detail
     assert len(calls) == 2
+
+
+def test_parse_dominfo_hardware() -> None:
+    text = 'CPU(s):         2\nMax memory:     2097152 KiB\n'
+    cpus, mem = _parse_dominfo_hardware(text)
+    assert cpus == 2
+    assert mem == 2048
+
+
+def test_vm_hardware_drift(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.cpus = 4
+    cfg.vm.ram_mb = 8192
+    monkeypatch.setattr(
+        'aivm.cli.vm.run_cmd',
+        lambda *a, **k: CmdResult(
+            0, 'CPU(s): 2\nMax memory: 4194304 KiB\n', ''
+        ),
+    )
+    drift = _vm_hardware_drift(cfg)
+    assert drift['cpus'] == (2, 4)
+    assert drift['ram_mb'] == (4096, 8192)

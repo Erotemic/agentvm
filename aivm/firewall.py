@@ -1,3 +1,5 @@
+"""Nftables rule generation and lifecycle helpers for VM network isolation."""
+
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -9,6 +11,25 @@ from .runtime import virsh_system_cmd
 from .util import run_cmd
 
 log = logger
+
+
+def _normalize_port_list(ports: list[int]) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for raw in ports or []:
+        try:
+            p = int(raw)
+        except Exception as ex:
+            raise RuntimeError(f'Invalid firewall port value: {raw!r}') from ex
+        if p < 1 or p > 65535:
+            raise RuntimeError(
+                f'Invalid firewall port {p}; expected range 1..65535.'
+            )
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
 
 
 def _effective_bridge_and_gateway(cfg: AgentVMConfig) -> tuple[str, str]:
@@ -67,20 +88,49 @@ def _nft_script(cfg: AgentVMConfig) -> str:
         seen.add(b)
         blocks2.append(b)
     block_set = ', '.join(blocks2)
+    allow_tcp = _normalize_port_list(cfg.firewall.allow_tcp_ports)
+    allow_udp = _normalize_port_list(cfg.firewall.allow_udp_ports)
+    host_allow_lines: list[str] = []
+    blocked_allow_lines: list[str] = []
+    if allow_tcp:
+        ports = ', '.join(str(p) for p in allow_tcp)
+        host_allow_lines.append(
+            f'    iifname "{br}" tcp dport {{{ports}}} accept'
+        )
+        blocked_allow_lines.append(
+            f'    iifname "{br}" ip daddr {{{block_set}}} tcp dport {{{ports}}} accept'
+        )
+    if allow_udp:
+        ports = ', '.join(str(p) for p in allow_udp)
+        host_allow_lines.append(
+            f'    iifname "{br}" udp dport {{{ports}}} accept'
+        )
+        blocked_allow_lines.append(
+            f'    iifname "{br}" ip daddr {{{block_set}}} udp dport {{{ports}}} accept'
+        )
+    host_allow = '\n'.join(host_allow_lines)
+    blocked_allow = '\n'.join(blocked_allow_lines)
+    if host_allow:
+        host_allow = host_allow + '\n'
+    if blocked_allow:
+        blocked_allow = blocked_allow + '\n'
     return f"""
 table inet {table} {{
   chain input {{
     type filter hook input priority 0; policy accept;
     ct state established,related accept
-    iifname "{br}" ip daddr {gw} udp dport {{67,68}} accept
+    # DHCP client traffic may be broadcast (255.255.255.255), not just gateway-directed.
+    iifname "{br}" udp dport {{67,68}} accept
     iifname "{br}" ip daddr {gw} udp dport 53 accept
     iifname "{br}" ip daddr {gw} tcp dport 53 accept
     iifname "{br}" ip daddr {gw} icmp type echo-request accept
+{host_allow}    # All other VM->host traffic on bridge is denied by default.
     iifname "{br}" drop
   }}
   chain forward {{
     type filter hook forward priority 0; policy accept;
     ct state established,related accept
+{blocked_allow}    # Default blocklist for VM->LAN/private ranges.
     iifname "{br}" ip daddr {{{block_set}}} drop
     iifname "{br}" accept
   }}

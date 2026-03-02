@@ -1,3 +1,5 @@
+"""VM operation exports for lifecycle, share, and sync helpers."""
+
 from __future__ import annotations
 
 from .lifecycle import (
@@ -23,6 +25,7 @@ from .share import (
     attach_vm_share,
     ensure_share_mounted,
     vm_has_share,
+    vm_has_virtiofs_shared_memory,
     vm_share_mappings,
 )
 from .sync import sync_settings
@@ -46,6 +49,7 @@ __all__ = [
     'sync_settings',
     'vm_exists',
     'vm_has_share',
+    'vm_has_virtiofs_shared_memory',
     'vm_share_mappings',
     'vm_status',
     'wait_for_ip',

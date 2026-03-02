@@ -1,8 +1,11 @@
+"""Configuration data model and TOML serialization helpers for VM settings."""
+
 from __future__ import annotations
 
-import tomllib
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+import tomllib
 
 from .util import expand
 
@@ -37,6 +40,8 @@ class FirewallConfig:
         ]
     )
     extra_block_cidrs: list[str] = field(default_factory=list)
+    allow_tcp_ports: list[int] = field(default_factory=list)
+    allow_udp_ports: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -55,15 +60,6 @@ class VMConfig:
     disk_gb: int = 40
     allow_password_login: bool = False
     password: str = 'agent'
-
-
-@dataclass
-class ShareConfig:
-    enabled: bool = False
-    host_src: str = ''
-    guest_dst: str = '/mnt/hostcode'
-    mount_opts: str = 'nodev,nosuid,noexec'
-    tag: str = 'hostcode'
 
 
 @dataclass
@@ -115,7 +111,6 @@ class AgentVMConfig:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     firewall: FirewallConfig = field(default_factory=FirewallConfig)
     image: ImageConfig = field(default_factory=ImageConfig)
-    share: ShareConfig = field(default_factory=ShareConfig)
     provision: ProvisionConfig = field(default_factory=ProvisionConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
@@ -133,9 +128,6 @@ class AgentVMConfig:
             expand(self.paths.ssh_pubkey_path)
             if self.paths.ssh_pubkey_path
             else ''
-        )
-        self.share.host_src = (
-            expand(self.share.host_src) if self.share.host_src else ''
         )
         self.sync.paths = [expand(p) for p in self.sync.paths]
         return self
@@ -179,7 +171,6 @@ def load(path: Path) -> AgentVMConfig:
         'network',
         'firewall',
         'image',
-        'share',
         'provision',
         'sync',
         'paths',

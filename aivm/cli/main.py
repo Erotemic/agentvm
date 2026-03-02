@@ -1,33 +1,37 @@
+"""Top-level modal CLI wiring, argv normalization, and logging setup."""
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 import scriptconfig as scfg
-from loguru import logger
 
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
 from ..net import ensure_network
-from ..registry import load_registry, registry_path
 from ..status import (
     clip as _clip_text,
+)
+from ..status import (
     render_global_status,
     render_status,
     status_line,
 )
+from ..store import load_store
 from ..vm import (
     create_or_start_vm,
     fetch_image,
     provision,
-    ssh_config as mk_ssh_config,
     wait_for_ip,
+)
+from ..vm import (
+    ssh_config as mk_ssh_config,
 )
 from ._common import (
     _BaseCommand,
     _cfg_path,
     _confirm_sudo_block,
-    _load_cfg,
     _load_cfg_with_path,
     _record_vm,
     _resolve_cfg_for_code,
@@ -36,7 +40,7 @@ from ._common import (
 from .config import ConfigModalCLI
 from .help import HelpModalCLI
 from .host import HostModalCLI
-from .vm import AttachCLI, CodeCLI, SSHCLI, VMModalCLI
+from .vm import SSHCLI, AttachCLI, CodeCLI, VMModalCLI
 
 
 class ApplyCLI(_BaseCommand):
@@ -114,42 +118,41 @@ class ListCLI(_BaseCommand):
                 f'--section must be one of: {", ".join(sorted(allowed))}'
             )
 
-        reg_path = registry_path()
-        reg = load_registry(reg_path)
+        reg_path = _cfg_path(args.config)
+        reg = load_store(reg_path)
 
         if want in {'all', 'vms'}:
             print('Managed VMs')
             if not reg.vms:
                 print('  (none)')
             else:
+                by_net = {n.name: n for n in reg.networks}
                 for vm in sorted(reg.vms, key=lambda x: x.name):
-                    cfg_ok = Path(vm.config_path).expanduser().exists()
-                    cfg_state = 'ok' if cfg_ok else 'missing'
+                    strict = (
+                        bool(by_net[vm.network_name].firewall.enabled)
+                        if vm.network_name in by_net
+                        else False
+                    )
                     print(
                         f'  - {vm.name} | network={vm.network_name} '
-                        f'| strict_firewall={"yes" if vm.strict_firewall else "no"} '
-                        f'| config={vm.config_path} ({cfg_state})'
+                        f'| strict_firewall={"yes" if strict else "no"} '
+                        f'| store={reg_path}'
                     )
 
         if want in {'all', 'networks'}:
             if want == 'all':
                 print('')
             print('Managed Networks')
-            by_name: dict[str, bool] = {}
-            for vm in reg.vms:
-                strict = bool(vm.strict_firewall)
-                if vm.network_name not in by_name:
-                    by_name[vm.network_name] = strict
-                else:
-                    by_name[vm.network_name] = (
-                        by_name[vm.network_name] or strict
-                    )
-            if not by_name:
+            if not reg.networks:
                 print('  (none)')
             else:
-                for name in sorted(by_name):
+                usage: dict[str, int] = {n.name: 0 for n in reg.networks}
+                for vm in reg.vms:
+                    usage[vm.network_name] = usage.get(vm.network_name, 0) + 1
+                for net in sorted(reg.networks, key=lambda n: n.name):
                     print(
-                        f'  - {name} | strict_firewall={"yes" if by_name[name] else "no"}'
+                        f'  - {net.name} | strict_firewall={"yes" if net.firewall.enabled else "no"} '
+                        f'| vm_count={usage.get(net.name, 0)}'
                     )
 
         if want in {'all', 'folders'}:
@@ -167,7 +170,7 @@ class ListCLI(_BaseCommand):
                         f'| mode={att.mode} | guest_dst={att.guest_dst or "(default)"}'
                     )
         print('')
-        print(f'Registry: {reg_path}')
+        print(f'Config store: {reg_path}')
         return 0
 
 
@@ -181,7 +184,7 @@ class StatusCLI(_BaseCommand):
     )
     vm = scfg.Value(
         '',
-        help='Optional VM name override (mainly when no local config file is present).',
+        help='Optional VM name override.',
     )
     detail = scfg.Value(
         False,
@@ -207,7 +210,7 @@ class StatusCLI(_BaseCommand):
             cfg = None
             path = None
         if cfg is None or path is None:
-            print(_render_global_status())
+            print(render_global_status())
             return 0
         if args.sudo:
             _confirm_sudo_block(
@@ -215,9 +218,7 @@ class StatusCLI(_BaseCommand):
                 purpose=f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'.",
             )
         print(
-            _render_status(
-                cfg, path, detail=args.detail, use_sudo=bool(args.sudo)
-            )
+            render_status(cfg, path, detail=args.detail, use_sudo=bool(args.sudo))
         )
         return 0
 
@@ -238,37 +239,15 @@ class AgentVMModalCLI(scfg.ModalCLI):
 
 
 def main(argv: list[str] | None = None) -> None:
-    verbosity = 1
-    config_value = None
     if argv is None:
         argv = sys.argv[1:]
-    argv = _normalize_argv(argv)
-    if '--config' in argv:
-        try:
-            config_value = argv[argv.index('--config') + 1]
-        except IndexError:
-            pass
-    elif '-c' in argv:
-        try:
-            config_value = argv[argv.index('-c') + 1]
-        except IndexError:
-            pass
-    try:
-        if config_value is not None:
-            verbosity = _load_cfg(config_value).verbosity
-        elif _cfg_path(None).exists():
-            verbosity = _load_cfg(None).verbosity
-    except Exception:
-        verbosity = 1
-
-    explicit_verbose = _count_verbose(argv)
-    _setup_logging(explicit_verbose, verbosity)
 
     try:
         rc = AgentVMModalCLI.main(argv=argv, _noexit=True)
     except Exception as ex:
         print(f'ERROR: {ex}', file=sys.stderr)
         log.error('Unhandled aivm error: {}', ex)
+        raise
         sys.exit(2)
 
     if any(flag in argv for flag in ('-h', '--help')):
@@ -276,90 +255,3 @@ def main(argv: list[str] | None = None) -> None:
     if isinstance(rc, int):
         sys.exit(rc)
     sys.exit(0)
-
-
-def _status_line(ok: bool | None, label: str, detail: str = '') -> str:
-    return status_line(ok, label, detail)
-
-
-def _clip(text: str, *, max_lines: int = 60) -> str:
-    return _clip_text(text, max_lines=max_lines)
-
-
-def _render_status(
-    cfg: AgentVMConfig,
-    path: Path,
-    *,
-    detail: bool = False,
-    use_sudo: bool = False,
-) -> str:
-    return render_status(cfg, path, detail=detail, use_sudo=use_sudo)
-
-
-def _render_global_status() -> str:
-    return render_global_status()
-
-
-def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
-    logger.remove()
-    effective_verbosity = args_verbose if args_verbose > 0 else cfg_verbosity
-    level = 'WARNING'
-    if effective_verbosity == 1:
-        level = 'INFO'
-    elif effective_verbosity >= 2:
-        level = 'DEBUG'
-    logger.add(
-        sys.stderr,
-        level=level,
-        colorize=False,
-        format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}',
-    )
-    log.debug(
-        'Logging configured at {} (effective_verbosity={})',
-        level,
-        effective_verbosity,
-    )
-
-
-def _normalize_argv(argv: list[str]) -> list[str]:
-    """Normalize accepted hyphenated spellings to scriptconfig command names."""
-    if len(argv) >= 1 and argv[0] == 'init':
-        return ['config', 'init', *argv[1:]]
-    if len(argv) >= 1 and argv[0] == 'attach':
-        if len(argv) >= 2 and not argv[1].startswith('-'):
-            return ['attach', '--host_src', argv[1], *argv[2:]]
-        return argv
-    if len(argv) >= 1 and argv[0] == 'code':
-        if len(argv) >= 2 and not argv[1].startswith('-'):
-            return ['code', '--host_src', argv[1], *argv[2:]]
-        return argv
-    if len(argv) >= 1 and argv[0] == 'ssh':
-        if len(argv) >= 2 and not argv[1].startswith('-'):
-            return ['ssh', '--host_src', argv[1], *argv[2:]]
-        return argv
-    if len(argv) >= 1 and argv[0] == 'ls':
-        return ['list', *argv[1:]]
-    if len(argv) >= 2 and argv[0] == 'vm':
-        if argv[1] == 'wait-ip':
-            return [argv[0], 'wait_ip', *argv[2:]]
-        if argv[1] == 'ssh-config':
-            return [argv[0], 'ssh_config', *argv[2:]]
-        if argv[1] == 'ssh' and len(argv) >= 3 and not argv[2].startswith('-'):
-            return [argv[0], 'ssh', '--host_src', argv[2], *argv[3:]]
-        if argv[1] == 'sync-settings':
-            return [argv[0], 'sync_settings', *argv[2:]]
-        if argv[1] == 'code' and len(argv) >= 3 and not argv[2].startswith('-'):
-            return [argv[0], 'code', '--host_src', argv[2], *argv[3:]]
-    return argv
-
-
-def _count_verbose(argv: list[str]) -> int:
-    count = 0
-    for item in argv:
-        if item == '--verbose':
-            count += 1
-        elif item.startswith('-') and not item.startswith('--'):
-            short = item[1:]
-            if short and set(short) <= {'v'}:
-                count += len(short)
-    return count

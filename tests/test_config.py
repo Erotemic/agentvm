@@ -1,3 +1,5 @@
+"""Tests for test config."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,7 +10,7 @@ from aivm.config import AgentVMConfig, dump_toml, load, save
 def test_dump_load_roundtrip(tmp_path: Path) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'my "vm"'
-    cfg.share.host_src = '~/code/${USER}/proj'
+    cfg.paths.state_dir = '~/code/${USER}/state'
     cfg.sync.paths = ['~/.gitconfig', '/tmp/"quoted".txt']
     cfg.verbosity = 3
     fpath = tmp_path / '.aivm.toml'
@@ -16,7 +18,7 @@ def test_dump_load_roundtrip(tmp_path: Path) -> None:
 
     cfg2 = load(fpath)
     assert cfg2.vm.name == cfg.vm.name
-    assert cfg2.share.host_src == cfg.share.host_src
+    assert cfg2.paths.state_dir == cfg.paths.state_dir
     assert cfg2.sync.paths == cfg.sync.paths
     assert cfg2.verbosity == 3
 
@@ -31,7 +33,7 @@ def test_expanded_paths_expands_env(monkeypatch) -> None:
     monkeypatch.setenv('AIVM_TEST_DIR', '/tmp/aivm-x')
     cfg = AgentVMConfig()
     cfg.paths.state_dir = '$AIVM_TEST_DIR/state'
-    cfg.share.host_src = '$AIVM_TEST_DIR/src'
+    cfg.paths.ssh_identity_file = '$AIVM_TEST_DIR/id_ed25519'
     out = cfg.expanded_paths()
     assert out.paths.state_dir == '/tmp/aivm-x/state'
-    assert out.share.host_src == '/tmp/aivm-x/src'
+    assert out.paths.ssh_identity_file == '/tmp/aivm-x/id_ed25519'

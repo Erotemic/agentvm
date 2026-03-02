@@ -1,3 +1,5 @@
+"""CLI commands for applying, inspecting, and removing firewall rules."""
+
 from __future__ import annotations
 
 import scriptconfig as scfg

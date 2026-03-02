@@ -1,71 +1,44 @@
+"""Shared CLI resolution, sudo confirmation, and config-store helpers."""
+
 from __future__ import annotations
 
-import sys
-import textwrap
-import re
 import os
-import shlex
-import xml.etree.ElementTree as ET
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import scriptconfig as scfg
 from loguru import logger
 
-from ..config import AgentVMConfig, dump_toml, load, save
-from ..detect import auto_defaults, detect_ssh_identity
-from ..firewall import apply_firewall, firewall_status, remove_firewall
-from ..host import check_commands, host_is_debian_like, install_deps_debian
-from ..net import destroy_network, ensure_network, network_status
-from ..registry import (
-    DIR_METADATA_FILE,
+from ..config import AgentVMConfig
+from ..detect import detect_ssh_identity
+from ..store import (
     find_attachment,
     find_vm,
-    load_registry,
-    read_dir_metadata,
-    registry_path,
-    save_registry,
-    upsert_vm,
-    vm_global_config_path,
+    load_store,
+    materialize_vm_cfg,
+    save_store,
+    store_path,
+    upsert_network,
+    upsert_vm_with_network,
 )
-from ..runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
-from ..status import (
-    clip as _clip_text,
-    probe_firewall,
-    probe_network,
-    probe_provisioned,
-    probe_ssh_ready,
-    probe_vm_state,
-    render_global_status,
-    render_status,
-    status_line,
-)
-from ..util import ensure_dir, run_cmd, which
-from ..vm import (
-    create_or_start_vm,
-    destroy_vm,
-    ensure_share_mounted,
-    fetch_image,
-    get_ip_cached,
-    provision,
-    sync_settings,
-    attach_vm_share,
-    ssh_config as mk_ssh_config,
-    vm_has_share,
-    vm_share_mappings,
-    vm_exists,
-    vm_status,
-    wait_for_ip,
-    wait_for_ssh,
-)
+from ..util import run_cmd
 
 log = logger
+
+_SUDO_VALIDATED = False
+_LAST_LOGGING_STATE: tuple[str, bool] | None = None
 
 
 class _BaseCommand(scfg.DataConfig):
     """Base options shared by all commands."""
 
-    config = scfg.Value(None, help='Path to config TOML (default: .aivm.toml).')
+    __special_options__ = False
+
+    config = scfg.Value(
+        None,
+        help='Path to global aivm config store (default: ~/.config/aivm/config.toml).',
+    )
     verbose = scfg.Value(
         0,
         short_alias=['v'],
@@ -75,41 +48,78 @@ class _BaseCommand(scfg.DataConfig):
     yes = scfg.Value(
         False,
         isflag=True,
-        help='Auto-approve privileged host operations (sudo).',
+        help='Auto-approve interactive confirmations.',
     )
+
+    @classmethod
+    def cli(cls, *args, **kwargs):  # type: ignore[override]
+        parsed = super().cli(*args, **kwargs)
+        cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
+        args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
+        _setup_logging(args_verbose, cfg_verbosity)
+        log.trace(
+            'Parsed command {} with config={} verbose={} yes={}',
+            cls.__name__,
+            getattr(parsed, 'config', None),
+            args_verbose,
+            bool(getattr(parsed, 'yes', False)),
+        )
+        return parsed
 
 
 def _cfg_path(p: str | None) -> Path:
-    return Path(p or '.aivm.toml').resolve()
+    return Path(p).expanduser().resolve() if p else store_path().resolve()
 
 
-def _load_cfg(config_path: str | None) -> AgentVMConfig:
-    cfg, _ = _load_cfg_with_path(config_path)
-    return cfg
+def _resolve_cfg_verbosity(config_opt: str | None) -> int:
+    cfg_verbosity = 1
+    try:
+        path = _cfg_path(config_opt)
+        if path.exists():
+            reg = load_store(path)
+            if reg.active_vm:
+                rec = find_vm(reg, reg.active_vm)
+                if rec is not None:
+                    cfg_verbosity = int(rec.cfg.verbosity)
+            elif reg.defaults is not None:
+                cfg_verbosity = int(reg.defaults.verbosity)
+    except Exception:
+        cfg_verbosity = 1
+    return cfg_verbosity
+
+
+def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
+    global _LAST_LOGGING_STATE
+    effective_verbosity = args_verbose if args_verbose > 0 else cfg_verbosity
+    level = 'WARNING'
+    if effective_verbosity == 1:
+        level = 'INFO'
+    elif effective_verbosity == 2:
+        level = 'DEBUG'
+    elif effective_verbosity >= 3:
+        level = 'TRACE'
+    colorize = sys.stderr.isatty() and os.getenv('NO_COLOR') is None
+    state = (level, colorize)
+    if _LAST_LOGGING_STATE == state:
+        return
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level=level,
+        colorize=colorize,
+        format='<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>',
+    )
+    _LAST_LOGGING_STATE = state
+    log.debug(
+        'Logging configured at {} (effective_verbosity={}, colorize={})',
+        level,
+        effective_verbosity,
+        colorize,
+    )
 
 
 def _hydrate_runtime_defaults(cfg: AgentVMConfig) -> bool:
-    """Fill missing runtime-critical defaults on legacy/stale configs."""
     changed = False
-    # First prefer previously known good VM-global config values.
-    if not cfg.paths.ssh_identity_file or not cfg.paths.ssh_pubkey_path:
-        gpath = vm_global_config_path(cfg.vm.name)
-        if gpath.exists():
-            try:
-                gcfg = load(gpath).expanded_paths()
-            except Exception:
-                gcfg = None
-            if gcfg is not None:
-                if (
-                    not cfg.paths.ssh_identity_file
-                    and gcfg.paths.ssh_identity_file
-                ):
-                    cfg.paths.ssh_identity_file = gcfg.paths.ssh_identity_file
-                    changed = True
-                if not cfg.paths.ssh_pubkey_path and gcfg.paths.ssh_pubkey_path:
-                    cfg.paths.ssh_pubkey_path = gcfg.paths.ssh_pubkey_path
-                    changed = True
-
     ident, pub = detect_ssh_identity()
     if not cfg.paths.ssh_identity_file and ident:
         cfg.paths.ssh_identity_file = ident
@@ -127,52 +137,10 @@ def _hydrate_runtime_defaults(cfg: AgentVMConfig) -> bool:
     return changed
 
 
-def _load_cfg_with_path(
-    config_path: str | None,
-    *,
-    hydrate_runtime_defaults: bool = True,
-    persist_runtime_defaults: bool = False,
-) -> tuple[AgentVMConfig, Path]:
-    path = _cfg_path(config_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f'Config not found: {path}. '
-            f'Run: aivm config init --config {path} '
-            'or use global selection commands like `aivm code .` / `aivm list`.'
-        )
-    cfg = load(path).expanded_paths()
-    changed = False
-    if hydrate_runtime_defaults:
-        changed = _hydrate_runtime_defaults(cfg)
-    if changed and persist_runtime_defaults:
-        save(path, cfg)
-    return cfg, path
-
-
-def _resolve_cfg_fallback(
-    config_opt: str | None, *, vm_opt: str = ''
-) -> tuple[AgentVMConfig, Path]:
-    """Resolve config from explicit/local path, else directory metadata/global registry."""
-    if config_opt is not None or _cfg_path(None).exists():
-        return _load_cfg_with_path(config_opt)
-    return _resolve_cfg_for_code(
-        config_opt=None, vm_opt=vm_opt, host_src=Path.cwd()
-    )
-
-
-def _record_vm(cfg: AgentVMConfig, cfg_path: Path) -> Path:
-    gpath = vm_global_config_path(cfg.vm.name)
-    ensure_dir(gpath.parent)
-    save(gpath, cfg)
-    reg = load_registry()
-    upsert_vm(reg, cfg, cfg_path, global_cfg_path=gpath)
-    return save_registry(reg)
-
-
 def _choose_vm_interactive(options: list[str], *, reason: str) -> str:
     if not sys.stdin.isatty():
         raise RuntimeError(
-            f'VM selection is ambiguous ({reason}). Re-run with --vm or --config.'
+            f'VM selection is ambiguous ({reason}). Re-run with --vm.'
         )
     print(f'Multiple VMs match ({reason}). Select one:')
     for idx, item in enumerate(options, start=1):
@@ -188,8 +156,129 @@ def _choose_vm_interactive(options: list[str], *, reason: str) -> str:
         print(f'Please enter a number between 1 and {len(options)}.')
 
 
+def _resolve_vm_name(
+    *,
+    config_opt: str | None,
+    vm_opt: str,
+    host_src: Path | None,
+) -> tuple[str, Path]:
+    log.trace(
+        'Resolving VM name config_opt={} vm_opt={} host_src={}',
+        config_opt,
+        vm_opt,
+        host_src,
+    )
+    store_path = _cfg_path(config_opt)
+    reg = load_store(store_path)
+
+    if vm_opt:
+        if find_vm(reg, vm_opt) is None:
+            raise RuntimeError(f'VM not found in config store: {vm_opt}')
+        return vm_opt, store_path
+
+    if host_src is not None:
+        att = find_attachment(reg, host_src)
+        if att is not None:
+            return att.vm_name, store_path
+
+    if reg.active_vm and find_vm(reg, reg.active_vm) is not None:
+        return reg.active_vm, store_path
+
+    if len(reg.vms) == 1:
+        return reg.vms[0].name, store_path
+
+    if len(reg.vms) > 1:
+        chosen = _choose_vm_interactive(
+            [r.name for r in sorted(reg.vms, key=lambda x: x.name)],
+            reason=f'{len(reg.vms)} configured VMs',
+        )
+        return chosen, store_path
+
+    raise RuntimeError(
+        f'No VM definitions found in config store: {store_path}. '
+        'Run `aivm config init` then `aivm vm create` first.'
+    )
+
+
+def _load_cfg_with_path(
+    config_path: str | None,
+    *,
+    vm_opt: str = '',
+    host_src: Path | None = None,
+    hydrate_runtime_defaults: bool = True,
+    persist_runtime_defaults: bool = True,
+) -> tuple[AgentVMConfig, Path]:
+    log.trace(
+        'Loading cfg with path config_path={} vm_opt={} host_src={}',
+        config_path,
+        vm_opt,
+        host_src,
+    )
+    vm_name, store_path = _resolve_vm_name(
+        config_opt=config_path,
+        vm_opt=vm_opt,
+        host_src=host_src,
+    )
+    reg = load_store(store_path)
+    rec = find_vm(reg, vm_name)
+    if rec is None:
+        raise RuntimeError(f'VM not found in config store: {vm_name}')
+    cfg = materialize_vm_cfg(reg, vm_name)
+    changed = (
+        _hydrate_runtime_defaults(cfg) if hydrate_runtime_defaults else False
+    )
+    if changed and persist_runtime_defaults:
+        upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
+        upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
+        save_store(reg, store_path)
+    return cfg, store_path
+
+
+def _load_cfg(config_path: str | None, *, vm_opt: str = '') -> AgentVMConfig:
+    cfg, _ = _load_cfg_with_path(
+        config_path,
+        vm_opt=vm_opt,
+        host_src=Path.cwd(),
+    )
+    return cfg
+
+
+def _resolve_cfg_fallback(
+    config_opt: str | None, *, vm_opt: str = ''
+) -> tuple[AgentVMConfig, Path]:
+    return _load_cfg_with_path(
+        config_opt,
+        vm_opt=vm_opt,
+        host_src=Path.cwd(),
+    )
+
+
+def _record_vm(cfg: AgentVMConfig, store_file: Path | None = None) -> Path:
+    target = store_file or store_path()
+    reg = load_store(target)
+    upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
+    upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
+    return save_store(reg, target)
+
+
+def _has_passwordless_sudo() -> bool:
+    res = run_cmd(['sudo', '-n', 'true'], sudo=False, check=False, capture=True)
+    return res.code == 0
+
+
 def _confirm_sudo_block(*, yes: bool, purpose: str) -> None:
-    if yes or os.geteuid() == 0:
+    global _SUDO_VALIDATED
+    log.trace(
+        'Confirm sudo block yes={} purpose={!r} sudo_validated={}',
+        yes,
+        purpose,
+        _SUDO_VALIDATED,
+    )
+    if os.geteuid() == 0:
+        return
+    if not _SUDO_VALIDATED and _has_passwordless_sudo():
+        _SUDO_VALIDATED = True
+    if yes:
         return
     if not sys.stdin.isatty():
         raise RuntimeError(
@@ -197,6 +286,27 @@ def _confirm_sudo_block(*, yes: bool, purpose: str) -> None:
             'Re-run with --yes.'
         )
     print('About to run privileged host operations via sudo:')
+    print(f'  {purpose}')
+    ans = input('Continue? [y/N]: ').strip().lower()
+    if ans not in {'y', 'yes'}:
+        raise RuntimeError('Aborted by user.')
+    if not _SUDO_VALIDATED:
+        run_cmd(['sudo', '-v'], sudo=False, check=True, capture=False)
+        _SUDO_VALIDATED = True
+
+
+def _confirm_external_file_update(
+    *, yes: bool, path: Path, purpose: str
+) -> None:
+    if yes:
+        return
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            'External host file updates require confirmation, but stdin is not interactive. '
+            'Re-run with --yes.'
+        )
+    print('About to update a host file not managed by aivm:')
+    print(f'  {path}')
     print(f'  {purpose}')
     ans = input('Continue? [y/N]: ').strip().lower()
     if ans not in {'y', 'yes'}:
@@ -209,56 +319,11 @@ def _resolve_cfg_for_code(
     vm_opt: str,
     host_src: Path,
 ) -> tuple[AgentVMConfig, Path]:
-    # Import lazily to avoid circular import: cli.vm imports cli._common.
-    from .vm import _select_cfg_for_vm_name
-
-    if config_opt is not None:
-        return _load_cfg_with_path(config_opt)
-
-    cwd_cfg = _cfg_path(None)
-    if cwd_cfg.exists():
-        return _load_cfg_with_path(None)
-
-    if vm_opt:
-        return _select_cfg_for_vm_name(vm_opt, reason='--vm')
-
-    reg = load_registry()
-    meta = read_dir_metadata(host_src)
-    meta_vm = (
-        str(meta.get('vm_name', '')).strip() if isinstance(meta, dict) else ''
+    return _load_cfg_with_path(
+        config_opt,
+        vm_opt=vm_opt,
+        host_src=host_src,
     )
-    if meta_vm:
-        return _select_cfg_for_vm_name(meta_vm, reason='directory metadata')
-
-    att = find_attachment(reg, host_src)
-    if att is not None:
-        return _select_cfg_for_vm_name(
-            att.vm_name, reason='existing attachment'
-        )
-
-    valid: list = []
-    for r in reg.vms:
-        paths = []
-        if r.config_path:
-            paths.append(Path(r.config_path).expanduser())
-        if r.global_config_path:
-            paths.append(Path(r.global_config_path).expanduser())
-        paths.append(vm_global_config_path(r.name))
-        if any(p.exists() for p in paths):
-            valid.append(r)
-    if not valid:
-        raise RuntimeError(
-            'No usable VM config found. Pass --config, run `aivm config init`, or register a VM.'
-        )
-    if len(valid) == 1:
-        only = valid[0]
-        return _select_cfg_for_vm_name(only.name, reason='single registered VM')
-
-    chosen = _choose_vm_interactive(
-        [r.name for r in sorted(valid, key=lambda x: x.name)],
-        reason=f'{len(valid)} registered VMs',
-    )
-    return _select_cfg_for_vm_name(chosen, reason='interactive choice')
 
 
 @dataclass
@@ -266,6 +331,9 @@ class PreparedSession:
     cfg: AgentVMConfig
     cfg_path: Path
     host_src: Path
+    share_source_dir: str
+    share_tag: str
+    share_guest_dst: str
     ip: str | None
     reg_path: Path | None
     meta_path: Path | None

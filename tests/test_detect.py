@@ -1,10 +1,17 @@
+"""Tests for test detect."""
+
 from __future__ import annotations
 
 import ipaddress
 from pathlib import Path
 
 from aivm.config import AgentVMConfig
-from aivm.detect import auto_defaults, existing_ipv4_routes, pick_free_subnet
+from aivm.detect import (
+    auto_defaults,
+    detect_ssh_identity,
+    existing_ipv4_routes,
+    pick_free_subnet,
+)
 from aivm.util import CmdResult
 
 
@@ -56,9 +63,28 @@ def test_auto_defaults_sets_network_and_identity(
     out = auto_defaults(cfg, project_dir=tmp_path)
     assert out.paths.ssh_identity_file == '/tmp/id_a'
     assert out.paths.ssh_pubkey_path == '/tmp/id_a.pub'
-    assert out.share.host_src == str(tmp_path)
     assert out.network.subnet_cidr == '10.88.0.0/24'
     assert out.network.gateway_ip == '10.88.0.1'
     assert out.network.dhcp_start == '10.88.0.100'
     assert out.network.dhcp_end == '10.88.0.200'
     assert out.network.bridge == 'virbr-aivm'
+
+
+def test_detect_ssh_identity_prefers_ssh_config_identityfile(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = tmp_path / 'home'
+    ssh_dir = home / '.ssh'
+    ssh_dir.mkdir(parents=True)
+    ident = ssh_dir / 'id_custom'
+    pub = ssh_dir / 'id_custom.pub'
+    ident.write_text('x', encoding='utf-8')
+    pub.write_text('x', encoding='utf-8')
+    (ssh_dir / 'config').write_text(
+        'Host *\n  IdentityFile ~/.ssh/id_custom\n', encoding='utf-8'
+    )
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setattr('aivm.detect.which', lambda cmd: None)
+    got_ident, got_pub = detect_ssh_identity()
+    assert got_ident == str(ident)
+    assert got_pub == str(pub)

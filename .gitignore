@@ -95,5 +95,4 @@ _skbuild
 pip-wheel-metadata/
 
 wheelhouse
-.agentvm-dir.toml
 .aivm-dir.toml

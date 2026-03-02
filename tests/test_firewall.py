@@ -1,3 +1,5 @@
+"""Tests for test firewall."""
+
 from __future__ import annotations
 
 from aivm.config import AgentVMConfig
@@ -41,6 +43,37 @@ def test_nft_script_deduplicates_blocks(monkeypatch) -> None:
     script = _nft_script(cfg)
     assert script.count('10.0.0.0/8') == 1
     assert script.count('192.168.0.0/16') == 1
+
+
+def test_nft_script_allows_configured_ports(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.firewall.allow_tcp_ports = [22, 2222, 22]
+    cfg.firewall.allow_udp_ports = [53]
+    monkeypatch.setattr(
+        'aivm.firewall._effective_bridge_and_gateway',
+        lambda _cfg: ('virbr-aivm', '10.77.0.1'),
+    )
+    script = _nft_script(cfg)
+    assert 'iifname "virbr-aivm" tcp dport {22, 2222} accept' in script
+    assert 'iifname "virbr-aivm" udp dport {53} accept' in script
+    assert ('iifname "virbr-aivm" ip daddr {' in script) and (
+        'tcp dport {22, 2222} accept' in script
+    )
+
+
+def test_nft_script_invalid_port_raises(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.firewall.allow_tcp_ports = [0]
+    monkeypatch.setattr(
+        'aivm.firewall._effective_bridge_and_gateway',
+        lambda _cfg: ('virbr-aivm', '10.77.0.1'),
+    )
+    try:
+        _nft_script(cfg)
+    except RuntimeError as ex:
+        assert 'range 1..65535' in str(ex)
+    else:
+        raise AssertionError('Expected RuntimeError for invalid firewall port')
 
 
 def test_apply_firewall_disabled_skips(monkeypatch) -> None:

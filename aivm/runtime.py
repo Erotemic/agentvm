@@ -1,3 +1,5 @@
+"""Runtime helpers for constructing virsh and SSH command arguments."""
+
 from __future__ import annotations
 
 from .errors import MissingSSHIdentityError

@@ -1,19 +1,24 @@
+"""Tests for test cli dryrun."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from aivm.cli import AgentVMModalCLI
-from aivm.config import AgentVMConfig, save
+from aivm.config import AgentVMConfig
+from aivm.store import Store, save_store, upsert_vm
 
 
 def _write_cfg(tmp_path: Path) -> Path:
-    cfg_path = tmp_path / '.aivm.toml'
+    cfg_path = tmp_path / 'config.toml'
     cfg = AgentVMConfig()
     cfg.paths.base_dir = str(tmp_path / 'libvirt')
     cfg.paths.state_dir = str(tmp_path / 'state')
     cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
     cfg.paths.ssh_pubkey_path = str(tmp_path / 'id_ed25519.pub')
-    save(cfg_path, cfg)
+    store = Store()
+    upsert_vm(store, cfg)
+    save_store(store, cfg_path)
     return cfg_path
 
 
@@ -86,6 +91,10 @@ def test_help_tree_includes_one_line_descriptions(
     assert _run(['help', 'tree', '--yes', '--config', str(cfg_path)]) == 0
     out = capsys.readouterr().out
     assert 'aivm help tree - Print the expanded aivm command tree.' in out
+    assert (
+        'aivm help raw - Print direct system-tool commands equivalent to common aivm checks.'
+        in out
+    )
     assert (
         'aivm vm ssh - SSH into the VM and start a shell in the mapped guest directory.'
         in out

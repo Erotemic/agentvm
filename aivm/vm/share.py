@@ -1,3 +1,5 @@
+"""Virtiofs share inspection, attach, and guest-side mount helpers."""
+
 from __future__ import annotations
 
 import shlex
@@ -14,9 +16,45 @@ from ..util import run_cmd
 log = logger
 
 
-def vm_has_share(cfg: AgentVMConfig, *, use_sudo: bool = True) -> bool:
+def _is_virtiofs_filesystem(fs: ET.Element) -> bool:
+    """Return True only for filesystem devices backed by virtiofs."""
+    driver = fs.find('driver')
+    if driver is None:
+        return False
+    return driver.attrib.get('type', '').strip().lower() == 'virtiofs'
+
+
+def vm_has_virtiofs_shared_memory(
+    cfg: AgentVMConfig, *, use_sudo: bool = True
+) -> bool | None:
+    """Check if domain XML includes shared memory backing required by virtiofs."""
+    xml = run_cmd(
+        virsh_system_cmd('dumpxml', cfg.vm.name),
+        sudo=use_sudo,
+        check=False,
+        capture=True,
+    )
+    if xml.code != 0 or not xml.stdout.strip():
+        return None
+    try:
+        root = ET.fromstring(xml.stdout)
+    except Exception:
+        return None
+    mb = root.find('.//memoryBacking')
+    if mb is None:
+        return False
+    src = mb.find('source')
+    acc = mb.find('access')
+    src_type = (src.attrib.get('type', '') if src is not None else '').strip()
+    acc_mode = (acc.attrib.get('mode', '') if acc is not None else '').strip()
+    return src_type == 'memfd' and acc_mode == 'shared'
+
+
+def vm_has_share(
+    cfg: AgentVMConfig, source_dir: str, tag: str, *, use_sudo: bool = True
+) -> bool:
     cfg = cfg.expanded_paths()
-    if not cfg.share.enabled or not cfg.share.host_src:
+    if not source_dir or not tag:
         return False
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
@@ -30,9 +68,11 @@ def vm_has_share(cfg: AgentVMConfig, *, use_sudo: bool = True) -> bool:
         root = ET.fromstring(xml.stdout)
     except Exception:
         return False
-    want_src = str(Path(cfg.share.host_src).resolve())
-    want_tag = cfg.share.tag
+    want_src = str(Path(source_dir).resolve())
+    want_tag = tag
     for fs in root.findall('.//devices/filesystem'):
+        if not _is_virtiofs_filesystem(fs):
+            continue
         src = fs.find('source')
         tgt = fs.find('target')
         src_dir = src.attrib.get('dir', '') if src is not None else ''
@@ -60,6 +100,8 @@ def vm_share_mappings(
         return []
     mappings: list[tuple[str, str]] = []
     for fs in root.findall('.//devices/filesystem'):
+        if not _is_virtiofs_filesystem(fs):
+            continue
         src = fs.find('source')
         tgt = fs.find('target')
         src_dir = src.attrib.get('dir', '') if src is not None else ''
@@ -69,13 +111,14 @@ def vm_share_mappings(
     return mappings
 
 
-def attach_vm_share(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
+def attach_vm_share(
+    cfg: AgentVMConfig, source_dir: str, tag: str, *, dry_run: bool = False
+) -> None:
     """Attach a virtiofs share mapping to an existing VM definition."""
     cfg = cfg.expanded_paths()
-    if not cfg.share.enabled or not cfg.share.host_src:
-        raise RuntimeError('Share is not enabled/configured.')
-    source_dir = str(Path(cfg.share.host_src).resolve())
-    tag = cfg.share.tag
+    if not source_dir:
+        raise RuntimeError('Share source_dir is empty.')
+    source_dir = str(Path(source_dir).resolve())
     if not tag:
         raise RuntimeError(
             'Share tag is empty; cannot attach filesystem mapping.'
@@ -114,14 +157,19 @@ def attach_vm_share(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 
 
 def ensure_share_mounted(
-    cfg: AgentVMConfig, ip: str, *, dry_run: bool = False
+    cfg: AgentVMConfig,
+    ip: str,
+    *,
+    guest_dst: str,
+    tag: str,
+    dry_run: bool = False,
 ) -> None:
     cfg = cfg.expanded_paths()
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
-    if not cfg.share.enabled or not cfg.share.host_src:
-        raise RuntimeError('Share is not enabled/configured.')
-    guest_dst = cfg.share.guest_dst
-    tag = cfg.share.tag
+    if not guest_dst:
+        raise RuntimeError('Share guest_dst is empty.')
+    if not tag:
+        raise RuntimeError('Share tag is empty.')
     remote = (
         'set -euo pipefail; '
         f'sudo mkdir -p {shlex.quote(guest_dst)}; '

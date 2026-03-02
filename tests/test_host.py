@@ -1,3 +1,5 @@
+"""Tests for test host."""
+
 from __future__ import annotations
 
 import pytest
@@ -38,11 +40,20 @@ def test_install_deps_debian_behaviors(monkeypatch) -> None:
 
     calls = []
     monkeypatch.setattr('aivm.host.host_is_debian_like', lambda: True)
+
+    def fake_run_cmd(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return CmdResult(0, '', '')
+
     monkeypatch.setattr(
         'aivm.host.run_cmd',
-        lambda cmd, **kwargs: (calls.append(cmd) or CmdResult(0, '', '')),
+        fake_run_cmd,
     )
     install_deps_debian()
-    assert calls[0][:3] == ['apt-get', 'update', '-y']
-    assert calls[1][:3] == ['apt-get', 'install', '-y']
-    assert calls[2][:3] == ['systemctl', 'enable', '--now']
+    assert calls[0][0][:3] == ['apt-get', 'update', '-y']
+    assert calls[1][0][:3] == ['apt-get', 'install', '-y']
+    assert calls[2][0][:3] == ['apt-get', 'install', '-y']
+    assert calls[2][0][-1] == 'virtiofsd'
+    assert calls[3][0][:3] == ['systemctl', 'enable', '--now']
+    assert calls[0][1]['capture'] is False
+    assert calls[1][1]['capture'] is False
