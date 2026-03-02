@@ -47,7 +47,6 @@ from ..vm import (
     get_ip_cached,
     provision,
     sync_settings,
-    vm_exists,
     vm_has_virtiofs_shared_memory,
     vm_share_mappings,
     vm_status,
@@ -716,11 +715,31 @@ class VMAttachCLI(_BaseCommand):
             return 0
 
         _record_vm(cfg, cfg_path)
-        if vm_exists(cfg):
+        vm_running = False
+        vm_defined = False
+        sudo_confirmed = False
+        vm_running_probe, vm_defined_probe, _ = _check_vm_state(
+            cfg, use_sudo=False
+        )
+        vm_defined = vm_defined_probe
+        if not vm_defined:
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose=f"Inspect VM '{cfg.vm.name}' share mappings and attach folder if needed.",
             )
+            sudo_confirmed = True
+            vm_running_probe, vm_defined_probe, _ = _check_vm_state(
+                cfg, use_sudo=True
+            )
+            vm_defined = vm_defined_probe
+        if vm_defined:
+            if not sudo_confirmed:
+                _confirm_sudo_block(
+                    yes=bool(args.yes),
+                    purpose=f"Inspect VM '{cfg.vm.name}' share mappings and attach folder if needed.",
+                )
+                sudo_confirmed = True
+            vm_running = vm_running_probe is True
             mappings = vm_share_mappings(cfg)
             attachment = _align_attachment_tag_with_mappings(
                 attachment, host_src, mappings
@@ -740,7 +759,26 @@ class VMAttachCLI(_BaseCommand):
             tag=attachment.tag,
             force=bool(args.force),
         )
+        if vm_running:
+            ip = _resolve_ip_for_ssh_ops(
+                cfg,
+                yes=bool(args.yes),
+                purpose='Query VM networking state before mounting attached share.',
+            )
+            ensure_share_mounted(
+                cfg,
+                ip,
+                guest_dst=attachment.guest_dst,
+                tag=attachment.tag,
+                dry_run=False,
+            )
         print(f'Attached {host_src} to VM {cfg.vm.name} (shared mode)')
+        if vm_running:
+            print(f'Mounted in running VM at {attachment.guest_dst}')
+        elif vm_defined:
+            print(
+                f'VM {cfg.vm.name} is not running; share will mount when VM is running and attach/ssh/code is used.'
+            )
         print(f'Updated config store: {cfg_path}')
         print(f'Updated attachments: {reg_path}')
         return 0

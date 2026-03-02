@@ -130,6 +130,8 @@ Attach a folder to a managed VM (shared mode):
 
 By default, attached folders mount to the same absolute path inside the VM as
 on the host. Use ``--guest_dst`` to override.
+When the target VM is already running, ``aivm attach .`` now live-attaches the
+share and mounts it immediately inside the guest at ``guest_dst``.
 When possible, ``aivm code .`` live-attaches new shares to existing VMs
 (``--live`` when running) instead of
 requiring recreation.

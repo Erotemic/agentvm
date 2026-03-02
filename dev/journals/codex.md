@@ -587,3 +587,23 @@ Uncertainties / risks: hosts lacking memfd/shared support could fail earlier at 
 Tradeoffs and what might break: if someone intentionally wanted a VM definition without shared memory backing, that is no longer default behavior.
 
 What I am confident about: full test suite passes (`79 passed, 1 skipped`) and the regression path is now guarded.
+## 2026-03-02 17:22:51 +0000
+Worked on `aivm vm attach` behavior for running VMs. The command previously ensured libvirt had the virtiofs mapping (including live attach when running) but did not proactively mount the share inside the guest at attach time. I updated `aivm/cli/vm.py` so attach now detects running state, resolves SSH/IP when needed, and calls `ensure_share_mounted(...)` after recording the attachment. This makes a direct `aivm attach .` immediately usable in a running VM without requiring a follow-up `ssh` / `code` command.
+
+State of mind / reflection: this was a small but high-impact UX consistency gap; the system already had the right building blocks in code/ssh flows, so the pragmatic move was reusing those paths in attach rather than adding new mechanics. I focused on keeping behavior explicit and predictable rather than adding more flags.
+
+Uncertainties / risks: attach on a running VM can now block/fail on IP/SSH discovery if guest networking is unhealthy, where previously attach mostly stayed host-side. This is intentional for immediate exposure semantics, but could surprise scripts that relied on attach succeeding even when guest SSH is unavailable.
+
+Tradeoffs and what might break: we traded faster “record-only” completion for stronger guarantee that the guest mount is actually present when VM is running. In degraded network states this may produce a failure after libvirt attach/store updates have already happened; that partial-success profile is similar to other multi-step CLI operations but still worth watching.
+
+What I am confident about: targeted tests cover both new branches (running VM mounts, stopped VM skips guest mount), and related helper tests still pass under `uv run --active` with pytest plugin autoload disabled and addopts overridden for this environment.
+## 2026-03-02 17:29:01 +0000
+Follow-up fix for `aivm attach` after a real-world failure trace where the VM was running but attach only updated config. Root cause was a false negative from `vm_exists()` in `VMAttachCLI`: it executes `virsh dominfo` via non-interactive sudo (`sudo -n`), so without an existing sudo ticket it returned nonzero and the flow silently skipped libvirt attach and guest mount.
+
+I refactored attach VM-state resolution in `aivm/cli/vm.py` to avoid that blind spot: probe VM state without sudo first, and if that probe is inconclusive/undefined, explicitly run `_confirm_sudo_block(...)` and re-probe with sudo before deciding whether to attach/mount. Once VM is known defined, attach still confirms privileged ops and proceeds with mapping checks/attach. Added a user-facing line when VM is defined but not running to make mount expectations explicit.
+
+State of mind / reflection: this was a correctness-over-convenience fix. The prior behavior looked successful from CLI output while doing less than intended, which is a bad UX failure mode. The goal here was to make failure/permission boundaries explicit and deterministic.
+
+Uncertainties / risks: attach now prompts for sudo in more cases (specifically when non-sudo probe cannot establish VM state), which may feel noisier for some setups. This is acceptable because privileged checks/operations are genuinely required to guarantee live attach behavior.
+
+What I am confident about: regression coverage now includes the exact sudo-inconclusive path, plus running/stopped behavior. Targeted tests and syntax checks passed in this environment.

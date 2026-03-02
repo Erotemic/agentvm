@@ -237,8 +237,8 @@ class AgentVMModalCLI(scfg.ModalCLI):
 
 
 def main(argv: list[str] | None = None) -> None:
-    if argv is None:
-        argv = sys.argv[1:]
+    # if argv is None:
+    #     argv = sys.argv[1:]
 
     try:
         rc = AgentVMModalCLI.main(argv=argv, _noexit=True)
@@ -248,8 +248,7 @@ def main(argv: list[str] | None = None) -> None:
         raise
         sys.exit(2)
 
-    if any(flag in argv for flag in ('-h', '--help')):
-        sys.exit(0)
-    if isinstance(rc, int):
-        sys.exit(rc)
-    sys.exit(0)
+    # if any(flag in argv for flag in ('-h', '--help')):
+    #     sys.exit(0)
+    assert isinstance(rc, int)
+    sys.exit(rc)
