@@ -22,7 +22,10 @@ from aivm.util import CmdResult
 
 
 def test_parse_qemu_img_virtual_size() -> None:
-    assert _parse_qemu_img_virtual_size('{"virtual-size": 42949672960}') == 42949672960
+    assert (
+        _parse_qemu_img_virtual_size('{"virtual-size": 42949672960}')
+        == 42949672960
+    )
     assert _parse_qemu_img_virtual_size('{"virtual-size": 0}') is None
     assert _parse_qemu_img_virtual_size('not-json') is None
 
@@ -101,7 +104,9 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
     def fake_restart(*a, **k):
         called['kwargs'] = k
 
-    monkeypatch.setattr('aivm.cli.vm._maybe_restart_vm_after_update', fake_restart)
+    monkeypatch.setattr(
+        'aivm.cli.vm._maybe_restart_vm_after_update', fake_restart
+    )
     rc = VMUpdateCLI.main(
         argv=False,
         config=str(tmp_path / 'config.toml'),
@@ -170,7 +175,9 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
             return CmdResult(0, '{"virtual-size": 42949672960}', '')
         raise AssertionError(f'Unexpected cmd={cmd!r} sudo={sudo}')
 
-    monkeypatch.setattr('aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block)
+    monkeypatch.setattr(
+        'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
+    )
     monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
     drift, running = _vm_update_drift(cfg, yes=False)
     assert running is True
@@ -199,10 +206,7 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
             and cmd[3] == 'domstate'
         ):
             return CmdResult(0, 'running\n', '')
-        if (
-            cmd[:3] == ['virsh', '-c', 'qemu:///system']
-            and cmd[3] == 'dumpxml'
-        ):
+        if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dumpxml':
             xml = """
 <domain>
   <devices>
@@ -229,7 +233,9 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
             return CmdResult(0, 'Capacity: 42949672960\nAllocation: 0\n', '')
         raise AssertionError(f'Unexpected command: {cmd!r}')
 
-    monkeypatch.setattr('aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block)
+    monkeypatch.setattr(
+        'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
+    )
     monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
     drift, _running = _vm_update_drift(cfg, yes=True)
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
@@ -257,7 +263,9 @@ def test_prepare_attached_session_bootstraps_missing_vm(
             )
         return cfg, cfg_path
 
-    monkeypatch.setattr('aivm.cli.vm._resolve_cfg_for_code', fake_resolve_cfg_for_code)
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code', fake_resolve_cfg_for_code
+    )
     monkeypatch.setattr(
         'aivm.cli.config.InitCLI.main',
         lambda *a, **k: calls.append('config_init') or 0,
@@ -299,7 +307,9 @@ def test_prepare_attached_session_bootstraps_missing_vm(
         'aivm.cli.vm.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None
+    )
 
     session = _prepare_attached_session(
         config_opt=None,

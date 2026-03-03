@@ -117,7 +117,7 @@ class StatusCLI(_BaseCommand):
         False,
         isflag=True,
         help='Include raw diagnostics (virsh/nft/ssh probe outputs).',
-        alias=['details']
+        alias=['details'],
     )
 
     @classmethod

@@ -140,7 +140,9 @@ def test_confirm_sudo_block_noop_when_root(monkeypatch) -> None:
     assert calls == []
 
 
-def test_confirm_sudo_block_uses_effective_yes_sudo_context(monkeypatch) -> None:
+def test_confirm_sudo_block_uses_effective_yes_sudo_context(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
     calls = []
     monkeypatch.setattr(

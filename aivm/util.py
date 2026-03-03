@@ -48,9 +48,7 @@ def shell_join(cmd: Sequence[str]) -> str:
 
 
 def arm_sudo_intent(*, yes: bool, purpose: str) -> None:
-    _SUDO_INTENT.set(
-        SudoIntent(yes=bool(yes), purpose=str(purpose))
-    )
+    _SUDO_INTENT.set(SudoIntent(yes=bool(yes), purpose=str(purpose)))
 
 
 def clear_sudo_intent() -> None:

@@ -63,9 +63,7 @@ class _BaseCommand(scfg.DataConfig):
         clear_sudo_intent()
         parsed = super().cli(*args, **kwargs)
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
-        cfg_yes_sudo = _resolve_cfg_yes_sudo(
-            getattr(parsed, 'config', None)
-        )
+        cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
         parsed.yes_sudo = bool(
             getattr(parsed, 'yes_sudo', False)
             or getattr(parsed, 'yes', False)

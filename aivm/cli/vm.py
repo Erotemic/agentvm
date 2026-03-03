@@ -837,9 +837,7 @@ class VMUpdateCLI(_BaseCommand):
         args = cls.cli(argv=argv, data=kwargs)
         restart_policy = str(args.restart or 'auto').strip().lower()
         if restart_policy not in {'auto', 'always', 'never'}:
-            raise RuntimeError(
-                '--restart must be one of: auto, always, never'
-            )
+            raise RuntimeError('--restart must be one of: auto, always, never')
         cfg, _ = _load_cfg_with_path(args.config, vm_opt=args.vm)
         drift, vm_running = _vm_update_drift(cfg, yes=bool(args.yes))
         if drift.notes:
@@ -952,7 +950,11 @@ def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
             'Missing required host dependencies in non-interactive mode. '
             'Run `aivm host install_deps` first.'
         )
-    ans = input('Install missing dependencies now with apt? [Y/n]: ').strip().lower()
+    ans = (
+        input('Install missing dependencies now with apt? [Y/n]: ')
+        .strip()
+        .lower()
+    )
     do_install = ans in {'', 'y', 'yes'}
     if not do_install:
         raise RuntimeError('Aborted by user.')
@@ -1025,7 +1027,10 @@ def _resolve_vm_disk_path(
 ) -> tuple[Path, tuple[str, ...]]:
     notes: list[str] = []
     expected = (
-        Path(cfg.paths.base_dir) / cfg.vm.name / 'images' / f'{cfg.vm.name}.qcow2'
+        Path(cfg.paths.base_dir)
+        / cfg.vm.name
+        / 'images'
+        / f'{cfg.vm.name}.qcow2'
     )
     res = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
@@ -1317,9 +1322,13 @@ def _maybe_restart_vm_after_update(
         if yes:
             should_restart = True
         elif sys.stdin.isatty():
-            ans = input(
-                'A restart is needed for CPU/RAM changes to take effect now. Restart VM now? [y/N]: '
-            ).strip().lower()
+            ans = (
+                input(
+                    'A restart is needed for CPU/RAM changes to take effect now. Restart VM now? [y/N]: '
+                )
+                .strip()
+                .lower()
+            )
             should_restart = ans in {'y', 'yes'}
     if not should_restart:
         print(
@@ -1812,9 +1821,13 @@ def _prepare_attached_session(
                     'No managed VM found for this folder. Re-run with --yes to initialize defaults and create one automatically.'
                 ) from ex
             print('No managed VM found for this folder.')
-            ans = input(
-                'Run `aivm config init` and `aivm vm create` now? [Y/n]: '
-            ).strip().lower()
+            ans = (
+                input(
+                    'Run `aivm config init` and `aivm vm create` now? [Y/n]: '
+                )
+                .strip()
+                .lower()
+            )
             if ans not in {'', 'y', 'yes'}:
                 raise RuntimeError('Aborted by user.') from ex
         from .config import InitCLI
