@@ -954,3 +954,27 @@ Reflection: I prioritized comments that communicate control-flow intent, policy 
 Risk/tradeoff: additional prose can drift as behavior evolves; I kept commentary centered on stable boundaries (resolution precedence, probe semantics, orchestration pivots) to reduce churn.
 
 Validation: `ty check aivm` passed; full tests passed (`97 passed, 2 skipped`).
+
+## 2026-03-03 20:11:53 +0000
+
+Worked on a regression where attaching an already-owned host folder to a second VM could mutate VM/share state before the ownership conflict was surfaced. The key fix was to move conflict detection earlier in execution: I added `_ensure_attachment_not_owned_by_other_vm()` in `aivm/cli/vm.py` and called it in both `VMAttachCLI.main` and `_prepare_attached_session` before `_resolve_attachment` / `_reconcile_attached_vm` side effects.
+
+State of mind / reflection: this felt like a safety-boundary ordering bug rather than a data-model bug. I focused on minimizing blast radius by preserving existing store semantics (`upsert_attachment` still enforces force/no-force) while making operational behavior match user expectations: if conflict exists and no `--force`, nothing in libvirt/VM state should be touched.
+
+Uncertainties / risks: this does not change `--force` semantics; force reassignment can still intentionally move store ownership for a folder, which may alter folder-centric VM resolution for later `aivm code .` calls. I did not add automatic detach from the previous VM domain on force because that is a policy decision with potential surprise and broader lifecycle implications.
+
+Tradeoffs and what might break: we now fail earlier in more paths, so callers that implicitly relied on late failures after partial reconcile will see earlier RuntimeError exits. That is intentional and should reduce accidental host-path exposure. If any external tooling expected those side effects before failure, behavior changes.
+
+What I am confident about: regression tests now cover fail-fast ordering in `tests/test_cli_vm_attach.py` and `tests/test_cli_vm_update.py`; both ensure conflict abort happens before reconcile/mutation calls. `python3 -m py_compile` passes for touched modules.
+
+## 2026-03-03 20:22:15 +0000
+
+Shifted attachment policy from single-owner to multi-owner for shared host folders. Core change was in `aivm/store.py`: `upsert_attachment()` no longer rejects/rewrites when another VM already uses the same `host_path`; uniqueness is now only `(host_path, vm_name)`. Added helpers `find_attachments()` and `find_attachment_for_vm()` so call sites can choose explicit semantics instead of relying on a single implicit owner.
+
+Reflection/state of mind: this was a policy simplification with a resolver complexity tradeoff. Removing the hard block is straightforward at storage layer, but folder-oriented VM selection needed an explicit strategy for ambiguous mappings. I chose deterministic behavior: attached-folder resolution prefers an attached active VM, otherwise prompts interactively, and errors in non-interactive mode unless `--vm` is provided.
+
+Uncertainties/risks: folder-centric commands (`aivm code .` / `aivm ssh .`) now have ambiguity paths that can fail where old policy previously avoided ambiguity by prohibition. That is expected, but users/scripts may need to pass `--vm` more often when one folder is intentionally shared across VMs.
+
+Tradeoffs and what might break: kept CLI `--force` flags in attach/code/ssh for now but marked as deprecated no-op text to avoid abrupt argument removal in this pass. If full cleanup is desired, removing those flags is a follow-up. `find_attachment()` remains for compatibility but now returns a deterministic first match from the attachment set; newer code should prefer explicit helpers.
+
+What I am confident about: compile checks pass for all touched modules; tests were updated to assert multi-attach behavior and resolver ambiguity handling (`tests/test_store.py`, `tests/test_cli_helpers.py`), and stale conflict-based tests were removed from attach/update suites.

@@ -14,7 +14,7 @@ from loguru import logger
 from ..config import AgentVMConfig
 from ..detect import detect_ssh_identity
 from ..store import (
-    find_attachment,
+    find_attachments,
     find_vm,
     load_store,
     materialize_vm_cfg,
@@ -216,9 +216,34 @@ def _resolve_vm_name(
         return vm_opt, store_path
 
     if host_src is not None:
-        att = find_attachment(reg, host_src)
-        if att is not None:
-            return att.vm_name, store_path
+        atts = find_attachments(reg, host_src)
+        if atts:
+            attached_vm_names = sorted(
+                {
+                    att.vm_name
+                    for att in atts
+                    if find_vm(reg, att.vm_name) is not None
+                }
+            )
+            if len(attached_vm_names) == 1:
+                return attached_vm_names[0], store_path
+            if attached_vm_names:
+                if reg.active_vm in attached_vm_names:
+                    return reg.active_vm, store_path
+                if not sys.stdin.isatty():
+                    vm_names = ', '.join(attached_vm_names)
+                    raise RuntimeError(
+                        'Host folder is attached to multiple VMs: '
+                        f'{vm_names}. Re-run with --vm.'
+                    )
+                chosen = _choose_vm_interactive(
+                    attached_vm_names,
+                    reason=(
+                        f'folder {host_src} is attached to '
+                        f'{len(attached_vm_names)} VMs'
+                    ),
+                )
+                return chosen, store_path
 
     if reg.active_vm and find_vm(reg, reg.active_vm) is not None:
         return reg.active_vm, store_path

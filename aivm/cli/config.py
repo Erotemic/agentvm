@@ -34,7 +34,7 @@ from ..detect import auto_defaults
 from ..resource_checks import vm_resource_warning_lines
 from ..runtime import virsh_system_cmd
 from ..store import (
-    find_attachment,
+    find_attachments,
     find_vm,
     load_store,
     save_store,
@@ -310,7 +310,7 @@ class ConfigPathCLI(_BaseCommand):
         host_src = Path(args.host_src).resolve()
         store = _cfg_path(args.config)
         reg = load_store(store)
-        att = find_attachment(reg, host_src)
+        atts = find_attachments(reg, host_src)
         resolved_cfg_path: Path | None = None
         resolved_vm = ''
         resolve_error = ''
@@ -330,8 +330,9 @@ class ConfigPathCLI(_BaseCommand):
             f'config_store = {store} ({"exists" if store.exists() else "missing"})'
         )
         print(f'active_vm = {reg.active_vm or "(unset)"}')
-        if att is not None:
-            print(f'attachment_vm = {att.vm_name}')
+        if atts:
+            vm_names = ', '.join(sorted({att.vm_name for att in atts}))
+            print(f'attachment_vms = {vm_names}')
         if resolved_cfg_path is not None:
             print(f'resolved_store = {resolved_cfg_path}')
             if resolved_vm:

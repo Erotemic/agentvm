@@ -385,20 +385,8 @@ def upsert_attachment(
     tag: str = '',
     force: bool = False,
 ) -> None:
+    del force
     norm = _norm_dir(host_path)
-    conflict = [
-        a
-        for a in reg.attachments
-        if a.host_path == norm and a.vm_name != vm_name
-    ]
-    if conflict and not force:
-        vm_names = ', '.join(sorted({a.vm_name for a in conflict}))
-        raise RuntimeError(
-            f'Host folder already attached to other VM(s): {vm_names}. '
-            'Use --force to override this safety check.'
-        )
-    if force and conflict:
-        reg.attachments = [a for a in reg.attachments if a.host_path != norm]
     existing = [
         a
         for a in reg.attachments
@@ -418,11 +406,26 @@ def upsert_attachment(
         reg.attachments.append(rec)
 
 
-def find_attachment(
-    reg: Store, host_path: str | Path
+def find_attachments(reg: Store, host_path: str | Path) -> list[AttachmentEntry]:
+    norm = _norm_dir(host_path)
+    return [att for att in reg.attachments if att.host_path == norm]
+
+
+def find_attachment_for_vm(
+    reg: Store, host_path: str | Path, vm_name: str
 ) -> AttachmentEntry | None:
     norm = _norm_dir(host_path)
     for att in reg.attachments:
-        if att.host_path == norm:
+        if att.host_path == norm and att.vm_name == vm_name:
             return att
     return None
+
+
+def find_attachment(
+    reg: Store, host_path: str | Path
+) -> AttachmentEntry | None:
+    atts = sorted(
+        find_attachments(reg, host_path),
+        key=lambda att: (att.vm_name, att.guest_dst, att.tag),
+    )
+    return atts[0] if atts else None

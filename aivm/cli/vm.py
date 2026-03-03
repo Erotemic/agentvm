@@ -8,6 +8,7 @@ import re
 import shlex
 import sys
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -29,10 +30,11 @@ from ..status import (
     probe_vm_state,
 )
 from ..store import (
-    find_attachment,
+    find_attachment_for_vm,
     find_network,
     find_vm,
     load_store,
+    materialize_vm_cfg,
     network_users,
     remove_vm,
     save_store,
@@ -126,13 +128,29 @@ class VMCreateCLI(_BaseCommand):
         )
         cfg_path = _cfg_path(args.config)
         reg = load_store(cfg_path)
-        if reg.defaults is None:
+        if reg.defaults is not None:
+            # Work on a copy so per-create overrides (e.g. --vm) never mutate
+            # persisted defaults in the registry.
+            cfg = deepcopy(reg.defaults).expanded_paths()
+        elif reg.vms:
+            # Fallback for stores that predate/omit [defaults]: use an existing
+            # managed VM definition as the template source for new VM creation.
+            template_name = (
+                reg.active_vm if find_vm(reg, reg.active_vm) is not None else ''
+            )
+            if not template_name:
+                template_name = sorted(v.name for v in reg.vms)[0]
+            cfg = materialize_vm_cfg(reg, template_name).expanded_paths()
+            log.warning(
+                'No config defaults found; using managed VM {} as create template.',
+                template_name,
+            )
+        else:
             log.error(
                 f'No config defaults found in store: {cfg_path}. '
                 'Run `aivm config init` first.'
             )
             return 1
-        cfg = reg.defaults.expanded_paths()
         if args.vm:
             cfg.vm.name = str(args.vm).strip()
         for line in vm_resource_warning_lines(cfg):
@@ -482,7 +500,7 @@ class VMCodeCLI(_BaseCommand):
     force = scfg.Value(
         False,
         isflag=True,
-        help='Force attaching folder even if already attached to a different VM.',
+        help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
     dry_run = scfg.Value(
         False, isflag=True, help='Print actions without running.'
@@ -597,7 +615,7 @@ class VMSSHCLI(_BaseCommand):
     force = scfg.Value(
         False,
         isflag=True,
-        help='Force attaching folder even if already attached to a different VM.',
+        help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
     dry_run = scfg.Value(
         False, isflag=True, help='Print actions without running.'
@@ -681,7 +699,7 @@ class VMAttachCLI(_BaseCommand):
     force = scfg.Value(
         False,
         isflag=True,
-        help='Allow attaching folder that is already attached to a different VM.',
+        help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
     dry_run = scfg.Value(
         False, isflag=True, help='Print actions without running.'
@@ -1586,8 +1604,8 @@ def _resolve_attachment(
     guest_dst = _resolve_guest_dst(host_src, guest_dst_opt)
     tag = _ensure_share_tag_len('', host_src, set())
     reg = load_store(cfg_path)
-    att = find_attachment(reg, host_src)
-    if att is not None and att.vm_name == cfg.vm.name:
+    att = find_attachment_for_vm(reg, host_src, cfg.vm.name)
+    if att is not None:
         if not guest_dst_opt and att.guest_dst:
             guest_dst = att.guest_dst
         if att.tag:

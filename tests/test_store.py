@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from aivm.config import AgentVMConfig
 from aivm.store import (
     AttachmentEntry,
     Store,
     find_attachment,
+    find_attachment_for_vm,
+    find_attachments,
     find_vm,
     load_store,
     save_store,
@@ -50,14 +50,22 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     assert find_vm(loaded, 'missing') is None
 
 
-def test_upsert_attachment_conflict_and_force(tmp_path: Path) -> None:
+def test_upsert_attachment_allows_multiple_vms_for_same_host(
+    tmp_path: Path,
+) -> None:
     store = Store()
     host = tmp_path / 'project'
     host.mkdir()
     upsert_attachment(store, host_path=host, vm_name='vm1')
-    with pytest.raises(RuntimeError):
-        upsert_attachment(store, host_path=host, vm_name='vm2')
-    upsert_attachment(store, host_path=host, vm_name='vm2', force=True)
+    upsert_attachment(store, host_path=host, vm_name='vm2')
+
+    atts = find_attachments(store, host)
+    assert sorted(att.vm_name for att in atts) == ['vm1', 'vm2']
+
+    vm2 = find_attachment_for_vm(store, host, 'vm2')
+    assert vm2 is not None
+    assert vm2.vm_name == 'vm2'
+
     att = find_attachment(store, host)
     assert att is not None
-    assert att.vm_name == 'vm2'
+    assert att.vm_name in {'vm1', 'vm2'}

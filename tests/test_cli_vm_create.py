@@ -53,6 +53,51 @@ def test_vm_create_uses_defaults_and_adds_vm(
     loaded = load_store(cfg_path)
     assert loaded.defaults is not None
     assert any(v.name == 'new-vm' for v in loaded.vms)
+    assert loaded.defaults.vm.name == 'template-vm'
+
+
+def test_vm_create_falls_back_to_existing_vm_when_defaults_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg_path = tmp_path / 'config.toml'
+    store = Store()
+    tmpl = AgentVMConfig()
+    tmpl.vm.name = 'template-existing'
+    tmpl.vm.cpus = 6
+    tmpl.vm.ram_mb = 12288
+    tmpl.network.name = 'tmpl-net'
+    upsert_vm(store, tmpl)
+    store.active_vm = tmpl.vm.name
+    save_store(store, cfg_path)
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
+    )
+    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
+    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
+    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.cli.vm._maybe_install_missing_host_deps',
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
+    monkeypatch.setattr(
+        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+    )
+
+    rc = VMCreateCLI.main(
+        argv=False, config=str(cfg_path), vm='demo-vm', yes=True
+    )
+    assert rc == 0
+    loaded = load_store(cfg_path)
+    assert loaded.defaults is None
+    rec = next(v for v in loaded.vms if v.name == 'demo-vm')
+    assert rec.cfg.vm.cpus == 6
+    assert rec.cfg.vm.ram_mb == 12288
+    assert rec.network_name == 'tmpl-net'
 
 
 def test_vm_destroy_removes_vm_and_attachments(
