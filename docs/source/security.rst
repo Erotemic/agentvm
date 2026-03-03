@@ -232,114 +232,157 @@ Examples relevant to KVM/QEMU/libvirt-style deployments:
 These are *examples*, not an exhaustive list.
 
 
-Design decisions and recommended hardening options
---------------------------------------------------
+Current design posture
+----------------------
 
-This section links configuration choices to concrete security outcomes.
+The current ``aivm`` security posture is intentionally pragmatic:
 
-Default device minimization
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+* Guest root/sudo is allowed to preserve agent functionality.
+* WAN egress is allowed to preserve LLM/API and development workflows.
+* Host-folder sharing is supported for in-place development and is therefore an
+  explicit trust extension.
+* Firewall isolation is available to reduce guest access to host-local/private
+  networks, but it must be enabled and successfully applied.
 
-Recommendation: keep the VM as “boring” as possible.
+Security consequence:
 
-* Avoid graphics/3D acceleration, SPICE/VNC, USB passthrough, and other complex
-  device stacks for untrusted guests.
-* Each additional virtual device is another parser/emulation surface exposed
-  to hostile guest input (per QEMU’s own security guide).
+* ``aivm`` reduces risk of accidental broad host exposure compared with running
+  directly on host, but it does not guarantee containment against virtualization
+  escape vulnerabilities and does not protect host data intentionally shared
+  into the guest.
+
+
+Future Security Work
+--------------------
+
+This section describes potential security improvements for future releases.
+Items below are *not* guaranteed current behavior.
+
+Near-term improvements (low UX impact):
+
+* Add explicit fail-closed checks for workflows that assume firewall isolation
+  (for example, abort/warn before ``code``/``ssh`` when expected rules are
+  missing).
+* Add strong warnings and optional confirmation gates for high-risk shared
+  paths (home directory roots, SSH/config/credential directories).
+* Improve runtime visibility when writable host shares are active.
+* Tighten SSH probing defaults to avoid insecure host-key modes in routine
+  checks.
+
+Medium-term improvements (some UX tradeoff):
+
+* Add optional per-attachment read-only share mode.
+* Add optional egress policy modes (for example, allowlist-oriented networking
+  for high-risk sessions while keeping standard mode for normal development).
+* Add profile-style presets in config (for example ``balanced`` vs
+  ``high_isolation``) that map to documented security/UX tradeoffs.
+
+Longer-term / ecosystem-dependent improvements:
+
+* Expose advanced libvirt/QEMU hardening knobs where portable support is
+  available (sVirt confinement visibility, backend selection controls,
+  virtiofs-specific hardening options).
+* Add stronger validation and reporting around host isolation primitives
+  (AppArmor/SELinux status, relevant kernel/hypervisor hardening state).
+
+Design options under consideration (deeper technical context)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The items provide details about *why* certain knobs matter.  We emphasize that
+these are design directions rather than current guarantees.
+
+Device minimization
+^^^^^^^^^^^^^^^^^^^
+
+Current state:
+
+* ``aivm`` already avoids many high-surface features by default in typical
+  workflows (for example no explicit graphics/3D acceleration path is required
+  for headless agent usage).
+
+Potential direction:
+
+* Add explicit hardening toggles and validation that continue to keep the VM
+  “boring” (no optional device classes unless requested).
+
+Why it matters:
+
+* Each additional emulated/passthrough device can increase guest-facing parser
+  and emulation surface.
+
+Networking backend posture
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Current state:
+
+* ``aivm`` relies on libvirt defaults for interface backend behavior.
+
+Potential direction:
+
+* Expose a high-isolation option that prefers userspace backend behavior
+  (``driver name='qemu'`` style) when users accept possible performance cost.
+
+Why it matters:
+
+* Kernel backend paths (for example vhost-based fast paths) may increase
+  kernel-facing attack surface.
+
+Virtiofs sharing controls
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Current state:
+
+* Writable sharing is supported because it is central to developer workflow.
+
+Potential direction:
+
+* Add first-class share policy controls (read-only mode where feasible,
+  stronger path-risk warnings, and clearer runtime indicators of trust
+  extension).
+* Explore exposing virtiofs-related hardening knobs when reliably portable
+  across supported host stacks (sandbox/idmap controls).
+
+Why it matters:
+
+* Shared folders are a deliberate trust boundary extension and the primary
+  non-escape path for host-impact by malicious guest code.
+
+Host confinement and blast-radius controls
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Current state:
+
+* ``aivm`` does not currently manage host MAC policy frameworks or cgroup
+  policy as first-class configuration primitives.
+
+Potential direction:
+
+* Add host posture detection/reporting and optional policy checks for
+  AppArmor/SELinux confinement and resource-limit enforcement.
+
+Why it matters:
+
+* Confinement and resource controls reduce impact if guest-triggered host-side
+  compromise or DoS occurs.
+
+Possible profile model (future UX packaging)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A future profile model may package combinations of controls and tradeoffs:
+
+* ``high_isolation``: minimal/no sharing, stronger network restrictions, and
+  stricter validation checks.
+* ``balanced``: current default posture oriented to developer productivity.
+* ``convenience``: explicitly reduced safeguards with additional warnings.
+
+This profile model is not currently a stable interface; it is included here as
+planning context.
 
 References:
-* QEMU device emulation and sensitive configuration discussion: `QEMU Security`_
-
-Networking: choose userspace backend when isolation matters more than performance
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For virtio NICs, prefer userspace backend in high-risk scenarios:
-
-* High-isolation mode: set interface driver backend to ``name='qemu'`` (userspace).
-* Default/performance mode: allow libvirt default (often ``vhost`` if available).
-
-Rationale: kernel backends (e.g. vhost-net) can increase kernel attack surface;
-userspace backends can reduce the “host kernel” component of the guest-facing path
-at the cost of performance.
-
-References:
-* libvirt: interface backend driver semantics and defaulting behavior:
-  `libvirt Domain XML (interface driver backend)`_
-
-Filesystem sharing: treat virtiofs as an explicit trust extension
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Policy recommendations:
-
-* Make host folder sharing **opt-in** and visibly signaled to operators.
-* Support a per-share **read-only** mode where available and functional.
-* Prefer configuring virtiofsd with **namespace sandboxing**.
-* Prefer **id-mapping** so guest IDs map to unprivileged host IDs where supported
-  (reduces risk of UID/GID confusion and limits host-side impact).
-
-References:
-* libvirt virtiofs guide (overview + constraints): `libvirt virtiofs guide`_
-* libvirt domain XML example showing virtiofs sandbox + idmap + filesystem readonly:
-  `libvirt Domain XML (filesystems/virtiofs)`_
-* virtiofsd sandbox/security mechanisms: `virtiofsd documentation`_
-
-Host confinement: reduce blast radius if QEMU/virtiofsd is compromised
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Even with good device choices, defense-in-depth matters:
-
-* Ensure QEMU processes run confined where possible (AppArmor/SELinux “sVirt”).
-* Use QEMU seccomp sandboxing and namespaces when supported by the stack.
-* Apply resource limits (cgroups) to mitigate DoS.
-
-References:
-* QEMU security guide (SELinux/AppArmor, namespaces, seccomp, cgroups): `QEMU Security`_
-* libvirt QEMU driver security topics (sVirt/AppArmor/SELinux concepts):
+* QEMU hardening controls and attack surface notes: `QEMU Security`_
+* libvirt driver/domain options relevant to networking/filesystems:
   `libvirt QEMU driver`_
-
-Firewall isolation: fail closed for “I expected isolation” workflows
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-If ``aivm`` offers a mode that claims to isolate the guest from common private
-address ranges, it should:
-
-* validate that rules are applied before launching the guest’s “online” workflows,
-* warn loudly and/or abort on failure, and
-* provide a documented escape hatch for users who knowingly accept risk.
-
-Optional references:
-* libvirt NWFilter overview as a complementary approach: `libvirt NWFilter`_
-
-
-Operational profiles (recommended defaults)
--------------------------------------------
-
-High Isolation Mode (for unknown/untrusted workloads)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-* No shared folders (virtiofs disabled).
-* Userspace NIC backend (``driver name='qemu'``) to avoid vhost-net kernel path.
-* Strict SSH host key handling; no ``StrictHostKeyChecking=no`` style probing.
-* Tight CPU/RAM/disk limits; disposable VM image.
-* Strong host confinement (SELinux/AppArmor sVirt; QEMU seccomp/namespaces).
-
-Balanced Dev Mode (default developer productivity)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-* Minimal shared folder(s), narrow project subtree only.
-* Writable share only when required; warn on risky paths.
-* Default libvirt networking, plus firewall isolation if available.
-* Host and virtualization stack patched.
-
-Convenience Mode (explicitly less safe)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-* Broad writable shares (including home directories) permitted with extra warnings.
-* Fewer restrictions on networking and provisioning.
-* Not appropriate for untrusted code.
-
-References:
-* libvirt driver and domain XML references above for the underlying knobs.
+* libvirt network filtering concepts: `libvirt NWFilter`_
 
 
 Use of SSH keys
@@ -387,19 +430,18 @@ References:
 * libvirt QEMU driver overview and deployment prerequisites: `libvirt QEMU driver`_
 
 
-Operator checklist
-------------------
+Operator checklist (current practical baseline)
+-----------------------------------------------
 
-For “malicious guest” scenarios, minimum recommended operator practices:
+For malicious-guest scenarios with today’s ``aivm`` behavior:
 
-* Keep host kernel + qemu + libvirt updated.
-* Prefer “High Isolation Mode” for unknown workloads.
+* Keep host kernel, qemu, and libvirt updated.
+* Keep firewall isolation enabled and verify it is active.
 * Share only minimal project subtrees; keep secrets outside shared trees.
-* Avoid graphics/3D acceleration; avoid passthrough devices unless required.
-* Prefer userspace NIC backend for high-risk guests.
-* Ensure host confinement (SELinux/AppArmor) is enabled where available.
-* Apply resource limits to mitigate DoS.
 * Treat shared content as untrusted: do not auto-execute artifacts from shares.
+* Use disposable VMs for unknown workloads.
+* If using additional host hardening controls (AppArmor/SELinux/cgroups), treat
+  them as defense-in-depth external to ``aivm``.
 
 
 References

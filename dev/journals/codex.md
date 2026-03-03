@@ -893,3 +893,17 @@ State of mind / reflection: this was a surgical fix tied directly to CI output; 
 Uncertainties / risks: local environment lacks packaging/render dependencies (`wheel`, `docutils`), so I could not execute full `python -m build` + `twine check` verification here; however, the specific parser rule violation is corrected.
 
 What I am confident about: the RST structure at the failing location is now valid (explicit markup block separated from following paragraph by a blank line).
+## 2026-03-03 16:03:48 +0000
+Refined `docs/source/security.rst` based on feedback that the tail of the document mixed current guarantees with aspirational hardening advice.
+
+What changed:
+- Replaced the old "Design decisions and recommended hardening options" + operational profiles block with:
+  - `Current design posture` (describes what is true today), and
+  - `Future Security Work` (explicitly prospective; not guaranteed current behavior).
+- Rewrote the operator checklist to a current practical baseline that avoids implying unsupported profile toggles are available today.
+
+State of mind / reflection: the goal was to avoid overpromising capabilities while preserving useful direction. The previous language risked being interpreted as implemented controls.
+
+Risks/uncertainties: this remains a narrative policy doc; if security features land, sections should be updated to move items from “future work” into “current behavior” with concrete links/config names.
+
+Confidence: high that the document now better separates present-state security posture from roadmap-level ideas.
