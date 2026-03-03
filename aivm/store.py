@@ -9,7 +9,7 @@ import tomllib
 import ubelt as ub
 from loguru import logger as log
 
-from .config import AgentVMConfig, FirewallConfig, NetworkConfig
+from .config import AgentVMConfig, BehaviorConfig, FirewallConfig, NetworkConfig
 
 
 @dataclass
@@ -39,6 +39,7 @@ class AttachmentEntry:
 class Store:
     schema_version: int = 5
     active_vm: str = ''
+    behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     defaults: AgentVMConfig | None = None
     networks: list[NetworkEntry] = field(default_factory=list)
     vms: list[VMEntry] = field(default_factory=list)
@@ -72,7 +73,6 @@ def _cfg_from_dict(raw: dict) -> AgentVMConfig:
         'provision',
         'sync',
         'paths',
-        'behavior',
     ):
         body = raw.get(section, None)
         if isinstance(body, dict):
@@ -111,6 +111,11 @@ def load_store(path: Path | None = None) -> Store:
     reg = Store()
     reg.schema_version = int(raw.get('schema_version', 5))
     reg.active_vm = str(raw.get('active_vm', '')).strip()
+    behavior_raw = raw.get('behavior', None)
+    if isinstance(behavior_raw, dict):
+        for k, v in behavior_raw.items():
+            if hasattr(reg.behavior, k):
+                setattr(reg.behavior, k, v)
     defaults_raw = raw.get('defaults', None)
     if isinstance(defaults_raw, dict):
         reg.defaults = _cfg_from_dict(defaults_raw).expanded_paths()
@@ -179,6 +184,9 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
     lines: list[str] = [f'schema_version = {reg.schema_version}']
     lines.append(f'active_vm = "{_toml_escape(reg.active_vm)}"')
     lines.append('')
+    lines.append('[behavior]')
+    _emit_toml_kv(lines, 'yes_sudo', bool(reg.behavior.yes_sudo))
+    lines.append('')
 
     if reg.defaults is not None:
         d = asdict(reg.defaults)
@@ -195,7 +203,6 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
             'provision',
             'sync',
             'paths',
-            'behavior',
         ):
             body = d.get(section, {})
             if not isinstance(body, dict):
@@ -228,7 +235,7 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
         verbosity = int(d.get('verbosity', 1))
         if verbosity != 1:
             lines.append(f'verbosity = {verbosity}')
-        for section in ('vm', 'image', 'provision', 'sync', 'paths', 'behavior'):
+        for section in ('vm', 'image', 'provision', 'sync', 'paths'):
             body = d.get(section, {})
             if not isinstance(body, dict):
                 continue

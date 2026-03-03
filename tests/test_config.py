@@ -12,7 +12,6 @@ def test_dump_load_roundtrip(tmp_path: Path) -> None:
     cfg.vm.name = 'my "vm"'
     cfg.paths.state_dir = '~/code/${USER}/state'
     cfg.sync.paths = ['~/.gitconfig', '/tmp/"quoted".txt']
-    cfg.behavior.yes_sudo = True
     cfg.verbosity = 3
     fpath = tmp_path / '.aivm.toml'
     save(fpath, cfg)
@@ -21,7 +20,6 @@ def test_dump_load_roundtrip(tmp_path: Path) -> None:
     assert cfg2.vm.name == cfg.vm.name
     assert cfg2.paths.state_dir == cfg.paths.state_dir
     assert cfg2.sync.paths == cfg.sync.paths
-    assert cfg2.behavior.yes_sudo is True
     assert cfg2.verbosity == 3
 
 

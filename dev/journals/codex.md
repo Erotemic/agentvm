@@ -726,3 +726,32 @@ Refined privilege UX and policy defaults per feedback.
 Also updated config/store/lint serialization paths to include `behavior` and added tests for roundtrip and CLI default resolution.
 
 Validation: full suite green (`94 passed, 2 skipped`).
+## 2026-03-03 14:46:27 +0000
+Removed top-level `aivm apply` as requested to reduce CLI surface area and overlap with modern one-step flows (`aivm code .` / `aivm ssh .`) and explicit subcommands.
+
+Changes made:
+- Deleted `ApplyCLI` implementation from `aivm/cli/main.py`.
+- Removed `apply = ApplyCLI` from `AgentVMModalCLI` command wiring.
+- Updated README quickstart to remove `aivm apply --interactive` from the primary config-store flow.
+
+State of mind / reflection: this is a straightforward simplification with low operational risk because the underlying granular commands remain available and one-step auto-reconcile flows are now the intended user path.
+
+Uncertainties / risks: existing user scripts invoking `aivm apply` will now fail and must be migrated to explicit command sequences or `aivm code/ssh` workflows.
+
+What I am confident about: command tree no longer includes `aivm apply`, and full suite remains green (`94 passed, 2 skipped`).
+## 2026-03-03 14:53:21 +0000
+Moved sudo-behavior policy to a true top-level store section, as requested.
+
+Changes:
+- `yes_sudo` now lives in top-level `[behavior]` on the config store, not under VM/default sections.
+- Store model now has `Store.behavior` and serialization emits:
+  - `[behavior]`
+  - `yes_sudo = <bool>`
+- Removed per-VM/default behavior serialization (`[vms.behavior]` / `[defaults.behavior]`) from save paths.
+- Updated CLI policy resolution to read `reg.behavior.yes_sudo` as the default for `--yes-sudo`.
+- Updated config lint rules to validate top-level `behavior` and stop treating VM/default `behavior` as first-class.
+
+Compatibility:
+- Added legacy read fallback: if top-level `[behavior]` is absent, loader can still infer `yes_sudo` from old `defaults.behavior` / `vms.behavior` records and surface it in `Store.behavior`.
+
+Validation: full suite passes (`96 passed, 2 skipped`).

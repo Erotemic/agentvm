@@ -597,9 +597,9 @@ def render_global_status() -> str:
         lines.append(f'- VM names: {vm_names}{extra}')
 
     lines.append('')
-    lines.append('ℹ️ No in-scope VM config found for this directory.')
+    lines.append('ℹ️ No VM context resolved for this directory.')
     lines.append(
-        'Use `aivm config init`, then `aivm vm create`, or run '
-        '`aivm status --vm <name>`.'
+        'Use `aivm status --vm <name>`, or run `aivm config init` then '
+        '`aivm vm create` to bootstrap a managed VM.'
     )
     return '\n'.join(lines)

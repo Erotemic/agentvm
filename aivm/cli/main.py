@@ -8,28 +8,16 @@ from pathlib import Path
 
 import scriptconfig as scfg
 
-from ..firewall import apply_firewall
-from ..net import ensure_network
 from ..status import (
     render_global_status,
     render_status,
 )
 from ..store import load_store
-from ..vm import (
-    create_or_start_vm,
-    fetch_image,
-    provision,
-    wait_for_ip,
-)
-from ..vm import (
-    ssh_config as mk_ssh_config,
-)
 from ._common import (
     _BaseCommand,
     _cfg_path,
     _confirm_sudo_block,
     _load_cfg_with_path,
-    _record_vm,
     _resolve_cfg_for_code,
     log,
 )
@@ -37,67 +25,6 @@ from .config import ConfigModalCLI
 from .help import HelpModalCLI
 from .host import HostModalCLI
 from .vm import SSHCLI, AttachCLI, CodeCLI, VMModalCLI
-
-
-class ApplyCLI(_BaseCommand):
-    """Run the full setup workflow from network to provisioning."""
-
-    interactive = scfg.Value(
-        False, isflag=True, help='Print plan and SSH config at the end.'
-    )
-    dry_run = scfg.Value(
-        False, isflag=True, help='Print actions without running.'
-    )
-
-    @classmethod
-    def main(cls, argv=True, **kwargs):
-        args = cls.cli(argv=argv, data=kwargs)
-        cfg, cfg_path = _load_cfg_with_path(args.config)
-        if args.interactive:
-            from .help import PlanCLI
-
-            PlanCLI.main(argv=False, config=args.config, verbose=args.verbose)
-            print()
-        log.debug('Ensuring network is set up')
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Create/update libvirt network '{cfg.network.name}'.",
-        )
-        ensure_network(cfg, recreate=False, dry_run=args.dry_run)
-        if cfg.firewall.enabled:
-            log.debug('Applying firewall rules')
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose='Apply nftables firewall rules.',
-            )
-            apply_firewall(cfg, dry_run=args.dry_run)
-        log.debug('Fetching Ubuntu image')
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Download/cache VM base image.',
-        )
-        fetch_image(cfg, dry_run=args.dry_run)
-        log.debug('Creating or starting VM')
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Create/start VM '{cfg.vm.name}'.",
-        )
-        create_or_start_vm(cfg, dry_run=args.dry_run, recreate=False)
-        if not args.dry_run:
-            _record_vm(cfg, cfg_path)
-        log.debug('Waiting for VM IP address')
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Query VM networking state via virsh.',
-        )
-        wait_for_ip(cfg, timeout_s=360, dry_run=args.dry_run)
-        if cfg.provision.enabled:
-            log.debug('Provisioning VM with tools')
-            provision(cfg, dry_run=args.dry_run)
-        if args.interactive:
-            print('\nSSH config for VS Code:')
-            print(mk_ssh_config(cfg))
-        return 0
 
 
 class ListCLI(_BaseCommand):
@@ -199,14 +126,15 @@ class StatusCLI(_BaseCommand):
         path = None
         try:
             if args.config is not None or _cfg_path(None).exists():
-                cfg, path = _load_cfg_with_path(args.config)
+                cfg, path = _load_cfg_with_path(args.config, vm_opt=args.vm)
             else:
                 cfg, path = _resolve_cfg_for_code(
                     config_opt=None,
                     vm_opt=args.vm,
                     host_src=Path.cwd(),
                 )
-        except Exception:
+        except RuntimeError as ex:
+            log.debug('Status VM-resolution fallback: {}', ex)
             cfg = None
             path = None
         if cfg is None or path is None:
@@ -228,16 +156,15 @@ class StatusCLI(_BaseCommand):
 class AgentVMModalCLI(scfg.ModalCLI):
     """Local libvirt/KVM sandbox VM manager for coding agents."""
 
-    config = ConfigModalCLI
     help = HelpModalCLI
-    host = HostModalCLI
+    status = StatusCLI
+    list = ListCLI
     code = CodeCLI
     ssh = SSHCLI
     attach = AttachCLI
+    config = ConfigModalCLI
     vm = VMModalCLI
-    apply = ApplyCLI
-    list = ListCLI
-    status = StatusCLI
+    host = HostModalCLI
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -61,15 +61,10 @@ def _consume_sudo_intent() -> SudoIntent | None:
     return _SUDO_INTENT.get()
 
 
-def _print_sudo_preview(intent: SudoIntent, cmd: Sequence[str]) -> None:
-    del intent
-    cmd_line = shell_join(cmd)
-    print('Planned privileged command(s):')
-    print(f'  {cmd_line}')
-
-
 def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
-    _print_sudo_preview(intent, cmd)
+    cmd_line = shell_join(cmd)
+    log.opt(depth=2).info('Planned privileged command(s):')
+    log.opt(depth=2).info(f'  {cmd_line}')
     if os.geteuid() == 0:
         return
     if intent.yes:
@@ -79,8 +74,8 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
             'Privileged host operations require confirmation, but stdin is not interactive. '
             'Re-run with --yes.'
         )
-    print('About to run privileged host operations via sudo:')
-    print(f'  {intent.purpose}')
+    log.opt(depth=2).info('About to run privileged host operations via sudo:')
+    log.opt(depth=2).info(f'  {intent.purpose}')
     ans = input('Continue? [y/N]: ').strip().lower()
     if ans not in {'y', 'yes'}:
         raise RuntimeError('Aborted by user.')

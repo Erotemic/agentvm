@@ -112,12 +112,7 @@ def _resolve_cfg_yes_sudo(config_opt: str | None) -> bool:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            if reg.active_vm:
-                rec = find_vm(reg, reg.active_vm)
-                if rec is not None:
-                    cfg_yes_sudo = bool(rec.cfg.behavior.yes_sudo)
-            elif reg.defaults is not None:
-                cfg_yes_sudo = bool(reg.defaults.behavior.yes_sudo)
+            cfg_yes_sudo = bool(reg.behavior.yes_sudo)
     except Exception:
         cfg_yes_sudo = False
     return cfg_yes_sudo

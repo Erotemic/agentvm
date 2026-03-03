@@ -16,7 +16,6 @@ from loguru import logger
 
 from ..config import (
     AgentVMConfig,
-    BehaviorConfig,
     FirewallConfig,
     ImageConfig,
     NetworkConfig,
@@ -442,6 +441,7 @@ def _lint_store_file(path: Path) -> list[str]:
     allowed_top = {
         'schema_version',
         'active_vm',
+        'behavior',
         'defaults',
         'networks',
         'vms',
@@ -460,7 +460,6 @@ def _lint_store_file(path: Path) -> list[str]:
         'provision',
         'sync',
         'paths',
-        'behavior',
     }
     section_allowed: dict[str, set[str]] = {
         'vm': _field_names(VMConfig),
@@ -470,8 +469,16 @@ def _lint_store_file(path: Path) -> list[str]:
         'provision': _field_names(ProvisionConfig),
         'sync': _field_names(SyncConfig),
         'paths': _field_names(PathsConfig),
-        'behavior': _field_names(BehaviorConfig),
     }
+    behavior = raw.get('behavior', None)
+    if behavior is not None:
+        if not isinstance(behavior, dict):
+            problems.append('top-level key "behavior" should be a table/object')
+        else:
+            allowed_behavior = {'yes_sudo'}
+            for key in sorted(behavior.keys()):
+                if key not in allowed_behavior:
+                    problems.append(f'behavior unknown key: {key!r}')
     defaults = raw.get('defaults', None)
     if defaults is not None:
         if not isinstance(defaults, dict):
@@ -486,7 +493,6 @@ def _lint_store_file(path: Path) -> list[str]:
                 'provision',
                 'sync',
                 'paths',
-                'behavior',
             }
             for key in sorted(defaults.keys()):
                 if key not in allowed_defaults_record:

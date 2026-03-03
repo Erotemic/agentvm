@@ -66,7 +66,6 @@ Config-store flow:
    aivm host doctor
    aivm status
    aivm status --detail
-   aivm apply --interactive
 
 No-local-init flow (recommended UX for new repos):
 

@@ -159,7 +159,7 @@ def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     store.defaults = AgentVMConfig()
-    store.defaults.behavior.yes_sudo = True
+    store.behavior.yes_sudo = True
     save_store(store, cfg_path)
     monkeypatch.setattr('aivm.cli.help._cfg_path', lambda p: cfg_path)
     parsed = PlanCLI.cli(
