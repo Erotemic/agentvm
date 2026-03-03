@@ -95,7 +95,10 @@ def _resolve_cfg_verbosity(config_opt: str | None) -> int:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            if reg.active_vm:
+            behavior_verbose = int(getattr(reg.behavior, 'verbose', 1) or 1)
+            if behavior_verbose != 1:
+                cfg_verbosity = behavior_verbose
+            elif reg.active_vm:
                 rec = find_vm(reg, reg.active_vm)
                 if rec is not None:
                     cfg_verbosity = int(rec.cfg.verbosity)

@@ -773,3 +773,29 @@ Tradeoffs: fewer helper boundaries can make long methods denser, but here the ne
 What might break: monkeypatch targets using old private function names.
 
 What I am confident about: behavior parity is preserved; targeted tests and full suite pass (`96 passed, 2 skipped`).
+## 2026-03-03 15:27:06 +0000
+Implemented two cleanup/UX fixes requested by the user:
+
+1) INFO logs for file writes
+- Added explicit INFO log lines immediately before every direct runtime `write_text(...)` in `aivm` code:
+  - config store writes (`aivm/store.py`)
+  - single VM config writes (`aivm/config.py`)
+  - SSH config entry updates (`aivm/cli/vm.py`)
+  - VM IP cache writes (`aivm/vm/lifecycle.py`)
+- This gives a consistent operator-visible audit trail of local file mutations.
+
+2) Top-level behavior verbosity defaults
+- Extended top-level behavior config with `verbose` and wired it into CLI logging default resolution.
+- Root cause was that `_resolve_cfg_verbosity` only considered active/default VM verbosity and ignored `[behavior]` entirely.
+- Added serialization and lint support for `[behavior].verbose`.
+
+Tradeoff and precedence decision:
+- To preserve old semantics for configs that never set behavior verbosity, I made behavior verbosity override only when it is non-default (`!= 1`).
+- If behavior verbose is left at default 1, prior fallback still works (active VM verbosity, then defaults verbosity).
+- If behavior verbose is explicitly set to another value (e.g., 100), it now controls CLI logging as intended.
+
+State of mind / reflection: this was a targeted correction that improved predictability without broad refactors. I intentionally avoided introducing a larger logging abstraction and instead instrumented concrete write sites to keep behavior obvious.
+
+Risks/uncertainties: some users might expect behavior verbose=1 to force INFO and suppress VM/default verbosity; current logic treats 1 as neutral to preserve compatibility with prior VM-scoped verbosity behavior.
+
+Confidence: high; targeted tests and full suite passed (`97 passed, 2 skipped`).

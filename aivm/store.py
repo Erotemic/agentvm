@@ -186,6 +186,7 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
     lines.append('')
     lines.append('[behavior]')
     _emit_toml_kv(lines, 'yes_sudo', bool(reg.behavior.yes_sudo))
+    _emit_toml_kv(lines, 'verbose', int(reg.behavior.verbose))
     lines.append('')
 
     if reg.defaults is not None:
@@ -253,6 +254,7 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
         lines.append(f'tag = "{_toml_escape(att.tag)}"')
         lines.append('')
 
+    log.info('Writing config store to {}', fpath)
     fpath.write_text('\n'.join(lines).rstrip() + '\n', encoding='utf-8')
     return fpath
 

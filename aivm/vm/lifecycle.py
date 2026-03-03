@@ -670,6 +670,7 @@ def wait_for_ip(
                 if ip:
                     break
         if ip:
+            log.info('Writing VM IP cache to {}', ip_file)
             ip_file.write_text(ip + '\n', encoding='utf-8')
             log.info('VM IP: {} (saved to {})', ip, ip_file)
             return ip
@@ -691,6 +692,7 @@ def wait_for_ip(
                 capture=True,
             )
             if ssh_probe.code == 0:
+                log.info('Writing VM IP cache to {}', ip_file)
                 ip_file.write_text(cached_ip + '\n', encoding='utf-8')
                 log.info(
                     'VM reachable via cached IP fallback: {} (saved to {})',

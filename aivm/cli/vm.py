@@ -1426,6 +1426,7 @@ def _upsert_ssh_config_entry(
         path=ssh_cfg,
         purpose=f"Update SSH config entry for host '{block_name}'.",
     )
+    log.info('Writing SSH config entry to {}', ssh_cfg)
     ssh_cfg.write_text(updated, encoding='utf-8')
     return ssh_cfg, True
 

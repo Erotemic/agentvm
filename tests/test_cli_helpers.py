@@ -169,6 +169,21 @@ def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
     assert bool(parsed.yes_sudo) is True
 
 
+def test_cli_verbose_defaults_from_behavior_config(tmp_path: Path) -> None:
+    cfg_path = tmp_path / 'config.toml'
+    store = Store()
+    store.defaults = AgentVMConfig()
+    store.defaults.verbosity = 2
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-verbose'
+    cfg.verbosity = 2
+    upsert_vm(store, cfg)
+    store.active_vm = cfg.vm.name
+    store.behavior.verbose = 4
+    save_store(store, cfg_path)
+    assert common_mod._resolve_cfg_verbosity(str(cfg_path)) == 4
+
+
 def test_help_raw_outputs_direct_system_commands(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
