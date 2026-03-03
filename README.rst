@@ -23,16 +23,16 @@ The aivm Module
 A small Python CLI to **create and manage a local libvirt/KVM Ubuntu 24.04 VM**
 designed for running coding agents with a stronger boundary than containers.
 
-Features:
+What it provides
+----------------
 
-* Explicit libvirt NAT network creation (named, dedicated subnet)
-* Optional host firewall isolation via nftables (bridge-scoped)
-* Ubuntu 24.04 cloud-image provisioning via cloud-init
-* SSH helpers + VS Code Remote-SSH snippet
-* Optional virtiofs host directory share (explicit break in default isolation model)
-* Optional provisioning inside VM (docker + dev tools)
-* Optional host settings sync into VM user profile (git/vscode shell config, etc.)
-* Single global config store with compose-style VM and attachment entries
+* Dedicated libvirt NAT network per ``aivm`` configuration
+* Optional host firewall isolation via nftables
+* Ubuntu cloud-image VM provisioning via cloud-init
+* SSH + VS Code Remote-SSH workflows
+* Optional virtiofs folder sharing (explicit trust extension)
+* Optional settings sync into the guest user profile
+* A single config store for defaults, VMs, networks, and attachments
 
 .. note::
 
@@ -50,26 +50,12 @@ Install
 
    uv pip install .
 
-Quickstart
+Fast Start
 ----------
 
-Config-store flow:
+Recommended for new repos:
 
-.. code-block:: bash
-
-   aivm config init
-   aivm vm create
-   aivm vm update
-   aivm config discover
-   aivm config show
-   aivm config edit
-   aivm help plan
-   aivm help tree
-   aivm host doctor
-   aivm status
-   aivm status --detail
-
-No-local-init flow (recommended UX for new repos):
+Currently ``aivm config init``  is required, but we will make that implicit in a future version.
 
 .. code-block:: bash
 
@@ -77,49 +63,63 @@ No-local-init flow (recommended UX for new repos):
    aivm status
    aivm status --sudo   # optional deeper privileged checks
 
-``aivm code .`` auto-selects a VM from the global config store
-(``active_vm`` / attachment lookup / prompt if ambiguous), auto-attaches the
-folder if needed, then opens VS Code.
-Global config metadata is stored in a user config appdir
-(``~/.config/aivm/config.toml``).
-By default ``status`` avoids sudo and reports limited checks; use
-``status --sudo`` for privileged network/firewall/libvirt/image checks.
-Privileged host actions prompt for confirmation before sudo blocks; use ``--yes``
-to auto-approve all prompts, or ``--yes-sudo`` to auto-approve only sudo prompts.
-You can set a default in config:
+``aivm code .`` auto-selects/bootstraps VM context from the global config store
+(``~/.config/aivm/config.toml``), attaches the current folder if needed, and
+opens VS Code.
+
+If you prefer an explicit flow, ``aivm config init`` is required before
+``aivm vm create``.
+
+See also:
+
+* `Quickstart <docs/source/quickstart.rst>`_
+* `Workflows <docs/source/workflows.rst>`_
+
+Status and sudo behavior
+------------------------
+
+By default, ``aivm status`` avoids privileged probes. Use ``--sudo`` for
+network/firewall/libvirt/image checks.
+
+Privileged host actions prompt before sudo operations. Use:
+
+* ``--yes`` to auto-approve all prompts
+* ``--yes-sudo`` to auto-approve only sudo prompts
+
+Config default:
 
 .. code-block:: toml
 
    [behavior]
    yes_sudo = true
 
-``aivm code .`` first performs non-sudo probes and only asks for sudo when it
-can confirm privileged actions are needed.
+Common Workflows
+----------------
 
-Then connect with VS Code Remote-SSH using:
+VS Code and SSH
 
 .. code-block:: bash
 
    aivm vm ssh_config
 
-Or do it in one step (share current project directory and launch VS Code in the VM):
-
 .. code-block:: bash
 
-   # top-level shortcut (works in a new repo with no local init)
    aivm code . --sync_settings
-   # equivalent vm-group form
    aivm vm code --host_src . --sync_settings
-   # shorthand positional host folder
    aivm vm code . --sync_settings
-
-Open an interactive SSH shell in the mapped guest directory:
-
-.. code-block:: bash
-
    aivm vm ssh .
 
-List managed resources:
+Folder attachment
+
+.. code-block:: bash
+
+   aivm attach .
+   aivm vm attach --vm aivm-2404 --host_src .
+
+By default, attached folders mount to the same absolute path inside the guest.
+Use ``--guest_dst`` to override. Running VMs are live-attached when possible.
+
+Inventory and visibility
 
 .. code-block:: bash
 
@@ -128,49 +128,25 @@ List managed resources:
    aivm list --section vms
    aivm list --section networks
    aivm list --section folders
+   aivm status --detail
 
-Attach a folder to a managed VM (shared mode):
-
-.. code-block:: bash
-
-   aivm attach .
-   # explicit vm-group form
-   aivm vm attach --vm aivm-2404 --host_src .
-
-By default, attached folders mount to the same absolute path inside the VM as
-on the host. Use ``--guest_dst`` to override.
-When the target VM is already running, ``aivm attach .`` now live-attaches the
-share and mounts it immediately inside the guest at ``guest_dst``.
-When possible, ``aivm code .`` live-attaches new shares to existing VMs
-(``--live`` when running) instead of
-requiring recreation.
-If a VM fails to start because its libvirt XML references a missing virtiofs
-host path, ``aivm code .`` now auto-recreates that VM definition with the
-current requested share path.
-
-Make VM Feel Like Your Host
----------------------------
-
-Sync selected user settings/files into the VM:
+Config-store lifecycle (explicit flow)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
+   aivm config init
+   aivm vm create
    aivm vm sync_settings
-
-Reconcile config drift (CPU / RAM / disk) back into libvirt VM settings:
-
-.. code-block:: bash
-
    aivm vm update
+   aivm config discover
+   aivm config show
+   aivm config edit
+   aivm help plan
+   aivm help tree
+   aivm host doctor
 
-Override what to sync ad hoc:
-
-.. code-block:: bash
-
-   aivm vm sync-settings \
-     --paths "~/.gitconfig,~/.config/Code/User/settings.json,~/.tmux.conf"
-
-You can set defaults in config:
+Settings sync configuration
 
 .. code-block:: toml
 
@@ -186,8 +162,14 @@ You can set defaults in config:
      "~/.bashrc",
    ]
 
-When ``[sync].enabled=true``, ``aivm vm code ...`` will sync those paths
-before launching VS Code.
+Ad hoc override:
+
+.. code-block:: bash
+
+   aivm vm sync-settings \
+     --paths "~/.gitconfig,~/.config/Code/User/settings.json,~/.tmux.conf"
+
+When ``[sync].enabled=true``, ``aivm vm code ...`` syncs before launching VS Code.
 
 Command Groups
 --------------
@@ -202,11 +184,11 @@ Command Groups
    aivm host fw --help
    aivm vm --help
 
-Notes
------
+Safety Notes
+------------
 
 * This tool assumes **Linux + libvirt**. It focuses on Debian/Ubuntu hosts for dependency installation.
-* Security model and threat model details: ``docs/source/security.rst``.
+* Security model and threat model details: the `Security Model <docs/source/security.rst>`_.
 * NAT alone does not prevent VM -> LAN. Enable firewall isolation if you want "internet-only" access.
 * To allow specific VM->host or VM->blocked-LAN service ports while firewall isolation is enabled, set ``[firewall].allow_tcp_ports`` / ``allow_udp_ports`` in config (for example ``allow_tcp_ports = [22, 5432]``).
 * virtiofs sharing is optional; it's powerful, but it intentionally exposes that host directory to the VM.

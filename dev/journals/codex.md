@@ -907,3 +907,17 @@ State of mind / reflection: the goal was to avoid overpromising capabilities whi
 Risks/uncertainties: this remains a narrative policy doc; if security features land, sections should be updated to move items from “future work” into “current behavior” with concrete links/config names.
 
 Confidence: high that the document now better separates present-state security posture from roadmap-level ideas.
+## 2026-03-03 16:38:09 +0000
+Refactored `README.rst` for readability while preserving required top elements (badges + top-level links table).
+
+What changed:
+- Reorganized content into a clearer flow: what it provides, install, fast start, status/sudo behavior, common workflows, command groups, and safety notes.
+- Reduced repetitive prose and grouped commands by user intent.
+- Kept security model link visible in both warning and safety notes.
+- Corrected an accidental code-block language mismatch (`ssh_config` snippet now marked as bash).
+
+State of mind / reflection: aimed for practical onboarding clarity without deleting important operational caveats.
+
+Risks/uncertainties: README restructuring can still omit niche details some power users expect; deeper lifecycle corner-cases may still belong in docs rather than README.
+
+Confidence: high that the README now scans better for first-time users while preserving key safety and workflow information.
