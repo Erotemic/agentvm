@@ -6,7 +6,6 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import scriptconfig as scfg
 from loguru import logger
@@ -23,11 +22,9 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import run_cmd, shell_join
+from ..util import arm_sudo_intent, clear_sudo_intent
 
 log = logger
-
-_SUDO_VALIDATED = False
 _LAST_LOGGING_STATE: tuple[str, bool] | None = None
 
 
@@ -54,6 +51,7 @@ class _BaseCommand(scfg.DataConfig):
 
     @classmethod
     def cli(cls, *args, **kwargs):  # type: ignore[override]
+        clear_sudo_intent()
         parsed = super().cli(*args, **kwargs)
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
         args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
@@ -262,52 +260,20 @@ def _record_vm(cfg: AgentVMConfig, store_file: Path | None = None) -> Path:
     return save_store(reg, target)
 
 
-def _has_passwordless_sudo() -> bool:
-    res = run_cmd(['sudo', '-n', 'true'], sudo=False, check=False, capture=True)
-    return res.code == 0
-
-
 def _confirm_sudo_block(
     *,
     yes: bool,
     purpose: str,
-    preview_cmds: Sequence[Sequence[str] | str] | None = None,
+    preview_cmds=None,
 ) -> None:
-    global _SUDO_VALIDATED
     log.trace(
-        'Confirm sudo block yes={} purpose={!r} sudo_validated={}',
+        'Confirm sudo block yes={} purpose={!r}',
         yes,
         purpose,
-        _SUDO_VALIDATED,
     )
-    if preview_cmds:
-        print('Planned privileged command(s):')
-        for item in preview_cmds:
-            if isinstance(item, str):
-                line = item
-            else:
-                line = shell_join([str(p) for p in item])
-            print(f'  {line}')
-
     if os.geteuid() == 0:
         return
-    if not _SUDO_VALIDATED and _has_passwordless_sudo():
-        _SUDO_VALIDATED = True
-    if yes:
-        return
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            'Privileged host operations require confirmation, but stdin is not interactive. '
-            'Re-run with --yes.'
-        )
-    print('About to run privileged host operations via sudo:')
-    print(f'  {purpose}')
-    ans = input('Continue? [y/N]: ').strip().lower()
-    if ans not in {'y', 'yes'}:
-        raise RuntimeError('Aborted by user.')
-    if not _SUDO_VALIDATED:
-        run_cmd(['sudo', '-v'], sudo=False, check=True, capture=False)
-        _SUDO_VALIDATED = True
+    arm_sudo_intent(yes=bool(yes), purpose=purpose, preview_cmds=preview_cmds)
 
 
 def _confirm_external_file_update(

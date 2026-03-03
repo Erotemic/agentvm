@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -30,8 +32,61 @@ class CmdError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class SudoIntent:
+    yes: bool
+    purpose: str
+
+
+_SUDO_INTENT: ContextVar[SudoIntent | None] = ContextVar(
+    'aivm_sudo_intent', default=None
+)
+
+
 def shell_join(cmd: Sequence[str]) -> str:
     return ' '.join(shlex.quote(c) for c in cmd)
+
+
+def arm_sudo_intent(
+    *, yes: bool, purpose: str, preview_cmds: Sequence[Sequence[str] | str] | None
+) -> None:
+    del preview_cmds
+    _SUDO_INTENT.set(
+        SudoIntent(yes=bool(yes), purpose=str(purpose))
+    )
+
+
+def clear_sudo_intent() -> None:
+    _SUDO_INTENT.set(None)
+
+
+def _consume_sudo_intent() -> SudoIntent | None:
+    return _SUDO_INTENT.get()
+
+
+def _print_sudo_preview(intent: SudoIntent, cmd: Sequence[str]) -> None:
+    del intent
+    cmd_line = shell_join(cmd)
+    print('Planned privileged command(s):')
+    print(f'  {cmd_line}')
+
+
+def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
+    _print_sudo_preview(intent, cmd)
+    if os.geteuid() == 0:
+        return
+    if intent.yes:
+        return
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            'Privileged host operations require confirmation, but stdin is not interactive. '
+            'Re-run with --yes.'
+        )
+    print('About to run privileged host operations via sudo:')
+    print(f'  {intent.purpose}')
+    ans = input('Continue? [y/N]: ').strip().lower()
+    if ans not in {'y', 'yes'}:
+        raise RuntimeError('Aborted by user.')
 
 
 def run_cmd(
@@ -54,8 +109,12 @@ def run_cmd(
         shell_join(cmd),
     )
     if sudo and os.geteuid() != 0:
-        # Non-interactive sudo: fail fast if password/TTY is required.
-        cmd = ['sudo', '-n', *cmd]
+        intent = _consume_sudo_intent()
+        if intent is not None:
+            _ensure_sudo_ready(intent, original_cmd)
+        # Use interactive sudo when stdin is a TTY so the user sees/authenticates
+        # on the actual command. In non-interactive mode, fail fast.
+        cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
         log.opt(depth=1).debug(
             'Running with sudo: {}', shell_join(original_cmd)
         )

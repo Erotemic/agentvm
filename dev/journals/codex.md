@@ -663,3 +663,41 @@ State of mind / reflection: this makes the CLI’s intent legible at the exact d
 Uncertainties / risks: some previews are representative templates (e.g., generated XML/ruleset files) rather than literal final argv for every internal sub-step. The concrete runtime `RUN:` logs still provide exact executed commands once approved.
 
 What I am confident about: behavior is now materially improved for trust/transparency, and full suite remains green (`90 passed, 2 skipped`).
+## 2026-03-03 01:11:14 +0000
+Implemented deferred sudo preflight/confirmation via intent arming so the prompt occurs at the first real `sudo` command execution point and can show that exact next command.
+
+Technical changes:
+- Added `SudoIntent` + contextvar state in `aivm/util.py` (`arm_sudo_intent`, consume-on-use flow).
+- Moved sudo preflight/prompt behavior into `run_cmd(..., sudo=True)` when an intent is armed.
+- First sudo command now previews:
+  - `sudo -n true`
+  - any high-level preview lines
+  - the exact immediate command about to run
+- Kept session-level sudo cache in util (`_SUDO_VALIDATED`) so repeated privileged calls do not reprompt.
+- Simplified `aivm/cli/_common.py::_confirm_sudo_block` to arm intent only.
+
+State of mind / reflection: this addressed the UX gap around “show me what you are actually about to run” without requiring fragile duplicated command strings at every callsite. The tradeoff is a little more stateful behavior in `run_cmd`, but it remains opt-in (only when a CLI flow arms intent).
+
+Uncertainties / risks: if a privileged path forgets to call `_confirm_sudo_block`, it will still execute via old sudo behavior (no intent preview/prompt context). Existing policy already expects callsites to declare privileged boundaries.
+
+What I am confident about: full suite passes (`92 passed, 2 skipped`) and targeted tests now cover intent-armed sudo flows.
+## 2026-03-03 01:20:09 +0000
+Follow-up refinement to sudo-preview UX to eliminate drift-prone duplicated command previews. The intent path now ignores callsite `preview_cmds` and always renders the immediate privileged command directly from `run_cmd` at execution time, alongside `sudo -n true`. This guarantees preview accuracy without maintaining command strings in two places.
+
+I kept the arming model via `_confirm_sudo_block` and one-shot consumption at first sudo call so the displayed “next command” is exact and deterministic. Added `clear_sudo_intent()` helper and used it in util tests to avoid stale-intent leakage across test process state.
+
+State of mind / reflection: this better matches the user’s concern about command drift while preserving explicit CLI privilege boundaries.
+
+What I am confident about: test suite remains green (`92 passed, 2 skipped`).
+## 2026-03-03 01:24:36 +0000
+Adjusted sudo UX to remove `sudo -n true` preflight entirely. Privilege confirmation now happens only at the first actual privileged command execution point, and preview output shows only that real command (no synthetic probe command).
+
+Implementation notes:
+- `run_cmd(..., sudo=True)` now uses `sudo <cmd>` when stdin is interactive, allowing native sudo password prompt on the real command.
+- Non-interactive mode still uses `sudo -n <cmd>` for fail-fast behavior.
+- Intent-armed confirmation (`_confirm_sudo_block`) remains as the yes/no gate; with `yes=False` it prompts before each intent-scoped sudo command.
+- Added intent reset at CLI parse entry (`clear_sudo_intent()`) to prevent stale intent leakage.
+
+State of mind / reflection: this directly aligns behavior with user expectation that logs and prompt context should map to the real command, not a probe.
+
+What I am confident about: full suite remains green (`92 passed, 2 skipped`).
