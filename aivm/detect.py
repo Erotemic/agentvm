@@ -1,4 +1,8 @@
-"""Auto-detection of host defaults such as SSH identity and network parameters."""
+"""Host default detection for first-run/bootstrap ergonomics.
+
+Detection is best-effort and advisory: callers may still override all values via
+config or CLI flags.
+"""
 
 from __future__ import annotations
 

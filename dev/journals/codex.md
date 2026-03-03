@@ -921,3 +921,36 @@ State of mind / reflection: aimed for practical onboarding clarity without delet
 Risks/uncertainties: README restructuring can still omit niche details some power users expect; deeper lifecycle corner-cases may still belong in docs rather than README.
 
 Confidence: high that the README now scans better for first-time users while preserving key safety and workflow information.
+## 2026-03-03 17:40:52 +0000
+Documentation-context pass in core code paths to improve maintainability for human/agent readers without changing behavior.
+
+What I changed:
+- Expanded key module/function docstrings in orchestration-heavy files:
+  - `aivm/util.py`: clarified that `run_cmd` is the policy center for command logging and sudo intent semantics.
+  - `aivm/cli/_common.py`: documented VM resolution precedence and folder-flow config resolution intent.
+  - `aivm/cli/vm.py`: documented host dependency gating, VM update drift strategy, attach-session reconciliation role, and session bootstrap behavior.
+  - `aivm/vm/lifecycle.py`: expanded module-level context and added lifecycle summary docstrings for cloud-init generation and create/start behavior.
+  - `aivm/store.py`: documented effective-config materialization via VM/network join.
+- Added one targeted inline comment in sudo intent plumbing explaining why intent is not consumed one-shot.
+
+Reflection: focused on "why" and control-flow intent at points where function names alone do not reveal design constraints. Avoided dense inline commentary that would age poorly.
+
+Risk/tradeoff: more docstring prose can drift if behavior changes; chosen comments are at stable orchestration boundaries to minimize churn.
+
+Confidence: high; this was non-functional and validated by `ty check aivm` plus full tests (`97 passed, 2 skipped`).
+## 2026-03-03 19:08:22 +0000
+Performed requested staged documentation pass: deep context updates first in `status.py` and `cli/config.py`, then a broader repo-wide module-docstring sweep.
+
+Deep pass details:
+- `aivm/status.py`: expanded module context, documented tri-state `ProbeOutcome`, and added intent docstrings for probe/render functions.
+- `aivm/cli/config.py`: expanded module context and documented interactive init review, discover/import behavior, lint scope, and discovery summary helpers.
+
+Repo-wide pass details:
+- Expanded terse module docstrings in core modules (`config`, `detect`, `firewall`, `host`, `net`, `resource_checks`, `runtime`, `store`) and CLI/VM wrappers (`cli/main`, `cli/help`, `cli/host`, `cli/net`, `cli/firewall`, `vm/share`, `vm/sync`).
+- Added targeted orchestration docstrings/comments in `util`, `cli/_common`, `cli/vm`, and `vm/lifecycle` to capture design intent and non-obvious flow decisions.
+
+Reflection: I prioritized comments that communicate control-flow intent, policy boundaries, and tradeoffs rather than narrating obvious code mechanics.
+
+Risk/tradeoff: additional prose can drift as behavior evolves; I kept commentary centered on stable boundaries (resolution precedence, probe semantics, orchestration pivots) to reduce churn.
+
+Validation: `ty check aivm` passed; full tests passed (`97 passed, 2 skipped`).

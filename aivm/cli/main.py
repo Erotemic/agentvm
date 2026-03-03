@@ -1,5 +1,10 @@
 # PYTHON_ARGCOMPLETE_OK
-"""Top-level modal CLI wiring, argv normalization, and logging setup."""
+"""Top-level CLI wiring and status entry points.
+
+This module defines cross-group aliases and shared behaviors that should feel
+consistent regardless of whether users enter through ``aivm vm ...`` or
+top-level convenience commands.
+"""
 
 from __future__ import annotations
 

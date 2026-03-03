@@ -1,4 +1,8 @@
-"""CLI commands for host setup, dependency checks, and host operations."""
+"""Host-focused CLI commands.
+
+Covers host preflight checks, dependency installation, and host-level helpers
+that are prerequisites for VM workflows.
+"""
 
 from __future__ import annotations
 

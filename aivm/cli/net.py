@@ -1,4 +1,4 @@
-"""CLI commands for libvirt network lifecycle management."""
+"""CLI wrappers around managed libvirt network lifecycle operations."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""CLI commands for applying, inspecting, and removing firewall rules."""
+"""CLI wrappers for firewall apply/status/remove operations."""
 
 from __future__ import annotations
 

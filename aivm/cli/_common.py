@@ -194,6 +194,13 @@ def _resolve_vm_name(
     vm_opt: str,
     host_src: Path | None,
 ) -> tuple[str, Path]:
+    """Resolve a VM name using CLI intent precedence.
+
+    Precedence is deliberate:
+    explicit ``--vm`` > folder attachment mapping > active VM > single VM >
+    interactive selection. This keeps one-command workflows predictable while
+    still allowing explicit override.
+    """
     log.trace(
         'Resolving VM name config_opt={} vm_opt={} host_src={}',
         config_opt,
@@ -333,6 +340,7 @@ def _resolve_cfg_for_code(
     vm_opt: str,
     host_src: Path,
 ) -> tuple[AgentVMConfig, Path]:
+    """Resolve VM config for folder-oriented flows (``code``/``ssh``/``attach``)."""
     return _load_cfg_with_path(
         config_opt,
         vm_opt=vm_opt,

@@ -1,4 +1,8 @@
-"""Single-file config store for defaults, networks, VMs, and attachments."""
+"""Single-file registry model for defaults, networks, VMs, and attachments.
+
+This store is the canonical source for "managed by aivm" state and is designed
+to support folder-centric VM resolution workflows.
+"""
 
 from __future__ import annotations
 
@@ -335,6 +339,12 @@ def network_users(reg: Store, network_name: str) -> list[str]:
 
 
 def materialize_vm_cfg(reg: Store, vm_name: str) -> AgentVMConfig:
+    """Build an effective VM config by joining VM entry + referenced network.
+
+    VM records keep only a ``network_name`` pointer; network/firewall details
+    live in ``[[networks]]``. This join step avoids stale duplicated network
+    settings in VM entries and centralizes network edits.
+    """
     vm = find_vm(reg, vm_name)
     if vm is None:
         raise RuntimeError(f'VM not found in config store: {vm_name}')

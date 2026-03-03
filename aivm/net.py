@@ -1,4 +1,8 @@
-"""Libvirt network create/destroy/status helpers for the managed NAT network."""
+"""Libvirt network lifecycle helpers for the managed NAT network.
+
+The functions here are intentionally idempotent-oriented (ensure/destroy/status)
+so higher-level CLI flows can compose them safely.
+"""
 
 from __future__ import annotations
 

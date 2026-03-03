@@ -1,4 +1,8 @@
-"""Runtime helpers for constructing virsh and SSH command arguments."""
+"""Runtime command-shaping helpers for virsh/ssh invocations.
+
+Keeping these helpers centralized reduces drift in connection defaults and
+libvirt URI usage across CLI and VM lifecycle modules.
+"""
 
 from __future__ import annotations
 

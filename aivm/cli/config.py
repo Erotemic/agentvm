@@ -1,4 +1,9 @@
-"""Config-store subcommands (init, discover, show, edit, and path inspection)."""
+"""Config-store CLI operations.
+
+This command group owns the operator-facing lifecycle of the global store:
+bootstrap defaults, inspect/edit state, discover unmanaged libvirt VMs, and
+lint for schema drift.
+"""
 
 from __future__ import annotations
 
@@ -92,6 +97,7 @@ class InitCLI(_BaseCommand):
 
 
 def _render_init_default_summary(cfg: AgentVMConfig, path: Path) -> str:
+    """Render a human review summary before persisting config defaults."""
     lines = [
         'Detected defaults for `aivm config init`:',
         f'  config_store: {path}',
@@ -111,6 +117,7 @@ def _render_init_default_summary(cfg: AgentVMConfig, path: Path) -> str:
 
 
 def _ssh_key_setup_warning_lines(cfg: AgentVMConfig) -> list[str]:
+    """Return advisory warnings when SSH key paths are missing/unusable."""
     ident = (cfg.paths.ssh_identity_file or '').strip()
     pub = (cfg.paths.ssh_pubkey_path or '').strip()
     ident_ok = bool(ident) and Path(ident).expanduser().exists()
@@ -134,6 +141,7 @@ def _ssh_key_setup_warning_lines(cfg: AgentVMConfig) -> list[str]:
 
 
 def _warn_high_resource_defaults(cfg: AgentVMConfig) -> None:
+    """Log host-resource warnings for detected default VM sizing."""
     for line in vm_resource_warning_lines(cfg):
         log.warning('Config-init default resource warning: {}', line)
 
@@ -162,6 +170,7 @@ def _prompt_int_with_default(prompt: str, default: int) -> int:
 def _review_init_defaults_interactive(
     cfg: AgentVMConfig, path: Path
 ) -> AgentVMConfig:
+    """Interactive review/edit loop for ``aivm config init`` defaults."""
     if not sys.stdin.isatty():
         raise RuntimeError(
             'Config init defaults require confirmation in interactive mode. '
@@ -345,6 +354,8 @@ class ConfigDiscoverCLI(_BaseCommand):
 
     @classmethod
     def main(cls, argv=True, **kwargs):
+        # Discover is intentionally conservative: unmanaged VMs require explicit
+        # import confirmation (unless --yes) to avoid surprising ownership grabs.
         args = cls.cli(argv=argv, data=kwargs)
         names_res = run_cmd(
             virsh_system_cmd('list', '--all', '--name'),
@@ -431,10 +442,16 @@ class ConfigLintCLI(_BaseCommand):
 
 
 def _field_names(cls: type) -> set[str]:
+    """Small helper for dataclass-backed lint allow-lists."""
     return {f.name for f in fields(cls)}
 
 
 def _lint_store_file(path: Path) -> list[str]:
+    """Return schema/shape problems for the config store file.
+
+    Lint focuses on unknown or structurally invalid keys so users can catch
+    typos and stale fields after format evolution.
+    """
     raw = tomllib.loads(path.read_text(encoding='utf-8'))
     problems: list[str] = []
 
@@ -606,6 +623,7 @@ class ConfigModalCLI(scfg.ModalCLI):
 
 
 def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
+    """Collect a minimal VM summary used for discover/import prompts."""
     info: dict[str, object] = {
         'name': vm_name,
         'state': 'unknown',
@@ -673,6 +691,7 @@ def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
 def _prompt_import_discovered_vm(
     vm_info: dict[str, object], *, yes: bool
 ) -> bool:
+    """Ask whether an unmanaged discovered VM should be imported into store."""
     if yes:
         return True
     if not sys.stdin.isatty():

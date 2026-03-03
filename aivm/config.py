@@ -1,4 +1,8 @@
-"""Configuration data model and TOML serialization helpers for VM settings."""
+"""Configuration schema and TOML serialization helpers.
+
+These dataclasses describe user-facing config knobs. ``store.py`` composes them
+into the global config registry format.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,8 @@
-"""Host-to-guest settings file synchronization helpers."""
+"""Host-to-guest settings synchronization helpers.
+
+These routines are convenience features and intentionally separate from VM
+creation/provisioning core lifecycle operations.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,8 @@
-"""Virtiofs share inspection, attach, and guest-side mount helpers."""
+"""Virtiofs share inspection, attach, and guest-side mount reconciliation.
+
+This module holds the explicit host/guest boundary-extension logic used when
+folders are shared into VMs.
+"""
 
 from __future__ import annotations
 

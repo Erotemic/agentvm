@@ -1,4 +1,9 @@
-"""Shared utility helpers for subprocess execution, paths, and command formatting."""
+"""Shared utility helpers for command execution and CLI safety boundaries.
+
+This module is intentionally central: most host/VM operations eventually call
+``run_cmd``. Keeping sudo-confirmation semantics here ensures the command shown
+to users is the command actually executed.
+"""
 
 from __future__ import annotations
 
@@ -56,6 +61,8 @@ def clear_sudo_intent() -> None:
 
 
 def _consume_sudo_intent() -> SudoIntent | None:
+    # Intentionally *not* one-shot. We keep the intent armed so each sudo call
+    # in the current flow can require explicit confirmation unless --yes-sudo.
     return _SUDO_INTENT.get()
 
 
@@ -89,6 +96,15 @@ def run_cmd(
     input_text: Optional[str] = None,
     env: Optional[dict[str, str]] = None,
 ) -> CmdResult:
+    """Execute a command with consistent logging, sudo policy, and error handling.
+
+    Design notes:
+    * ``check=True`` is treated as an imperative/change action and logged at
+      INFO so users can follow setup steps.
+    * ``check=False`` is usually probe/introspection and logged at DEBUG.
+    * sudo prompts are driven by intent armed from CLI orchestration code, so
+      users see/approve the real privileged command instead of a probe command.
+    """
     original_cmd = cmd
     log.opt(depth=1).trace(
         'run_cmd entry sudo={} check={} capture={} text={} cmd={}',

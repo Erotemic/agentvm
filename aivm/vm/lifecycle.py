@@ -1,4 +1,9 @@
-"""VM lifecycle implementation: image, cloud-init, create/start, wait, and provision."""
+"""VM lifecycle primitives used by CLI flows.
+
+This module owns host-side VM state transitions: image acquisition, cloud-init
+artifact generation, VM definition/start, readiness waits, and provisioning.
+Most functions assume libvirt ``qemu:///system`` usage with host sudo.
+"""
 
 from __future__ import annotations
 
@@ -251,6 +256,12 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 def _write_cloud_init(
     cfg: AgentVMConfig, *, dry_run: bool = False
 ) -> dict[str, Path]:
+    """Render and materialize cloud-init artifacts for a VM definition.
+
+    Returns the host paths of generated artifacts, including the seed ISO used
+    by ``virt-install``. The generated config intentionally enables guest sudo
+    for agent workflows.
+    """
     cfg = cfg.expanded_paths()
     p = _paths(cfg, dry_run=dry_run)
     ci_dir = p['ci_dir']
@@ -480,6 +491,14 @@ def create_or_start_vm(
     share_source_dir: str = '',
     share_tag: str = '',
 ) -> None:
+    """Ensure a VM exists and is running, creating/redefining when needed.
+
+    Behavior summary:
+    * existing running VM: no-op
+    * existing stopped VM: start
+    * recreate requested: destroy/undefine then define again
+    * missing VM: create from base image + cloud-init artifacts
+    """
     log.trace(
         'create_or_start_vm vm={} dry_run={} recreate={} share_source_dir={} share_tag={}',
         cfg.vm.name,

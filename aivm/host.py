@@ -1,4 +1,8 @@
-"""Host dependency checks and host package installation routines."""
+"""Host prerequisite checks and installation helpers.
+
+This module is intentionally narrow: detect required binaries and install common
+Debian/Ubuntu dependencies used by VM/network/firewall workflows.
+"""
 
 from __future__ import annotations
 

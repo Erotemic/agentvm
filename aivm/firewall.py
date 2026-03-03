@@ -1,4 +1,8 @@
-"""Nftables rule generation and lifecycle helpers for VM network isolation."""
+"""Nftables policy generation/apply helpers for guest network isolation.
+
+Rules are bridge-scoped and oriented toward "WAN allowed, private ranges
+restricted" behavior unless caller config loosens/tightens policy.
+"""
 
 from __future__ import annotations
 

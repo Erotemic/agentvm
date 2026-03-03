@@ -1,4 +1,7 @@
-"""CLI help and command-tree rendering utilities."""
+"""Help/plan rendering helpers for operator-facing guidance.
+
+These commands are intentionally descriptive and non-mutating.
+"""
 
 from __future__ import annotations
 

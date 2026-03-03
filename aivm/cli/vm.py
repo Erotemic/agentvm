@@ -929,6 +929,11 @@ def _bytes_to_gib(size_bytes: int) -> float:
 
 
 def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
+    """Best-effort host dependency gate before VM lifecycle operations.
+
+    We keep this prompt local to workflows that actively create/start/reconcile
+    VMs so users see missing prerequisites at the point of need.
+    """
     missing, _ = check_commands()
     if not missing:
         return
@@ -1100,6 +1105,14 @@ def _virsh_domblk_capacity_bytes(
 def _vm_update_drift(
     cfg: AgentVMConfig, *, yes: bool
 ) -> tuple[VMUpdateDrift, bool]:
+    """Compute editable drift between config and live libvirt VM state.
+
+    The update flow is intentionally conservative:
+    * prefer non-sudo probes first,
+    * escalate to sudo only when required,
+    * gather diagnostics in ``notes`` instead of failing hard when a probe is
+      inconclusive (for example qemu-img lock contention on running VMs).
+    """
     notes: list[str] = []
     dominfo = run_cmd(
         virsh_system_cmd('dominfo', cfg.vm.name),
@@ -1620,6 +1633,12 @@ def _reconcile_attached_vm(
     *,
     policy: ReconcilePolicy,
 ) -> ReconcileResult:
+    """Reconcile VM/network/firewall/share state before code/ssh-style sessions.
+
+    This function is the orchestration pivot for "one-command" UX. It tries to
+    preserve an existing running VM when safe, and only escalates to recreate or
+    privileged host changes when required for correctness.
+    """
     cached_ip = get_ip_cached(cfg) if not policy.dry_run else None
     cached_ssh_ok = False
     if cached_ip:
@@ -1804,6 +1823,12 @@ def _prepare_attached_session(
     dry_run: bool,
     yes: bool,
 ) -> PreparedSession:
+    """Prepare a ready-to-use VM session rooted at a host folder attachment.
+
+    If no VM context exists, this may bootstrap ``config init`` + ``vm create``
+    (with consent/non-interactive policy checks), then continue with attachment,
+    IP/SSH readiness, and in-guest mount reconciliation.
+    """
     if not host_src.exists():
         raise FileNotFoundError(f'Host source path does not exist: {host_src}')
     if not host_src.is_dir():

@@ -1,4 +1,9 @@
-"""Probe and rendering logic for host/VM/network/firewall status reporting."""
+"""Status probe and rendering utilities for host + VM operational visibility.
+
+This module deliberately separates *probe* functions from markdown/text
+rendering so other CLI flows can reuse tri-state outcomes (``True`` /
+``False`` / ``None``) without duplicating command/parsing logic.
+"""
 
 from __future__ import annotations
 
@@ -16,18 +21,28 @@ from .vm import get_ip_cached, vm_share_mappings
 
 @dataclass(frozen=True)
 class ProbeOutcome:
+    """Normalized status probe result.
+
+    ``ok`` uses tri-state semantics:
+    * ``True``  -> check succeeded / condition present
+    * ``False`` -> check completed and condition is absent/failing
+    * ``None``  -> check inconclusive/skipped (commonly privilege dependent)
+    """
+
     ok: bool | None
     detail: str
     diag: str = ''
 
 
 def status_line(ok: bool | None, label: str, detail: str = '') -> str:
+    """Render a single user-facing status line with consistent icons."""
     icon = '✅' if ok is True else ('➖' if ok is None else '❌')
     suffix = f' - {detail}' if detail else ''
     return f'{icon} {label}{suffix}'
 
 
 def clip(text: str, *, max_lines: int = 60) -> str:
+    """Truncate multi-line diagnostics for readable terminal output."""
     lines = (text or '').strip().splitlines()
     if len(lines) <= max_lines:
         return '\n'.join(lines)
@@ -121,6 +136,7 @@ def probe_runtime_environment() -> ProbeOutcome:
 
 
 def probe_network(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
+    """Inspect libvirt network state for the configured network name."""
     info = run_cmd(
         virsh_system_cmd('net-info', cfg.network.name),
         sudo=use_sudo,
@@ -160,6 +176,7 @@ def probe_network(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
 
 
 def probe_firewall(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
+    """Check whether the expected nftables table exists."""
     if not cfg.firewall.enabled:
         return ProbeOutcome(None, 'disabled in config')
     res = run_cmd(
@@ -181,6 +198,7 @@ def probe_firewall(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
 def probe_vm_state(
     cfg: AgentVMConfig, *, use_sudo: bool
 ) -> tuple[ProbeOutcome, bool]:
+    """Return VM run-state probe plus explicit domain-defined flag."""
     dom = run_cmd(
         virsh_system_cmd('dominfo', cfg.vm.name),
         sudo=use_sudo,
@@ -219,6 +237,7 @@ def probe_vm_state(
 
 
 def probe_ssh_ready(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
+    """Best-effort SSH readiness probe to the guest."""
     try:
         ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     except Exception as ex:
@@ -242,6 +261,7 @@ def probe_ssh_ready(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
 
 
 def probe_provisioned(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
+    """Check whether configured guest packages appear to be installed."""
     if not cfg.provision.enabled:
         return ProbeOutcome(None, 'disabled in config', '')
     try:
@@ -284,6 +304,11 @@ def render_status(
     detail: bool = False,
     use_sudo: bool = False,
 ) -> str:
+    """Render contextual status for one resolved VM configuration.
+
+    ``use_sudo=False`` intentionally favors safe/non-privileged checks and marks
+    sudo-only checks as inconclusive instead of failing hard.
+    """
     lines: list[str] = ['🧭 AgentVM Status', f'📄 Config: {path}', '']
     done = 0
     total = 0
@@ -570,6 +595,7 @@ def render_status(
 
 
 def render_global_status() -> str:
+    """Render global status when no single VM context is resolved."""
     lines: list[str] = ['🧭 AIVM Global Status', '']
     missing, missing_opt = check_commands()
     host_ok = len(missing) == 0

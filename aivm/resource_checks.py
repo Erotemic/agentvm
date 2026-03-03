@@ -1,4 +1,8 @@
-"""Shared VM resource sanity checks used by config-init and vm-create flows."""
+"""Host/VM resource sanity checks reused across init/create paths.
+
+These checks are advisory or fail-fast safeguards aimed at avoiding obviously
+unworkable VM requests on constrained hosts.
+"""
 
 from __future__ import annotations
 
