@@ -10,10 +10,10 @@ from aivm.cli.vm import (
     VMUpdateCLI,
     VMUpdateDrift,
     _apply_vm_update,
-    _prepare_attached_session,
     _parse_qemu_img_virtual_size,
     _parse_vm_disk_path_from_dumpxml,
     _parse_vm_network_from_dumpxml,
+    _prepare_attached_session,
     _vm_update_drift,
 )
 from aivm.config import AgentVMConfig

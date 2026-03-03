@@ -189,7 +189,15 @@ napoleon_use_ivar = True
 
 autodoc_inherit_docstrings = False
 
-autosummary_mock_imports = []
+# Hack for geowatch, todo configure
+autosummary_mock_imports = [
+    'geowatch.utils.lightning_ext._jsonargparse_ext_ge_4_24_and_lt_4_xx',
+    'geowatch.utils.lightning_ext._jsonargparse_ext_ge_4_22_and_lt_4_24',
+    'geowatch.utils.lightning_ext._jsonargparse_ext_ge_4_21_and_lt_4_22',
+    'geowatch.tasks.fusion.datamodules.temporal_sampling.affinity_sampling',
+    'geowatch.tasks.depth_pcd.model',
+    'geowatch.tasks.cold.export_change_map',
+]
 
 autodoc_default_options = {  # Document callable classes
     'special-members': '__call__'
@@ -1039,7 +1047,7 @@ def postprocess_hyperlinks(app, doctree, docname):
 
 
 def fix_rst_todo_section(lines):
-    new_lines = []
+    # new_lines = []
     for line in lines:
         ...
     ...
