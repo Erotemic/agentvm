@@ -72,6 +72,8 @@ def _run_cli(
     env: dict[str, str],
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    # Centralize CLI invocation behavior for e2e so failures always include a
+    # command line, return code, and recent output tail.
     cmd = [sys.executable, '-m', 'aivm', *argv]
     proc = subprocess.Popen(
         cmd,
@@ -117,6 +119,7 @@ def _run_cli(
 def _require_e2e_host_dependencies(
     *, cwd: Path, timeout_s: int, env: dict[str, str]
 ) -> None:
+    # Fail fast with actionable guidance before spending minutes on VM setup.
     doctor = _run_cli(
         ['host', 'doctor', '--sudo'],
         cwd=cwd,
@@ -146,6 +149,8 @@ def _sha256_file(path: Path) -> str:
 
 
 def _default_shared_image_path(user_home: Path) -> Path:
+    # Keep the filename version-aware so new pinned cloud image releases can
+    # coexist in cache without clobbering old files.
     parsed = urlparse(DEFAULT_UBUNTU_NOBLE_IMG_URL)
     basename = Path(parsed.path).name
     parts = [p for p in parsed.path.split('/') if p]
@@ -155,6 +160,8 @@ def _default_shared_image_path(user_home: Path) -> Path:
 
 
 def _ensure_user_cached_image(shared_img: Path) -> None:
+    # Maintain a single verified local copy per test host to avoid repeated
+    # network downloads across e2e runs.
     expected = SUPPORTED_IMAGE_SHA256[DEFAULT_UBUNTU_NOBLE_IMG_URL]
     if shared_img.exists():
         actual = _sha256_file(shared_img)
@@ -203,6 +210,8 @@ def _ensure_user_cached_image(shared_img: Path) -> None:
 
 
 def test_e2e_nested_smoke(tmp_path: Path) -> None:
+    # Host-context e2e asserts the "normal developer machine" flow where tests
+    # run directly on the host and manage one guest VM lifecycle.
     if not _host_context_enabled():
         pytest.skip(
             'Set AIVM_E2E_HOST_CONTEXT=1 (and AIVM_E2E=1) to run host-context e2e tests.'
@@ -229,6 +238,8 @@ def test_e2e_nested_smoke(tmp_path: Path) -> None:
     subnet_octet = 100 + (int(suffix[:2], 16) % 100)
 
     cfg = AgentVMConfig()
+    # Use unique names/subnets per run so retries and concurrent runs don't
+    # collide with stale libvirt resources.
     cfg.vm.name = f'aivm-e2e-{suffix}'
     cfg.vm.cpus = 1
     cfg.vm.ram_mb = 2048

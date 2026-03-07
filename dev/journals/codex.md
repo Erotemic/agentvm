@@ -1236,3 +1236,111 @@ Uncertainties/risks: bootstrap-context runtime is long and environment-sensitive
 Tradeoffs and what might break: additional complexity in e2e orchestration and more moving parts for bootstrap mode; however host-context path remains unchanged for normal runs and non-e2e test runs still skip cleanly.
 
 What I am confident about: syntax checks pass, e2e modules import and skip correctly in default mode, and the bootstrap test executes the intended layering model (outer VM runs host-context e2e suite) when enabled.
+
+## 2026-03-07 21:00:02 +0000
+
+Worked on stabilizing `tests/test_e2e_bootstrap_context.py` while actively running the bootstrap e2e path under `AIVM_E2E=1 AIVM_E2E_BOOTSTRAP=1 AIVM_E2E_HOST_CONTEXT=0`. The main concrete changes were: making missing passwordless sudo a hard failure with captured stderr/stdout (instead of skip), hardening SSH transport options (`BatchMode`, connect timeout, connection attempts, server-alive keepalives) to reduce silent hangs on transport loss, and cleaning up the remote bootstrap script preamble so it no longer dumps the full environment unexpectedly.
+
+Reflection/state of mind: this session felt like reliability surgery under load. The test is functionally doing the right layered work, but the operational failure mode was painful: very long nested runs with weak failure signaling when the outer guest became unreachable. I focused on making failures deterministic and informative before chasing optimization.
+
+Uncertainties/risks: full bootstrap execution is still very long, and the nested path remains vulnerable to long dependency-install windows and network variability in cloud-init/apt phases. I observed successful progression through dependency installation and into nested host-context test execution after the harness fixes, but I did not capture a complete end-to-end green run in this session.
+
+Tradeoffs and what might break: stricter sudo behavior may fail environments that previously skipped silently; this is intentional per desired semantics. SSH keepalive/timeout settings may surface failures faster in flaky networks, which improves debuggability but can reduce tolerance for transient outages.
+
+What I am confident about: bootstrap harness behavior is now clearer and less likely to hang without signal; generated libvirt artifacts from aborted attempts were cleaned up; the modified test file compiles (`python -m py_compile tests/test_e2e_bootstrap_context.py`).
+
+## 2026-03-07 21:10:17 +0000
+
+Implemented the requested shift toward tool-owned dependency setup in the bootstrap e2e path and completed the `uv` provisioning TODO in core lifecycle code. Concretely: added baseline guest `uv` bootstrap in cloud-init `runcmd` (best-effort), added explicit `uv` ensure logic in `vm.provision` (apt install fallback to pip with `--break-system-packages`), removed the stale config/lifecycle TODO markers, and rewired `tests/test_e2e_bootstrap_context.py` so the first-layer VM now does minimal Python bootstrap then runs `python -m aivm host install_deps --yes` and `python -m aivm host doctor --sudo` before nested e2e.
+
+Reflection/state of mind: this moved the test architecture closer to the product contract. The previous bootstrap script duplicated too much host install logic manually, which made failures harder to interpret and drift more likely. Centering dependency setup behind `aivm` reduces that drift.
+
+Uncertainties/risks: `uv` installation still relies on online package sources (apt/pip) and currently uses best-effort behavior in cloud-init; highly constrained/offline environments may still fail. Also, I have not completed another full bootstrap e2e run in this session after these specific changes, so only static validation has been done so far.
+
+Tradeoffs and what might break: adding `uv` checks in provisioning introduces one more install path and therefore one more failure surface on locked-down systems. However, this is balanced by fallback logic and by moving the heavy host dependency install workflow into one canonical command path.
+
+What I am confident about: code compiles cleanly, bootstrap test now delegates host dependency installation to the CLI tool as intended, and `uv` provisioning is now implemented in core lifecycle flows rather than just captured as TODO comments.
+
+## 2026-03-07 21:14:24 +0000
+
+Adjusted `uv` provisioning behavior to be strictly user-space, per updated requirement. Removed the cloud-init root-level `uv` install attempt and replaced provisioning/bootstrap install logic with the official user installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`) while explicitly prepending `$HOME/.local/bin` to `PATH` before use.
+
+Reflection/state of mind: this was a good correction. The earlier implementation solved availability but violated a core packaging hygiene constraint (no system-package breakage). This revision better matches principle and reduces host/guest package-manager side effects.
+
+Uncertainties/risks: user-space installer depends on outbound network access to astral.sh unless `uv` is already present. In restricted environments this could still fail; the flow now fails clearly at `command -v uv` if install is not possible.
+
+Tradeoffs and what might break: we lose distro-package fallback for `uv` in provisioning, so environments that block installer access must preinstall `uv` for the user. This is intentional to avoid touching system package state.
+
+What I am confident about: no remaining `--break-system-packages` or system `uv` apt install paths in modified lifecycle/bootstrap files; static compile checks pass.
+
+## 2026-03-07 21:16:19 +0000
+
+Updated `AGENTS.md` to add explicit guidance on code comments: write code naturally first, then do a short second pass to add concise high-level comments about steps/motivation where helpful; avoid over-commenting and prefer intent-level comments for non-obvious logic.
+
+Reflection/state of mind: this is a useful process constraint because it balances implementation flow with maintainability. It avoids forcing commentary during drafting while still requiring final readability for future agents/users.
+
+Uncertainties/risks: “when appropriate” is intentionally subjective, so consistency still depends on reviewer discipline.
+
+Tradeoffs and what might break: no runtime impact; documentation/process-only change.
+
+What I am confident about: repo guidance now explicitly encodes the requested comment style and timing (second-pass annotation).
+
+## 2026-03-07 21:17:48 +0000
+
+Applied a second-pass comment sweep to e2e test scripts (`tests/test_e2e_nested.py`, `tests/test_e2e_full.py`, `tests/test_e2e_bootstrap_context.py`) to add concise high-level guidance about test phases, motivation for helper behavior, and resource-isolation intent (without over-commenting implementation details).
+
+Reflection/state of mind: this pass was about readability and transfer-of-context for both humans and agents. The code was already functional, but critical assumptions (fail-fast dependency checks, unique resource naming, bootstrap layering intent) were too implicit.
+
+Uncertainties/risks: comment quality can drift over time if behavior changes and comments are not updated. I kept comments narrow and intent-focused to reduce stale-detail risk.
+
+Tradeoffs and what might break: no runtime behavior changes from this pass; readability/documentation-only updates in tests.
+
+What I am confident about: the e2e scripts now include clear high-level narrative cues at non-obvious points, and they still compile cleanly.
+
+## 2026-03-07 21:24:58 +0000
+
+Added a new top-level helper script `run_e2e_bootstrap_tests.sh` to run only bootstrap-context e2e with correct default env flags: `AIVM_E2E=1`, `AIVM_E2E_BOOTSTRAP=1`, and `AIVM_E2E_HOST_CONTEXT=0`, then invoke `pytest tests/test_e2e_bootstrap_context.py -s -v`.
+
+Reflection/state of mind: this is a straightforward DX improvement. The bootstrap path has enough mode flags that a dedicated entrypoint is worth it to avoid repeated manual setup errors.
+
+Uncertainties/risks: none significant; behavior is a thin wrapper over existing pytest invocation and env toggles.
+
+Tradeoffs and what might break: no runtime/library behavior changes; only adds a convenience script and executable bit.
+
+What I am confident about: script is executable and configured to run bootstrap-context only, which matches intended usage.
+
+## 2026-03-07 21:30:14 +0000
+
+Updated the design contract in `docs/source/design.rst` to capture a host-write observability rule: when `aivm` writes a file to the host system, it should log a note about that write; when reconciliation determines there is nothing to change, it should avoid both the write and the normal note, with an optional debug log for the no-op case.
+
+Reflection/state of mind: this is a small documentation change, but it closes an ambiguity that tends to matter later when implementing idempotent file writes. Without saying this explicitly, it is easy to drift into noisy “wrote file” messaging even when nothing changed, which weakens operator trust in the logs.
+
+Uncertainties/risks: the design note does not yet define the exact logging API or severity naming beyond “note” versus optional debug, so implementation details still need to stay consistent across modules.
+
+Tradeoffs and what might break: keeping no-op writes silent at normal verbosity reduces noise and better matches idempotent behavior, but it can hide why nothing happened unless debug logging is available and used thoughtfully.
+
+What I am confident about: the design doc now states the intended behavior clearly enough to guide future implementation and reviews around host-side file generation/reconciliation.
+
+## 2026-03-07 21:33:38 +0000
+
+Refined the coding-guidance language in `AGENTS.md` so the repository expectation is explicit: comments should help humans understand the high-level flow, motivation, and non-obvious steps, while still avoiding line-by-line narration.
+
+Reflection/state of mind: this is mostly about tightening the wording around an existing norm. The repo already leaned in this direction, but the stronger phrasing makes it clearer that comments are not just optional decoration; they are part of making complex VM and provisioning logic maintainable for the next reader.
+
+Uncertainties/risks: “high-level” and “non-obvious” still require judgment during review, so there is no fully mechanical threshold for enough commentary versus too much.
+
+Tradeoffs and what might break: stronger guidance may encourage slightly more comments in new code, which is useful if they stay intent-focused, but stale comments remain a risk if implementation changes without the second pass being revisited.
+
+What I am confident about: `AGENTS.md` now states the desired comment style more directly and in terms that are useful for both human contributors and future agents.
+
+## 2026-03-07 21:37:15 +0000
+
+Adjusted the bootstrap e2e path so debug-level `aivm` logging is the default. The wrapper script now exports `AIVM_E2E_CLI_VERBOSITY=2` unless overridden, and `tests/test_e2e_bootstrap_context.py` uses that setting to prepend the needed `-vv` flags to the initial outer host dependency check, the later outer host-side `aivm` lifecycle commands, and the inner guest-side bootstrap `aivm` commands.
+
+Reflection/state of mind: this was worth tightening because bootstrap failures are expensive and usually occur after several minutes of setup. In that situation, defaulting to info-level logs is the wrong tradeoff; the extra command-level detail is more valuable than quiet output.
+
+Uncertainties/risks: this only changes the bootstrap-context path, not every e2e entrypoint. Nested/full tests run directly outside bootstrap will keep their existing verbosity behavior unless they are invoked through the bootstrap wrapper or given explicit flags.
+
+Tradeoffs and what might break: debug-by-default increases output volume significantly, especially around repeated command execution and retries. That is intentional for bootstrap runs, but it may make logs noisier to scan if someone only wanted a minimal smoke signal.
+
+What I am confident about: the bootstrap path now requests debug-level `aivm` logs consistently on both sides of the SSH boundary, and the override remains configurable through `AIVM_E2E_CLI_VERBOSITY`.

@@ -423,7 +423,6 @@ def _write_cloud_init(
           - python3
           - python3-venv
           - python3-pip
-          # TODO(provision): add uv installation/bootstrap to guest base setup.
           - unattended-upgrades
 
         write_files:
@@ -998,13 +997,18 @@ def provision(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         )
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     pkgs = list(cfg.provision.packages)
-    # TODO(provision): add first-class `uv` provisioning (install + version
-    # check) and decide whether it belongs in cloud-init base vs post-boot
-    # provisioning path.
     docker_pkgs = (
         ['docker.io', 'docker-compose-v2']
         if cfg.provision.install_docker
         else []
+    )
+    ensure_uv = (
+        'export PATH="$HOME/.local/bin:$PATH"; '
+        'if ! command -v uv >/dev/null 2>&1; then '
+        'curl -LsSf https://astral.sh/uv/install.sh | sh; '
+        'fi; '
+        'export PATH="$HOME/.local/bin:$PATH"; '
+        'command -v uv >/dev/null 2>&1'
     )
     remote = (
         'set -euo pipefail; '
@@ -1012,7 +1016,8 @@ def provision(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         'sudo apt-get install -y software-properties-common >/dev/null 2>&1 || true; '
         'sudo add-apt-repository -y universe >/dev/null 2>&1 || true; '
         'sudo apt-get update -y; '
-        f'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {" ".join(docker_pkgs + pkgs)}'
+        f'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {" ".join(docker_pkgs + pkgs)}; '
+        f'{ensure_uv}'
     )
     cmd = [
         'ssh',

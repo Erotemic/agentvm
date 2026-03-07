@@ -77,8 +77,6 @@ class VMConfig:
 class ProvisionConfig:
     enabled: bool = True
     install_docker: bool = True
-    # TODO(provision): include `uv` in baseline provisioning defaults once the
-    # install path/version pinning policy is finalized.
     packages: list[str] = field(
         default_factory=lambda: [
             'git',

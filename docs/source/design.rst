@@ -124,6 +124,9 @@ Observability
 
 * Long-running and mutating operations should expose progress and command intent
   clearly.
+* When writing a file to the host system, emit a note describing the write.
+  If reconciliation determines there is nothing to write, skip both the write
+  and the normal note; an optional debug-level message may explain the no-op.
 * Normal output should be concise; deeper diagnostics should be available with
   verbosity/detail flags.
 

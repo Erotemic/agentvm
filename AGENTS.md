@@ -28,6 +28,11 @@ Guidance for contributors (human or AI agents) working in this repository.
 - Keep changes focused and incremental.
 - Preserve non-interactive usability (`--yes`, `--dry_run`).
 - Keep docs updated when CLI behavior or command tree changes.
+- Write code first for correctness/clarity, then do a short second pass to add
+  concise comments that help humans understand the high-level flow, motivation,
+  and non-obvious steps.
+- Do not over-comment; prefer intent-level comments that quickly explain what
+  is going on and why, rather than line-by-line narration.
 
 ## Useful Local Commands
 - Lint/type/test (as available in environment):

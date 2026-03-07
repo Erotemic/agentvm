@@ -85,6 +85,8 @@ def test_e2e_full_cycle(tmp_path: Path) -> None:
     subnet_octet = 100 + (int(suffix[:2], 16) % 100)
 
     cfg = AgentVMConfig()
+    # Use per-run unique identifiers to avoid collisions with prior failed e2e
+    # runs or concurrently executing workers.
     cfg.vm.name = f'aivm-e2e-{suffix}'
     cfg.vm.cpus = 1
     cfg.vm.ram_mb = 2048
