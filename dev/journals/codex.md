@@ -1110,3 +1110,15 @@ Reflection/state of mind: this was cleanup and correctness hardening after fast 
 Uncertainties/risks: error-text parsing still depends on resolver message shape, but now in a more robust way and with a safe fallback. A future refactor could return structured error context instead of parsing strings.
 
 What I am confident about: py_compile passes for all touched files and the two reported failing tests should now align with intended behavior.
+
+## 2026-03-07 16:18:13 +0000
+
+Added an aggregate extras setup in `pyproject.toml` so users can install all optional dependency groups with one selector. Introduced a missing `docs` extras group (aligned with existing documentation requirements in `requirements/docs.txt`) and added `all` as an umbrella extra including `optional`, `tests`, and `docs`.
+
+Reflection/state of mind: this was a small but high-leverage packaging ergonomics change. The goal was to reduce friction for contributors and CI setups that need full feature/test/doc dependencies without requiring multiple extras or ad-hoc requirements files.
+
+Uncertainties/risks: pin ranges between `requirements/*.txt` and extras may drift over time because they are defined in multiple places. If that drift appears, consolidating to a single source of truth for all dependency groups would be safer.
+
+Tradeoffs and what might break: `all` references self-extras (`aivm[...]`), which is valid for extras aggregation but may expose installer edge cases on very old tooling; with modern pip/setuptools this should be stable.
+
+What I am confident about: the extras table now exposes all current optional groups and provides the requested `all` convenience target.
