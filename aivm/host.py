@@ -68,6 +68,17 @@ def host_is_debian_like() -> bool:
         return False
 
 
+def _debian_noninteractive_cmd(*args: str) -> list[str]:
+    # Keep Debian package operations explicitly non-interactive so bootstrap and
+    # e2e flows do not emit debconf frontend warnings or hang on prompts.
+    return [
+        'env',
+        'DEBIAN_FRONTEND=noninteractive',
+        'NEEDRESTART_MODE=a',
+        *args,
+    ]
+
+
 def install_deps_debian(*, assume_yes: bool = True) -> None:
     # TODO: add alternative ways to install deps for other common systems that
     # can use libvirt.
@@ -92,9 +103,14 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
         'iproute2',
         'nftables',
     ]
-    run_cmd(['apt-get', 'update', '-y'], sudo=True, check=True, capture=False)
     run_cmd(
-        ['apt-get', 'install', '-y', *pkgs],
+        _debian_noninteractive_cmd('apt-get', 'update', '-y'),
+        sudo=True,
+        check=True,
+        capture=False,
+    )
+    run_cmd(
+        _debian_noninteractive_cmd('apt-get', 'install', '-y', *pkgs),
         sudo=True,
         check=True,
         capture=False,
@@ -103,7 +119,7 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
     # TODO: on 22.04 you can get virtiofsd with qemu-system-common, add
     # alternative to use that if virtiofsd is not available.
     virtiofsd_install = run_cmd(
-        ['apt-get', 'install', '-y', 'virtiofsd'],
+        _debian_noninteractive_cmd('apt-get', 'install', '-y', 'virtiofsd'),
         sudo=True,
         check=False,
         capture=False,

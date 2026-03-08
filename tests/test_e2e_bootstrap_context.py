@@ -3,7 +3,7 @@
 This test validates a two-level flow:
 
 1) current host context creates a fresh outer VM
-2) inside that outer VM, host-context e2e tests are executed
+2) inside that outer VM, a small set of documented user workflows are run
 
 It is intentionally opt-in because runtime is long and environment requirements
 are strict.
@@ -20,8 +20,6 @@ from pathlib import Path
 import pytest
 
 from test_e2e_nested import (
-    _default_shared_image_path,
-    _ensure_user_cached_image,
     _make_temp_ssh_material,
     _run_cli,
 )
@@ -68,18 +66,23 @@ def _run_remote_script(
         'bash',
         '-euxo',
         'pipefail',
-        '-c',
-        script,
+        '-s',
     ]
     proc = subprocess.Popen(
         cmd,
         env=env,
         text=True,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
     out_lines: list[str] = []
     try:
+        assert proc.stdin is not None
+        proc.stdin.write(script)
+        if not script.endswith('\n'):
+            proc.stdin.write('\n')
+        proc.stdin.close()
         assert proc.stdout is not None
         for line in iter(proc.stdout.readline, ''):
             if not line:
@@ -96,6 +99,8 @@ def _run_remote_script(
             f'--- output tail ---\n{tail}\n'
         )
     finally:
+        if proc.stdin is not None and not proc.stdin.closed:
+            proc.stdin.close()
         if proc.stdout is not None:
             proc.stdout.close()
     stdout = ''.join(out_lines)
@@ -110,8 +115,9 @@ def _run_remote_script(
 
 
 def test_e2e_bootstrap_context(tmp_path: Path) -> None:
-    # Bootstrap-context e2e validates "fresh machine" onboarding by running the
-    # host-context suite from inside a first-layer VM.
+    # Bootstrap-context e2e validates "fresh machine" onboarding by creating a
+    # first-layer VM, installing aivm there, and exercising the documented
+    # non-interactive workflows from that clean environment.
     if not _bootstrap_context_enabled():
         pytest.skip('Set AIVM_E2E_BOOTSTRAP=1 to run bootstrap-context e2e.')
     if os.getenv('AIVM_E2E') != '1':
@@ -121,7 +127,9 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
     env = os.environ.copy()
     env['HOME'] = str(home)
     cli_verbosity = int(os.getenv('AIVM_E2E_CLI_VERBOSITY', '2'))
-    cli_verbosity_flags = ['-v'] * max(cli_verbosity, 0)
+    cli_verbosity_args = (
+        [f'--verbose={cli_verbosity}'] if cli_verbosity > 0 else []
+    )
 
     sudo_probe = subprocess.run(
         ['sudo', '-n', 'true'], check=False, capture_output=True, text=True
@@ -136,7 +144,7 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     timeout_s = int(os.getenv('AIVM_E2E_TIMEOUT', '3600'))
     doctor = _run_cli(
-        [*cli_verbosity_flags, 'host', 'doctor', '--sudo'],
+        ['host', 'doctor', *cli_verbosity_args, '--sudo'],
         cwd=repo_root,
         timeout_s=timeout_s,
         env=env,
@@ -173,25 +181,20 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
     cfg.paths.ssh_identity_file = str(priv)
     cfg.paths.ssh_pubkey_path = str(pub)
 
-    if os.getenv('AIVM_E2E_INDEPENDENT_IMAGE') != '1':
-        user_home = Path(os.environ.get('HOME', '~')).expanduser()
-        default_shared = _default_shared_image_path(user_home)
-        shared_img = Path(
-            os.getenv('AIVM_E2E_SHARED_IMAGE', str(default_shared))
-        ).expanduser()
-        _ensure_user_cached_image(shared_img)
-        cfg.image.ubuntu_img_url = f'file://{shared_img}'
-
     store = Store()
     upsert_vm(store, cfg)
     save_store(store, cfg_path)
 
     guest_repo_path = '/workspace/aivm'
     inner_timeout_s = int(os.getenv('AIVM_E2E_BOOTSTRAP_TIMEOUT', '7200'))
+    inner_wait_ip_timeout_s = int(
+        os.getenv('AIVM_E2E_BOOTSTRAP_WAIT_IP_TIMEOUT', '1200')
+    )
     remote_script = textwrap.dedent(
         f"""\
-        # Minimal first-layer bootstrap: ensure Python + uv, install this repo,
-        # then let `aivm` itself install/verify host virtualization deps.
+        # Minimal first-layer bootstrap: install this repo as a tool in the
+        # fresh guest, prepare host deps there, then exercise the documented
+        # user workflows directly instead of nesting the full e2e suite again.
         DEBIAN_FRONTEND=noninteractive
         export DEBIAN_FRONTEND
         if [ ! -e /dev/kvm ]; then
@@ -224,25 +227,49 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
           curl -LsSf https://astral.sh/uv/install.sh | sh
         fi
         export PATH="$HOME/.local/bin:$PATH"
+        mkdir -p "$HOME/.ssh" "$HOME/.venvs"
+        if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
+          ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519"
+        fi
         cd {guest_repo_path}
-        uv venv .venv-e2e
-        . .venv-e2e/bin/activate
-        uv pip install -e '.[tests]'
-        AIVM_E2E=1 python -m aivm {' '.join(cli_verbosity_flags)} host install_deps --yes
-        AIVM_E2E=1 python -m aivm {' '.join(cli_verbosity_flags)} host doctor --sudo
-        AIVM_E2E=1 AIVM_E2E_HOST_CONTEXT=1 python -m pytest \\
-          tests/test_e2e_nested.py tests/test_e2e_full.py -s -v
+        uv venv --clear "$HOME/.venvs/aivm-e2e"
+        . "$HOME/.venvs/aivm-e2e/bin/activate"
+        uv pip install -e .
+        cleanup() {{
+          python -m aivm vm destroy {' '.join(cli_verbosity_args)} --yes || true
+          python -m aivm host net destroy {' '.join(cli_verbosity_args)} --yes || true
+        }}
+        trap cleanup EXIT
+        python -m aivm host install_deps {' '.join(cli_verbosity_args)} --yes
+        python -m aivm host doctor {' '.join(cli_verbosity_args)} --sudo
+        mkdir -p "$HOME/workspace/project"
+        cd "$HOME/workspace/project"
+        printf 'bootstrap test\\n' > README.txt
+        python -m aivm help tree
+        python -m aivm config init {' '.join(cli_verbosity_args)} --defaults --yes --force
+        python -m aivm config path
+        python -m aivm vm create {' '.join(cli_verbosity_args)} --yes --force
+        # Nested guests can take materially longer to reach DHCP than the
+        # direct-host e2e path, so give the bootstrap workflow its own budget.
+        python -m aivm vm wait_ip {' '.join(cli_verbosity_args)} --timeout {inner_wait_ip_timeout_s} --yes
+        python -m aivm status {' '.join(cli_verbosity_args)}
+        python -m aivm status {' '.join(cli_verbosity_args)} --sudo --yes
+        python -m aivm attach {' '.join(cli_verbosity_args)} . --yes
+        python -m aivm list {' '.join(cli_verbosity_args)}
+        python -m aivm vm ssh_config {' '.join(cli_verbosity_args)}
+        python -m aivm vm update {' '.join(cli_verbosity_args)} --yes
         """
     )
 
     try:
-        # Bring up outer VM, mount source repo, then execute nested e2e suite.
+        # Bring up the first-layer guest, mount the repo, then exercise the
+        # documented nested bootstrap workflow inside it.
         _run_cli(
             [
-                *cli_verbosity_flags,
                 'host',
                 'net',
                 'create',
+                *cli_verbosity_args,
                 '--yes',
                 '--config',
                 str(cfg_path),
@@ -252,16 +279,16 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
             env=env,
         )
         _run_cli(
-            [*cli_verbosity_flags, 'vm', 'up', '--yes', '--config', str(cfg_path)],
+            ['vm', 'up', *cli_verbosity_args, '--yes', '--config', str(cfg_path)],
             cwd=repo_root,
             timeout_s=timeout_s,
             env=env,
         )
         wait_res = _run_cli(
             [
-                *cli_verbosity_flags,
                 'vm',
                 'wait_ip',
+                *cli_verbosity_args,
                 '--yes',
                 '--config',
                 str(cfg_path),
@@ -273,9 +300,9 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
         ip = wait_res.stdout.strip().splitlines()[-1]
         _run_cli(
             [
-                *cli_verbosity_flags,
                 'vm',
                 'attach',
+                *cli_verbosity_args,
                 str(repo_root),
                 '--guest_dst',
                 guest_repo_path,
@@ -298,9 +325,9 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
     finally:
         _run_cli(
             [
-                *cli_verbosity_flags,
                 'vm',
                 'destroy',
+                *cli_verbosity_args,
                 '--yes',
                 '--config',
                 str(cfg_path),
@@ -312,10 +339,10 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
         )
         _run_cli(
             [
-                *cli_verbosity_flags,
                 'host',
                 'net',
                 'destroy',
+                *cli_verbosity_args,
                 '--yes',
                 '--config',
                 str(cfg_path),

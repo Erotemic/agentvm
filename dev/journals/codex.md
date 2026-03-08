@@ -1344,3 +1344,38 @@ Uncertainties/risks: this only changes the bootstrap-context path, not every e2e
 Tradeoffs and what might break: debug-by-default increases output volume significantly, especially around repeated command execution and retries. That is intentional for bootstrap runs, but it may make logs noisier to scan if someone only wanted a minimal smoke signal.
 
 What I am confident about: the bootstrap path now requests debug-level `aivm` logs consistently on both sides of the SSH boundary, and the override remains configurable through `AIVM_E2E_CLI_VERBOSITY`.
+
+## 2026-03-07 21:59:32 +0000
+
+Worked directly on `tests/test_e2e_bootstrap_context.py` by running the bootstrap e2e repeatedly with full host access and trimming it toward the intended product contract. The original inner payload was effectively “install nested host deps, then run the entire nested/full e2e suite inside the level-1 guest”, which is broader and noisier than the stated bootstrap goal. I rewrote that payload to install `aivm` in the fresh guest and exercise a smaller set of documented non-interactive workflows (`help tree`, `config init`, `vm create`, `vm wait_ip`, `status`, `attach`, `list`, `vm ssh_config`, `vm update`, cleanup). While doing that I fixed several concrete harness issues: wrong placement of verbosity flags for modal subcommands, positional-argument ambiguity from repeated `-v`, missing guest SSH key generation before `config init`/`vm create`, using a guest-local venv instead of writing `.venv-e2e` into the shared repo mount, and adding `--yes` for the non-interactive `status --sudo` path.
+
+Reflection/state of mind: this felt like peeling away accidental test architecture rather than chasing one isolated bug. The biggest insight was that the bootstrap test had drifted into “nested test runner of everything” instead of “fresh user workflow check”, and that drift was creating both the runtime cost and the failure surface. Once that was obvious, the debugging became much more concrete.
+
+Uncertainties/risks: a full green bootstrap rerun after the most recent guest-key and `status --sudo --yes` fixes is still in progress as of this entry, so I do not yet have a final passing end-to-end result for the simplified path. The remaining runtime cost is dominated by guest-side `aivm host install_deps`, which is expected but still slow.
+
+Tradeoffs and what might break: simplifying the inner bootstrap flow means bootstrap no longer implicitly re-validates every behavior covered by `tests/test_e2e_nested.py` and `tests/test_e2e_full.py`. That is intentional; those suites still exist for their own scope, while bootstrap should stay focused on first-run onboarding. The risk is that if reviewers expected bootstrap to be a superset of those suites, coverage assumptions need to be updated.
+
+What I am confident about: the bootstrap harness is now much closer to the intended “fresh user system” story, the deterministic argument-parsing and missing-key failures have been addressed in code, and the current verification run is exercising a substantially smaller and more defensible inner scenario than before.
+## 2026-03-08 06:58:25 +0000
+
+Worked the bootstrap and full-suite e2e validation loop to ground. The key runtime bug turned out to be in `aivm.vm.lifecycle.wait_for_ssh()`: nested guests were reachable, but first-login SSH handshakes could take roughly 20-40 seconds under cloud-init, key generation, and nested virtualization pressure, while the probe path was still treating them as effectively dead. I fixed that in core code by giving each readiness probe a bounded but materially larger timeout, kept the overall wait budget intact, and removed invalid datasource keys from generated cloud-init user-data so the guest config no longer emits schema warnings during boot. I also added focused regression tests around the cloud-init rendering and SSH probe timeout behavior.
+
+Reflection/state of mind: this was a good example of why I do not trust a failing long-running e2e at face value. The initial temptation is to patch the test harness again, but the evidence showed the product code was prematurely declaring failure even though the guest was alive and later accepted SSH. Once that was clear, the right move was to fix the core wait logic and rerun from a clean contiguous test sequence rather than arguing from partial signals.
+
+Uncertainties/risks: the bootstrap path is still expensive. A true fresh-machine run spends most of its wall-clock time downloading the Ubuntu image and installing libvirt/qemu dependencies inside the outer guest. That is intended coverage, but it means future regressions in network speed, upstream package mirrors, or nested-virt performance will still show up as long tests rather than tight feedback loops.
+
+Tradeoffs and what might break: increasing the per-probe SSH timeout makes readiness checks more patient, which is necessary for nested first boot, but it also means a genuinely unhealthy guest may take longer to be declared unavailable. I kept the overall timeout unchanged so the trade stays local to the handshake step rather than broadening the full wait budget. Removing the invalid cloud-init datasource keys should reduce noise and ambiguity, but if there was any accidental reliance on those unsupported keys, the only reason it worked before was cloud-init tolerating them rather than them being correct.
+
+What I am confident about: the standalone bootstrap e2e passed end-to-end with real image downloads, and the final post-edit contiguous validation run also passed with `AIVM_E2E=1 AIVM_E2E_HOST_CONTEXT=1 AIVM_E2E_BOOTSTRAP=1 pytest -q`, covering the normal suite, host-context e2e, and bootstrap e2e in one run (`125 passed`).
+
+## 2026-03-08 13:42:26 +0000
+
+Added a small design TODO in `aivm/config.py` above the pinned Noble image URL declaration. The note captures an architectural direction that has been implicit in recent debugging: network-fetched assets should not be modeled as an ad-hoc URL constant plus a separate hash mapping when we already know we want richer provenance and fallback metadata.
+
+Reflection/state of mind: this was intentionally a documentation-only change in code, not a refactor. The main value is to put the design pressure at the exact declaration site so future implementation work starts from the right abstraction instead of growing more one-off globals around the current image registry.
+
+Uncertainties/risks: the eventual shape could be a dataclass, a small registry object, or another typed container, so the TODO should be treated as directional rather than locking the implementation too early. The risk is mostly social: if the note is ignored, asset handling will stay fragmented as more mirrors or alternate transports get added.
+
+Tradeoffs and what might break: nothing runtime changes here. The only tradeoff is adding one more intent-level comment near a central config constant, which is appropriate because the declaration is a design hotspot.
+
+What I am confident about: the TODO now names the concrete metadata we are likely to need next for pinned image assets: primary URL, SHA256, mirrors, torrent magnet, and IPFS CID.

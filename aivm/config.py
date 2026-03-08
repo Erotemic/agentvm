@@ -14,6 +14,9 @@ from loguru import logger as log
 
 from .util import expand
 
+# TODO(design): replace the ad-hoc URL + hash globals here with a network asset
+# dataclass/registry that can describe the primary URL, SHA256, mirrors,
+# torrent magnet, and IPFS CID for a pinned image artifact.
 # Pinned daily image path so URL and hash are coupled to a specific artifact.
 DEFAULT_UBUNTU_NOBLE_IMG_URL = 'https://cloud-images.ubuntu.com/noble/20260225/noble-server-cloudimg-amd64.img'
 SUPPORTED_IMAGE_SHA256 = {

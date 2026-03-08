@@ -252,37 +252,74 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
     base_img = p['img_dir'] / cfg.image.cache_name
     tmp_img = Path(str(base_img) + '.part')
     url = cfg.image.ubuntu_img_url or DEFAULT_UBUNTU_NOBLE_IMG_URL
-    # TODO(design): Do not trust named cache files by existence alone.
-    # Verify cached image hash before reuse, and add digest-addressable
-    # fallback lookup (e.g., images/sha256/<digest>.img) before URL fetch.
-    if _sudo_file_exists(base_img) and not cfg.image.redownload:
-        log.info('Base image cached: {}', base_img)
-        return base_img
     expected_sha256, checksum_source = _resolve_expected_image_sha256(
         image_url=url
     )
+    parsed = urlparse(url)
+    local_file_src = (
+        Path(unquote(parsed.path)).expanduser() if parsed.scheme == 'file' else None
+    )
+    if _sudo_file_exists(base_img) and not cfg.image.redownload:
+        if dry_run:
+            log.info('Base image cached: {}', base_img)
+            return base_img
+        # Re-verify named cache hits so interrupted downloads or stale local
+        # files do not silently poison later VM creation runs.
+        try:
+            _verify_image_sha256(
+                image_path=base_img,
+                expected_sha256=expected_sha256,
+                source=f'cached base image ({checksum_source})',
+            )
+            log.info('Base image cached: {}', base_img)
+            return base_img
+        except RuntimeError as ex:
+            log.warning(
+                'Cached base image failed checksum verification; redownloading. {}',
+                ex,
+            )
     if dry_run:
-        log.info(
-            'DRYRUN: curl -L --fail -o {} {}; mv {} {}',
-            tmp_img,
-            url,
-            tmp_img,
-            base_img,
-        )
+        if local_file_src is not None:
+            log.info(
+                'DRYRUN: cp {} {}; mv {} {}',
+                local_file_src,
+                tmp_img,
+                tmp_img,
+                base_img,
+            )
+        else:
+            log.info(
+                'DRYRUN: curl -L --fail -o {} {}; mv {} {}',
+                tmp_img,
+                url,
+                tmp_img,
+                base_img,
+            )
         return base_img
     _ensure_qemu_access(cfg, dry_run=False)
     run_cmd(
         ['mkdir', '-p', str(p['img_dir'])], sudo=True, check=True, capture=True
     )
     run_cmd(['rm', '-f', str(tmp_img)], sudo=True, check=False, capture=True)
-    log.info('Downloading base image to {} (showing progress)', base_img)
+    if local_file_src is not None:
+        log.info('Copying local base image to {} via atomic temp file', base_img)
+    else:
+        log.info('Downloading base image to {} (showing progress)', base_img)
     try:
-        run_cmd(
-            ['curl', '-L', '--fail', '--progress-bar', '-o', str(tmp_img), url],
-            sudo=True,
-            check=True,
-            capture=False,
-        )
+        if local_file_src is not None:
+            run_cmd(
+                ['cp', '--reflink=auto', str(local_file_src), str(tmp_img)],
+                sudo=True,
+                check=True,
+                capture=True,
+            )
+        else:
+            run_cmd(
+                ['curl', '-L', '--fail', '--progress-bar', '-o', str(tmp_img), url],
+                sudo=True,
+                check=True,
+                capture=False,
+            )
         run_cmd(
             ['mv', '-f', str(tmp_img), str(base_img)],
             sudo=True,
@@ -394,10 +431,6 @@ def _write_cloud_init(
     cloud = textwrap.dedent(
         f"""\
         #cloud-config
-        datasource_list: [ NoCloud, None ]
-        datasource:
-          NoCloud: {{}}
-
         users:
           - name: {cfg.vm.user}
             groups: [sudo]
@@ -411,6 +444,8 @@ def _write_cloud_init(
         disable_root: true
 
 {passwd_block}
+        # cloud-localds already seeds NoCloud; repeating datasource keys in the
+        # user-data blob only triggers cloud-init schema warnings.
         bootcmd:
           - [bash, -lc, "systemctl mask systemd-networkd-wait-online.service NetworkManager-wait-online.service || true"]
 
@@ -666,6 +701,11 @@ def create_or_start_vm(
             f'source={source_dir},target={tag},driver.type=virtiofs',
         ]
 
+    # These VMs are for agent development workflows, not secure-boot or TPM
+    # validation. Keep UEFI for modern Ubuntu boot, but make the firmware
+    # profile explicit so nested hosts do not inherit heavier defaults that
+    # have proven flaky and so serial console output is more useful.
+    boot_opts = 'uefi,loader.secure=no,bios.useserial=on'
     cmd = [
         'virt-install',
         '--name',
@@ -690,10 +730,13 @@ def create_or_start_vm(
         '--noautoconsole',
         '--rng',
         '/dev/urandom',
-        '--boot',
-        'uefi',
+        '--tpm',
+        'none',
         *extra,
     ]
+    # Prefer UEFI consistently, but do not let libvirt auto-enable secure-boot
+    # related firmware features for general-purpose development guests.
+    cmd += ['--boot', boot_opts]
     if dry_run:
         log.info('DRYRUN: {}', ' '.join(cmd))
         return
@@ -963,6 +1006,11 @@ def wait_for_ssh(
         log.info('DRYRUN: wait for SSH on {}@{}', cfg.vm.user, ip)
         return
     deadline = time.time() + timeout_s
+    # SSH can come up slowly on first boot, especially under nested
+    # virtualization where cloud-init and key generation compete for limited
+    # CPU. Keep each probe bounded, but allow enough time for a real login
+    # handshake to finish before declaring the guest unreachable.
+    probe_timeout_s = 30
     while time.time() < deadline:
         cmd = [
             'ssh',
@@ -975,7 +1023,13 @@ def wait_for_ssh(
             f'{cfg.vm.user}@{ip}',
             'true',
         ]
-        res = run_cmd(cmd, sudo=False, check=False, capture=True)
+        res = run_cmd(
+            cmd,
+            sudo=False,
+            check=False,
+            capture=True,
+            timeout=probe_timeout_s,
+        )
         if res.code == 0:
             log.info('SSH is ready on {}', ip)
             return

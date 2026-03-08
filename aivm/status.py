@@ -254,7 +254,7 @@ def probe_ssh_ready(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
         f'{cfg.vm.user}@{ip}',
         'true',
     ]
-    res = run_cmd(cmd, sudo=False, check=False, capture=True)
+    res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=5)
     detail = 'ready' if res.code == 0 else 'not ready'
     diag = (res.stdout + '\n' + res.stderr).strip()
     return ProbeOutcome(res.code == 0, detail, diag)

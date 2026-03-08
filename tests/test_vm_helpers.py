@@ -14,6 +14,7 @@ from aivm.config import (
 from aivm.util import CmdError, CmdResult
 from aivm.vm import (
     _mac_for_vm,
+    _write_cloud_init,
     create_or_start_vm,
     ensure_share_mounted,
     fetch_image,
@@ -21,6 +22,7 @@ from aivm.vm import (
     vm_has_share,
     vm_has_virtiofs_shared_memory,
     vm_share_mappings,
+    wait_for_ssh,
 )
 
 
@@ -212,8 +214,79 @@ def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
     assert len(virt_calls) == 2
     assert '--memorybacking' in virt_calls[0]
     assert '--memorybacking' in virt_calls[1]
+    assert '--tpm' in virt_calls[0]
+    assert 'none' in virt_calls[0]
+    assert '--tpm' in virt_calls[1]
+    assert 'none' in virt_calls[1]
     assert '--boot' in virt_calls[0]
+    assert 'uefi,loader.secure=no,bios.useserial=on' in virt_calls[0]
     assert '--boot' not in virt_calls[1]
+
+
+def test_create_vm_prefers_uefi_even_when_host_looks_nested(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: False)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.fetch_image', lambda *a, **k: Path('/tmp/base.img')
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._write_cloud_init',
+        lambda *a, **k: {'seed_iso': Path('/tmp/seed.iso')},
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._ensure_disk', lambda *a, **k: Path('/tmp/vm.qcow2')
+    )
+
+    calls = []
+
+    def fake_run_cmd(cmd, **kwargs):
+        calls.append(cmd)
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    create_or_start_vm(cfg, dry_run=False, recreate=False)
+
+    virt_calls = [c for c in calls if c and c[0] == 'virt-install']
+    assert len(virt_calls) == 1
+    assert '--memorybacking' in virt_calls[0]
+    assert '--tpm' in virt_calls[0]
+    assert 'none' in virt_calls[0]
+    assert '--boot' in virt_calls[0]
+    assert 'uefi,loader.secure=no,bios.useserial=on' in virt_calls[0]
+
+
+def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    pubkey_path = tmp_path / 'id_ed25519.pub'
+    pubkey_path.write_text(
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey agent@test\n',
+        encoding='utf-8',
+    )
+    cfg.paths.ssh_pubkey_path = str(pubkey_path)
+    heredocs: dict[str, str] = {}
+
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
+    )
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        if cmd[:2] == ['bash', '-lc'] and "cat > " in cmd[2]:
+            script = cmd[2]
+            if 'user-data' in script:
+                heredocs['user-data'] = script
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    _write_cloud_init(cfg, dry_run=False)
+    user_data_script = heredocs['user-data']
+    assert '#cloud-config' in user_data_script
+    assert 'datasource_list:' not in user_data_script
+    assert '\ndatasource:\n' not in user_data_script
 
 
 def test_fetch_image_uses_atomic_temp_then_move(
@@ -252,6 +325,76 @@ def test_fetch_image_uses_atomic_temp_then_move(
     assert tmp_target in curl_calls[0]
     assert tmp_target in mv_calls[0]
     assert str(out) in mv_calls[0]
+
+
+def test_fetch_image_revalidates_cached_image_before_reuse(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    cfg.paths.base_dir = str(tmp_path)
+    cfg.image.cache_name = 'noble-base.img'
+    cfg.image.ubuntu_img_url = DEFAULT_UBUNTU_NOBLE_IMG_URL
+    expected = (
+        '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
+    )
+    calls = []
+
+    monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: True)
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        calls.append(cmd)
+        if cmd[:1] == ['sha256sum']:
+            return CmdResult(0, f'{expected}  {cmd[-1]}\n', '')
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    out = fetch_image(cfg, dry_run=False)
+    assert out.name == 'noble-base.img'
+    assert any(c[:1] == ['sha256sum'] for c in calls)
+    assert not any(c[:1] == ['curl'] for c in calls)
+    assert not any(c[:2] == ['cp', '--reflink=auto'] for c in calls)
+
+
+def test_fetch_image_redownloads_when_cached_hash_is_stale(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    cfg.paths.base_dir = str(tmp_path)
+    cfg.image.cache_name = 'noble-base.img'
+    cfg.image.ubuntu_img_url = DEFAULT_UBUNTU_NOBLE_IMG_URL
+    expected = (
+        '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
+    )
+    calls = []
+    sha_calls = 0
+
+    monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: True)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
+    )
+
+    def fake_run_cmd(cmd, **kwargs):
+        nonlocal sha_calls
+        del kwargs
+        calls.append(cmd)
+        if cmd[:1] == ['sha256sum']:
+            sha_calls += 1
+            digest = 'bad' * 21 + 'b' if sha_calls == 1 else expected
+            return CmdResult(0, f'{digest[:64]}  {cmd[-1]}\n', '')
+        if cmd[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
+            return CmdResult(0, '', '')
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    out = fetch_image(cfg, dry_run=False)
+    assert out.name == 'noble-base.img'
+    assert sha_calls >= 2
+    assert any(c[:2] == ['rm', '-f'] for c in calls)
+    assert any(c[:1] == ['curl'] for c in calls)
+    assert any(c[:2] == ['mv', '-f'] for c in calls)
 
 
 def test_fetch_image_validates_ubuntu_checksum(monkeypatch, tmp_path: Path) -> None:
@@ -362,10 +505,8 @@ def test_fetch_image_accepts_supported_file_url(
     monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
     out = fetch_image(cfg, dry_run=False)
     assert out.name == 'noble-base.img'
-    assert any(
-        c[:5] == ['curl', '-L', '--fail', '--progress-bar', '-o']
-        for c in calls
-    )
+    assert any(c[:2] == ['cp', '--reflink=auto'] for c in calls)
+    assert any(c[:2] == ['mv', '-f'] for c in calls)
 
 
 def test_fetch_image_rejects_unsupported_file_url_digest(
@@ -381,6 +522,35 @@ def test_fetch_image_rejects_unsupported_file_url_digest(
     monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: False)
     with pytest.raises(RuntimeError, match='digest is not in the built-in verified image registry'):
         fetch_image(cfg, dry_run=False)
+
+
+def test_wait_for_ssh_uses_generous_probe_timeout(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+    timeouts: list[int | None] = []
+    calls = {'n': 0}
+
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.require_ssh_identity', lambda p: p or '/tmp/id_ed25519'
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda s: None)
+
+    def fake_run_cmd(cmd, **kwargs):
+        del cmd
+        calls['n'] += 1
+        timeouts.append(kwargs.get('timeout'))
+        if calls['n'] == 1:
+            return CmdResult(124, '', 'command timed out')
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    wait_for_ssh(cfg, '10.0.0.2', timeout_s=60, dry_run=False)
+    assert calls['n'] == 2
+    assert all(timeout == 30 for timeout in timeouts)
 
 
 def test_create_vm_raises_clear_error_when_virtiofsd_missing(

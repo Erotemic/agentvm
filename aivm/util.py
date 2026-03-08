@@ -103,6 +103,7 @@ def run_cmd(
     text: bool = True,
     input_text: Optional[str] = None,
     env: Optional[dict[str, str]] = None,
+    timeout: float | None = None,
 ) -> CmdResult:
     """Execute a command with consistent logging, sudo policy, and error handling.
 
@@ -139,14 +140,32 @@ def run_cmd(
     else:
         # check=False is commonly used for probes/introspection.
         log.opt(depth=1).debug('RUN: {}', run_line)
-    p = subprocess.run(
-        cmd,
-        input=input_text if input_text is not None else None,
-        capture_output=capture,
-        text=text,
-        env=env,
-    )
-    res = CmdResult(p.returncode, p.stdout or '', p.stderr or '')
+    try:
+        p = subprocess.run(
+            cmd,
+            input=input_text if input_text is not None else None,
+            capture_output=capture,
+            text=text,
+            env=env,
+            timeout=timeout,
+        )
+        res = CmdResult(p.returncode, p.stdout or '', p.stderr or '')
+    except subprocess.TimeoutExpired as ex:
+        stdout = ex.stdout or ''
+        stderr = ex.stderr or ''
+        if not isinstance(stdout, str):
+            stdout = stdout.decode(errors='replace')
+        if not isinstance(stderr, str):
+            stderr = stderr.decode(errors='replace')
+        res = CmdResult(124, stdout, (stderr + '\ncommand timed out').strip())
+        log.opt(depth=1).warning(
+            'Command timed out after {}s cmd={}',
+            timeout,
+            shell_join(cmd),
+        )
+        if check:
+            raise CmdError(cmd, res) from ex
+        return res
     log.opt(depth=1).trace(
         'run_cmd result code={} stdout_len={} stderr_len={} cmd={}',
         res.code,

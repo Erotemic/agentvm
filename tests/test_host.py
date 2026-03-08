@@ -84,9 +84,27 @@ def test_install_deps_debian_behaviors(monkeypatch) -> None:
         fake_run_cmd,
     )
     install_deps_debian()
-    assert calls[0][0][:3] == ['apt-get', 'update', '-y']
-    assert calls[1][0][:3] == ['apt-get', 'install', '-y']
-    assert calls[2][0][:3] == ['apt-get', 'install', '-y']
+    assert calls[0][0][:5] == [
+        'env',
+        'DEBIAN_FRONTEND=noninteractive',
+        'NEEDRESTART_MODE=a',
+        'apt-get',
+        'update',
+    ]
+    assert calls[1][0][:5] == [
+        'env',
+        'DEBIAN_FRONTEND=noninteractive',
+        'NEEDRESTART_MODE=a',
+        'apt-get',
+        'install',
+    ]
+    assert calls[2][0][:5] == [
+        'env',
+        'DEBIAN_FRONTEND=noninteractive',
+        'NEEDRESTART_MODE=a',
+        'apt-get',
+        'install',
+    ]
     assert calls[2][0][-1] == 'virtiofsd'
     assert calls[3][0][:3] == ['systemctl', 'enable', '--now']
     assert calls[0][1]['capture'] is False
