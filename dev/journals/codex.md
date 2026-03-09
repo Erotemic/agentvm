@@ -1379,3 +1379,15 @@ Uncertainties/risks: the eventual shape could be a dataclass, a small registry o
 Tradeoffs and what might break: nothing runtime changes here. The only tradeoff is adding one more intent-level comment near a central config constant, which is appropriate because the declaration is a design hotspot.
 
 What I am confident about: the TODO now names the concrete metadata we are likely to need next for pinned image assets: primary URL, SHA256, mirrors, torrent magnet, and IPFS CID.
+
+## 2026-03-09 17:50:46 +0000
+
+Worked on folder-attachment persistence from the user-experience side rather than the low-level virtiofs side. The immediate issue was that after a host reboot, `aivm code .` / `aivm ssh .` only restored the current folder, while other folders already associated with the same VM stayed absent inside the guest until the user manually touched each one again. I added a small store helper to enumerate attachments by VM, then extended the attached-session startup path so it remounts the requested folder as before and best-effort restores the VM's other saved attachments once SSH is ready. The implementation intentionally keeps the current folder strict and the secondary folders forgiving: missing or invalid secondary host paths log warnings instead of aborting the main session. I also updated the README/workflows docs and added regression coverage around the new startup-restore behavior.
+
+Reflection/state of mind: this felt like a product-contract correction more than a feature addition. The existing behavior was internally consistent once I read the code, but it violated what a user would reasonably infer from "this folder is attached to this VM". After a reboot, the right mental model is "bring my VM's working set back", not "only revive the one path I happened to launch from right now". That made the main design decision straightforward: broaden restore on startup, but do it in a way that does not strand the primary session on a stale secondary path.
+
+Uncertainties/risks: secondary attachment restoration now depends on the saved registry still being the source of truth for those folders. If a user has very old or hand-edited attachment entries with unexpected guest destinations or tags, startup will honor them and try to reconcile against live libvirt mappings. That is usually what we want, but it means bad saved metadata can still surface as warnings during session startup.
+
+Tradeoffs and what might break: I chose best-effort behavior for secondary attachments. That means `aivm code` / `aivm ssh` can succeed even if one of several saved folders no longer exists on the host or cannot be reattached cleanly. The tradeoff is that a user could miss a secondary restore failure unless they notice the warning logs. I think that is the better default because failing the main coding session over an old side attachment would be too brittle.
+
+What I am confident about: the new path is covered by targeted tests, the primary attachment flow remains unchanged for single-folder sessions, and a VM recreate/start path will now repopulate saved secondary attachments instead of silently leaving them behind after boot.

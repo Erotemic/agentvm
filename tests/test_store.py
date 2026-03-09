@@ -11,6 +11,7 @@ from aivm.store import (
     find_attachment,
     find_attachment_for_vm,
     find_attachments,
+    find_attachments_for_vm,
     find_vm,
     load_store,
     save_store,
@@ -69,3 +70,21 @@ def test_upsert_attachment_allows_multiple_vms_for_same_host(
     att = find_attachment(store, host)
     assert att is not None
     assert att.vm_name in {'vm1', 'vm2'}
+
+
+def test_find_attachments_for_vm_returns_sorted_entries(tmp_path: Path) -> None:
+    store = Store()
+    host_a = tmp_path / 'a'
+    host_b = tmp_path / 'b'
+    host_a.mkdir()
+    host_b.mkdir()
+    upsert_attachment(store, host_path=host_b, vm_name='vm1', tag='tag-b')
+    upsert_attachment(store, host_path=host_a, vm_name='vm1', tag='tag-a')
+    upsert_attachment(store, host_path=host_b, vm_name='vm2', tag='tag-c')
+
+    atts = find_attachments_for_vm(store, 'vm1')
+
+    assert [att.host_path for att in atts] == [
+        str(host_a.resolve()),
+        str(host_b.resolve()),
+    ]

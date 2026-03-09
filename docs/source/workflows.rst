@@ -27,6 +27,9 @@ Attach folders
    aivm attach .
    aivm vm attach --vm aivm-2404 --host_src . --guest_dst /workspace/project
 
+``aivm code`` / ``aivm ssh`` restore the requested folder and attempt to
+remount the VM's other saved folder attachments after reboot.
+
 Inspect and list resources
 --------------------------
 

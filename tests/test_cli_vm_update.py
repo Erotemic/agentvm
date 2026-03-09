@@ -414,3 +414,125 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
     )
     assert session.cfg.vm.name == 'bootstrap-vm'
     assert calls == ['vm_create']
+
+
+def test_prepare_attached_session_restores_saved_vm_attachments(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from aivm.store import Store, save_store, upsert_attachment, upsert_vm
+
+    host_src = tmp_path / 'proj'
+    other_src = tmp_path / 'docs'
+    host_src.mkdir()
+    other_src.mkdir()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'restore-vm'
+    cfg_path = tmp_path / 'config.toml'
+
+    store = Store()
+    upsert_vm(store, cfg)
+    upsert_attachment(
+        store,
+        host_path=host_src,
+        vm_name=cfg.vm.name,
+        guest_dst='/workspace/proj',
+        tag='hostcode-proj',
+    )
+    upsert_attachment(
+        store,
+        host_path=other_src,
+        vm_name=cfg.vm.name,
+        guest_dst='/workspace/docs',
+        tag='hostcode-docs',
+    )
+    save_store(store, cfg_path)
+
+    current_attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        source_dir=str(host_src.resolve()),
+        guest_dst='/workspace/proj',
+        tag='hostcode-proj',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code',
+        lambda **kwargs: (cfg, cfg_path),
+    )
+
+    def fake_resolve_attachment(_cfg, _cfg_path, host_path, _guest_dst_opt):
+        host_path = Path(host_path).resolve()
+        if host_path == host_src.resolve():
+            return current_attachment
+        if host_path == other_src.resolve():
+            return ResolvedAttachment(
+                vm_name=cfg.vm.name,
+                source_dir=str(other_src.resolve()),
+                guest_dst='/workspace/docs',
+                tag='hostcode-docs',
+            )
+        raise AssertionError(f'unexpected host_path={host_path}')
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_attachment',
+        fake_resolve_attachment,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_attached_vm',
+        lambda *a, **k: ReconcileResult(
+            attachment=current_attachment,
+            cached_ip='10.0.0.2',
+            cached_ssh_ok=True,
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_ssh_ready',
+        lambda *a, **k: ProbeOutcome(True, 'ready', ''),
+    )
+
+    mappings = [(str(host_src.resolve()), 'hostcode-proj')]
+
+    def fake_vm_share_mappings(*a, **k):
+        del a, k
+        return list(mappings)
+
+    monkeypatch.setattr('aivm.cli.vm.vm_share_mappings', fake_vm_share_mappings)
+
+    attached: list[tuple[tuple, dict]] = []
+
+    def fake_attach_vm_share(*a, **k):
+        attached.append((a, k))
+        mappings.append((str(other_src.resolve()), 'hostcode-docs'))
+
+    monkeypatch.setattr('aivm.cli.vm.attach_vm_share', fake_attach_vm_share)
+
+    mounted: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm.ensure_share_mounted',
+        lambda *a, **k: mounted.append((a, k)),
+    )
+
+    session = _prepare_attached_session(
+        config_opt=str(cfg_path),
+        vm_opt='',
+        host_src=host_src,
+        guest_dst_opt='',
+        recreate_if_needed=False,
+        ensure_firewall_opt=True,
+        force=False,
+        dry_run=False,
+        yes=True,
+    )
+
+    assert session.cfg.vm.name == 'restore-vm'
+    assert len(attached) == 1
+    attach_args, attach_kwargs = attached[0]
+    assert attach_args[1] == str(other_src.resolve())
+    assert attach_args[2] == 'hostcode-docs'
+    assert attach_kwargs['dry_run'] is False
+    assert [kwargs['guest_dst'] for _, kwargs in mounted] == [
+        '/workspace/proj',
+        '/workspace/docs',
+    ]

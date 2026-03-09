@@ -411,6 +411,14 @@ def find_attachments(reg: Store, host_path: str | Path) -> list[AttachmentEntry]
     return [att for att in reg.attachments if att.host_path == norm]
 
 
+def find_attachments_for_vm(reg: Store, vm_name: str) -> list[AttachmentEntry]:
+    vm_name = str(vm_name).strip()
+    return sorted(
+        (att for att in reg.attachments if att.vm_name == vm_name),
+        key=lambda att: (att.host_path, att.guest_dst, att.tag),
+    )
+
+
 def find_attachment_for_vm(
     reg: Store, host_path: str | Path, vm_name: str
 ) -> AttachmentEntry | None:

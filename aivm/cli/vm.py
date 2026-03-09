@@ -31,6 +31,7 @@ from ..status import (
 )
 from ..store import (
     find_attachment_for_vm,
+    find_attachments_for_vm,
     find_network,
     find_vm,
     load_store,
@@ -1650,6 +1651,152 @@ def _resolve_attachment(
     )
 
 
+def _saved_vm_attachments(
+    cfg: AgentVMConfig,
+    cfg_path: Path,
+    *,
+    primary_attachment: ResolvedAttachment,
+) -> list[ResolvedAttachment]:
+    reg = load_store(cfg_path)
+    primary_source = str(Path(primary_attachment.source_dir).resolve())
+    attachments = [primary_attachment]
+    seen_sources = {primary_source}
+
+    # Restore any other folders already associated with this VM so a rebooted
+    # guest comes back with the broader working set the user previously chose.
+    for att in find_attachments_for_vm(reg, cfg.vm.name):
+        host_src = Path(att.host_path).expanduser()
+        try:
+            source_dir = str(host_src.resolve())
+        except Exception:
+            source_dir = str(host_src.absolute())
+        if source_dir in seen_sources:
+            continue
+        if not host_src.exists():
+            log.warning(
+                'Skipping saved attachment for VM {} because host path is missing: {}',
+                cfg.vm.name,
+                host_src,
+            )
+            continue
+        if not host_src.is_dir():
+            log.warning(
+                'Skipping saved attachment for VM {} because host path is not a directory: {}',
+                cfg.vm.name,
+                host_src,
+            )
+            continue
+        attachments.append(
+            _resolve_attachment(cfg, cfg_path, host_src, '')
+        )
+        seen_sources.add(source_dir)
+    return attachments
+
+
+def _restore_saved_vm_attachments(
+    cfg: AgentVMConfig,
+    cfg_path: Path,
+    *,
+    ip: str,
+    primary_attachment: ResolvedAttachment,
+    yes: bool,
+) -> None:
+    saved_attachments = _saved_vm_attachments(
+        cfg,
+        cfg_path,
+        primary_attachment=primary_attachment,
+    )
+    if len(saved_attachments) <= 1:
+        return
+
+    secondary_attachments = saved_attachments[1:]
+    mappings = vm_share_mappings(cfg, use_sudo=False)
+    needs_privileged_probe = False
+    for att in secondary_attachments:
+        aligned = _align_attachment_tag_with_mappings(
+            att, Path(att.source_dir), mappings
+        )
+        if not _attachment_has_mapping(aligned, mappings):
+            needs_privileged_probe = True
+            break
+
+    if needs_privileged_probe:
+        _confirm_sudo_block(
+            yes=bool(yes),
+            purpose=f"Inspect and restore saved folder attachments for VM '{cfg.vm.name}'.",
+        )
+        mappings = vm_share_mappings(cfg, use_sudo=True)
+
+    restored = 0
+    for att in secondary_attachments:
+        aligned = _align_attachment_tag_with_mappings(
+            att, Path(att.source_dir), mappings
+        )
+        if not _attachment_has_mapping(aligned, mappings):
+            try:
+                attach_vm_share(
+                    cfg,
+                    aligned.source_dir,
+                    aligned.tag,
+                    dry_run=False,
+                )
+            except Exception as ex:
+                log.warning(
+                    'Could not restore saved attachment for VM {}: source={} guest_dst={} tag={} err={}',
+                    cfg.vm.name,
+                    aligned.source_dir,
+                    aligned.guest_dst,
+                    aligned.tag,
+                    ex,
+                )
+                continue
+            mappings = vm_share_mappings(cfg, use_sudo=True)
+            aligned = _align_attachment_tag_with_mappings(
+                aligned, Path(aligned.source_dir), mappings
+            )
+            if not _attachment_has_mapping(aligned, mappings):
+                log.warning(
+                    'Saved attachment still missing after restore attempt for VM {}: source={} guest_dst={} tag={}',
+                    cfg.vm.name,
+                    aligned.source_dir,
+                    aligned.guest_dst,
+                    aligned.tag,
+                )
+                continue
+
+        try:
+            ensure_share_mounted(
+                cfg,
+                ip,
+                guest_dst=aligned.guest_dst,
+                tag=aligned.tag,
+                dry_run=False,
+            )
+            _record_attachment(
+                cfg,
+                cfg_path,
+                host_src=Path(aligned.source_dir),
+                guest_dst=aligned.guest_dst,
+                tag=aligned.tag,
+            )
+            restored += 1
+        except Exception as ex:
+            log.warning(
+                'Could not remount saved attachment inside guest for VM {}: source={} guest_dst={} tag={} err={}',
+                cfg.vm.name,
+                aligned.source_dir,
+                aligned.guest_dst,
+                aligned.tag,
+                ex,
+            )
+    if restored:
+        log.info(
+            'Restored {} saved attachment(s) for VM {}',
+            restored,
+            cfg.vm.name,
+        )
+
+
 def _attachment_has_mapping(
     att: ResolvedAttachment, mappings: list[tuple[str, str]]
 ) -> bool:
@@ -2004,6 +2151,13 @@ def _prepare_attached_session(
         guest_dst=attachment.guest_dst,
         tag=attachment.tag,
         dry_run=False,
+    )
+    _restore_saved_vm_attachments(
+        cfg,
+        cfg_path,
+        ip=ip,
+        primary_attachment=attachment,
+        yes=bool(yes),
     )
     return PreparedSession(
         cfg=cfg,

@@ -124,6 +124,8 @@ Folder attachment
 
 By default, attached folders mount to the same absolute path inside the guest.
 Use ``--guest_dst`` to override. Running VMs are live-attached when possible.
+``aivm code`` and ``aivm ssh`` remount the selected folder and best-effort
+restore other folders already saved for that VM after guest startup.
 
 Inventory and visibility
 
