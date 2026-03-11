@@ -2,6 +2,20 @@
 We [keep a changelog](https://keepachangelog.com/en/1.0.0/).
 We aim to adhere to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Version 0.3.0] - Unreleased
+
+### Added
+- Added a Git-backed attachment mode that keeps a guest-local repo instead of creating a writable virtiofs share.
+- Host repos can now register a Git remote that targets the guest working repo over the managed VM SSH alias.
+
+### Changed
+- Folder-oriented `attach` / `code` / `ssh` flows now persist and honor per-attachment mode (`shared` or `git`).
+- Bumped project version metadata to `0.3.0`.
+
+### Notes
+- Git-backed attachments currently seed committed repository state only; uncommitted host worktree changes are not copied into the guest clone.
+- Git-backed attachments currently sync committed branch state; uncommitted host worktree changes are not pushed into the guest repo.
+
 ## [Version 0.2.0] - Unreleased
 
 ### Added

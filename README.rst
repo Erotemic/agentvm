@@ -121,11 +121,19 @@ Folder attachment
 
    aivm attach .
    aivm vm attach --vm aivm-2404 --host_src .
+   aivm attach . --mode git
 
 By default, attached folders mount to the same absolute path inside the guest.
 Use ``--guest_dst`` to override. Running VMs are live-attached when possible.
 ``aivm code`` and ``aivm ssh`` remount the selected folder and best-effort
 restore other folders already saved for that VM after guest startup.
+
+Use ``--mode git`` to keep a normal Git repo on guest disk instead of exposing
+a writable virtiofs share. In that mode, ``aivm`` configures the guest repo to
+accept host pushes via ``receive.denyCurrentBranch=updateInstead`` and
+registers a host-side remote pointing at the guest repo over the VM SSH alias.
+The host can push committed branch state into the VM and fetch guest commits
+back later. Uncommitted host changes stay on the host until you commit them.
 
 Inventory and visibility
 

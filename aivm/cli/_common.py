@@ -380,6 +380,7 @@ class PreparedSession:
     cfg: AgentVMConfig
     cfg_path: Path
     host_src: Path
+    attachment_mode: str
     share_source_dir: str
     share_tag: str
     share_guest_dst: str

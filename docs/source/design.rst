@@ -75,10 +75,11 @@ Safety and Trust Boundaries
 
 5. Shared-folder trust is a mode, not an assumption
 
-   Read/write host-folder sharing is the practical default today, but future
-   isolation-oriented modes are expected (for example read-only attachment or
-   git-based host/guest synchronization) to support secret-sensitive host repos
-   and cleaner guest environments.
+   Read/write host-folder sharing is the practical default today, but
+   isolation-oriented modes should remain first-class. Git-backed attachment is
+   now one supported alternative, and future modes (for example read-only
+   attachment) should continue to support secret-sensitive host repos and
+   cleaner guest environments.
 
 
 Reliability Principles
