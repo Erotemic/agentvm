@@ -1479,3 +1479,14 @@ Uncertainties/risks: path migration heuristic intentionally targets the narrow l
 Tradeoffs and what might break: git mode default guest path no longer exactly mirrors host absolute path. This is safer and more portable across differing host/guest usernames, but it is a behavioral change users may notice when they relied on exact path identity.
 
 What I am confident about: added tests for new git default destination and legacy migration path, docs now clarify shared-vs-git default path behavior, and full suite is green (`136 passed, 3 skipped`).
+## 2026-03-12 20:30:32 +0000
+
+Applied a focused UX/logging tweak for sudo transparency: when a sudo intent is read-only, the user-visible planning log now explicitly says "read-only" instead of a generic "privileged command(s)" label. State-changing intents are labeled as such. This change is localized to `aivm/util.py::_ensure_sudo_ready` and does not alter execution policy; it only improves clarity in logs shown before sudo execution/prompt.
+
+Reflection/state of mind: this is a small change but materially improves trust and debuggability because users can now distinguish probe-style elevation from mutating elevation at a glance in the same place they approve commands.
+
+Uncertainties/risks: none functionally expected; this is message text only. The only possible impact is downstream tests/tools that grep exact prior log phrases.
+
+Tradeoffs and what might break: wording changed from generic to mode-specific. If external scripts parse these exact log lines, they may need updates.
+
+What I am confident about: targeted helper/util tests and full suite remain green (`136 passed, 3 skipped`).

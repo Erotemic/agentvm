@@ -91,7 +91,12 @@ def _consume_sudo_intent() -> SudoIntent | None:
 
 def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
     cmd_line = shell_join(cmd)
-    log.opt(depth=2).info('Planned privileged command(s):')
+    mode = (
+        'read-only'
+        if str(intent.action).strip().lower() == 'read'
+        else 'state-changing'
+    )
+    log.opt(depth=2).info(f'Planned privileged {mode} command(s):')
     log.opt(depth=2).info(f'  {cmd_line}')
     if os.geteuid() == 0:
         return
@@ -102,7 +107,9 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
             'Privileged host operations require confirmation, but stdin is not interactive. '
             'Re-run with --yes.'
         )
-    log.opt(depth=2).info('About to run privileged host operations via sudo:')
+    log.opt(depth=2).info(
+        f'About to run privileged {mode} host operations via sudo:'
+    )
     log.opt(depth=2).info(f'  {intent.purpose}')
     ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
     if ans in {'a', 'all'}:
