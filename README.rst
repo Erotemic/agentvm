@@ -87,17 +87,23 @@ Status and sudo behavior
 By default, ``aivm status`` avoids privileged probes. Use ``--sudo`` for
 network/firewall/libvirt/image checks.
 
-Privileged host actions prompt before sudo operations. Use:
+Sudo policy defaults:
+
+* read-only sudo probes (inspect/query/status) are auto-approved
+* state-changing sudo actions still prompt unless ``--yes``/``--yes-sudo`` is set
+
+Use:
 
 * ``--yes`` to auto-approve all prompts
 * ``--yes-sudo`` to auto-approve only sudo prompts
 
-Config default:
+Config defaults:
 
 .. code-block:: toml
 
    [behavior]
-   yes_sudo = true
+   yes_sudo = false
+   prompt_sudo_readonly = false  # set true for strict "prompt every sudo" mode
 
 Common Workflows
 ----------------

@@ -41,6 +41,7 @@ class FirewallStatusCLI(_BaseCommand):
         _confirm_sudo_block(
             yes=bool(args.yes),
             purpose='Read nftables firewall status.',
+            action='read',
         )
         print(firewall_status(cfg))
         return 0

@@ -337,6 +337,7 @@ class VMWaitIPCLI(_BaseCommand):
         _confirm_sudo_block(
             yes=bool(args.yes),
             purpose='Query VM networking state via virsh to resolve VM IP.',
+            action='read',
         )
         print(
             wait_for_ip(
@@ -358,6 +359,7 @@ class VMStatusCLI(_BaseCommand):
         _confirm_sudo_block(
             yes=bool(args.yes),
             purpose='Inspect VM state via virsh.',
+            action='read',
         )
         print(vm_status(cfg))
         return 0
@@ -809,6 +811,7 @@ class VMAttachCLI(_BaseCommand):
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose=f"Inspect VM '{cfg.vm.name}' share mappings and attach folder if needed.",
+                action='read',
             )
             sudo_confirmed = True
             vm_out, vm_defined_probe = probe_vm_state(cfg, use_sudo=True)
@@ -821,6 +824,7 @@ class VMAttachCLI(_BaseCommand):
                     _confirm_sudo_block(
                         yes=bool(args.yes),
                         purpose=f"Inspect VM '{cfg.vm.name}' share mappings and attach folder if needed.",
+                        action='read',
                     )
                     sudo_confirmed = True
                 mappings = vm_share_mappings(cfg)
@@ -828,6 +832,10 @@ class VMAttachCLI(_BaseCommand):
                     attachment, host_src, mappings
                 )
                 if not _attachment_has_mapping(attachment, mappings):
+                    _confirm_sudo_block(
+                        yes=bool(args.yes),
+                        purpose=f"Attach this folder to existing VM '{cfg.vm.name}'.",
+                    )
                     attach_vm_share(
                         cfg,
                         attachment.source_dir,
@@ -929,6 +937,7 @@ class VMDetachCLI(_BaseCommand):
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose=f"Inspect VM '{cfg.vm.name}' share mappings for detach.",
+                action='read',
             )
             vm_out, vm_defined = probe_vm_state(cfg, use_sudo=True)
             vm_defined_probe = vm_defined
@@ -1304,6 +1313,7 @@ def _vm_update_drift(
         _confirm_sudo_block(
             yes=bool(yes),
             purpose=f"Inspect VM '{cfg.vm.name}' state/config for update planning.",
+            action='read',
         )
         dominfo = run_cmd(
             virsh_system_cmd('dominfo', cfg.vm.name),
@@ -1356,6 +1366,7 @@ def _vm_update_drift(
         _confirm_sudo_block(
             yes=bool(yes),
             purpose=f"Inspect VM '{cfg.vm.name}' disk/network details via libvirt.",
+            action='read',
         )
         sudo_confirmed = True
         disk_path, disk_notes = _resolve_vm_disk_path(cfg, use_sudo=True)
@@ -1368,6 +1379,7 @@ def _vm_update_drift(
             _confirm_sudo_block(
                 yes=bool(yes),
                 purpose=f"Inspect VM '{cfg.vm.name}' disk image size via qemu-img.",
+                action='read',
             )
             sudo_confirmed = True
         cur_disk, qemu_img_err = _qemu_img_virtual_size_bytes(
@@ -1388,6 +1400,7 @@ def _vm_update_drift(
             _confirm_sudo_block(
                 yes=bool(yes),
                 purpose=f"Inspect VM '{cfg.vm.name}' disk capacity via virsh domblkinfo.",
+                action='read',
             )
             sudo_confirmed = True
             domblk = _virsh_domblk_capacity_bytes(
@@ -1414,6 +1427,7 @@ def _vm_update_drift(
             _confirm_sudo_block(
                 yes=bool(yes),
                 purpose=f"Inspect VM '{cfg.vm.name}' network details via libvirt.",
+                action='read',
             )
             sudo_confirmed = True
         xml = run_cmd(
@@ -1726,6 +1740,7 @@ def _resolve_ip_for_ssh_ops(
     _confirm_sudo_block(
         yes=bool(yes),
         purpose=purpose,
+        action='read',
     )
     ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
     wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
@@ -1879,6 +1894,7 @@ def _restore_saved_vm_attachments(
         _confirm_sudo_block(
             yes=bool(yes),
             purpose=f"Inspect and restore saved folder attachments for VM '{cfg.vm.name}'.",
+            action='read',
         )
         mappings = vm_share_mappings(cfg, use_sudo=True)
 
@@ -1888,6 +1904,10 @@ def _restore_saved_vm_attachments(
             att, Path(att.source_dir), mappings
         )
         if not _attachment_has_mapping(aligned, mappings):
+            _confirm_sudo_block(
+                yes=bool(yes),
+                purpose=f"Restore saved shared folder attachment on VM '{cfg.vm.name}'.",
+            )
             try:
                 attach_vm_share(
                     cfg,
@@ -2019,6 +2039,7 @@ def _reconcile_attached_vm(
             _confirm_sudo_block(
                 yes=bool(policy.yes),
                 purpose=f"Inspect firewall table '{cfg.firewall.table}'.",
+                action='read',
             )
             fw_probe = probe_firewall(cfg, use_sudo=True).ok
         need_firewall_apply = fw_probe is not True
@@ -2324,6 +2345,7 @@ def _prepare_attached_session(
         _confirm_sudo_block(
             yes=bool(yes),
             purpose='Query VM network state via virsh to discover VM IP.',
+            action='read',
         )
         ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
         wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)

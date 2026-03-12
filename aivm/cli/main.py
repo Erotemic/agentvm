@@ -150,6 +150,7 @@ class StatusCLI(_BaseCommand):
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose=f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'.",
+                action='read',
             )
         print(
             render_status(

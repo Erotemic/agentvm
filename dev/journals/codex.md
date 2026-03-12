@@ -1435,3 +1435,14 @@ Uncertainties/risks: detach currently prioritizes deterministic state-store clea
 Tradeoffs and what might break: I chose strict rejection of mode mismatch at attachment resolution time, which is safer but intentionally breaks permissive behavior. I also introduced a new detach command surface instead of expecting manual config edits, which increases CLI surface area slightly but keeps the workflow explicit and discoverable.
 
 What I am confident about: targeted regression tests cover mode-mismatch rejection, store-level removal semantics, and detach command behavior for shared/git attachments; full suite is green (`131 passed, 3 skipped`). README and workflows docs now spell out the exact default-mode behavior and the mandatory detach+reattach process for mode changes.
+## 2026-03-12 19:40:34 +0000
+
+Implemented a sudo-confirmation policy split between read-only and state-changing operations. The core wiring changes are in `aivm/cli/_common.py` and `aivm/util.py`: `_confirm_sudo_block` now accepts an action (`read` or `modify`), read-only sudo confirmations auto-approve by default, and sticky “all” approval remains explicit (user enters `a`) instead of being accidentally inferred from read-only auto-allow behavior. I added a config behavior flag `prompt_sudo_readonly` (default `false`) to support the strict mode you requested (`true` restores prompt-on-every-readonly-sudo behavior). Then I updated callsites to mark query/inspect/status probes as `action='read'` while leaving mutating operations on the existing confirmation path.
+
+Reflection/state of mind: this was a policy-boundary cleanup that required careful separation of intent propagation from prompt behavior. The subtle bug to avoid was letting one auto-approved read probe implicitly approve later mutating sudo actions; the intent model now distinguishes sticky user approval from non-sticky auto-read approval.
+
+Uncertainties/risks: action classification is callsite-driven, so future contributors can misclassify new sudo operations if they do not follow the same discipline. The current implementation catches invalid action values, but cannot infer read/write semantics from arbitrary shell commands.
+
+Tradeoffs and what might break: default UX is smoother (fewer prompts for status/probes) but less visibly explicit in interactive sessions. Strict environments can flip `behavior.prompt_sudo_readonly=true` to retain previous prompting behavior. I also had to add explicit modify confirmations in a couple of paths that previously used one coarse “inspect + maybe change” prompt.
+
+What I am confident about: behavior is covered by updated tests across helper/util/store/vm update paths, config lint supports the new behavior key, and full suite passes (`134 passed, 3 skipped`). README sudo-behavior docs now describe the default and strict policy toggle.

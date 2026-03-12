@@ -41,6 +41,8 @@ class CmdError(RuntimeError):
 class SudoIntent:
     yes: bool
     purpose: str
+    action: str = 'modify'
+    sticky: bool = False
 
 
 _SUDO_INTENT: ContextVar[SudoIntent | None] = ContextVar(
@@ -52,8 +54,24 @@ def shell_join(cmd: Sequence[str]) -> str:
     return ' '.join(shlex.quote(c) for c in cmd)
 
 
-def arm_sudo_intent(*, yes: bool, purpose: str) -> None:
-    _SUDO_INTENT.set(SudoIntent(yes=bool(yes), purpose=str(purpose)))
+def arm_sudo_intent(
+    *,
+    yes: bool,
+    purpose: str,
+    action: str = 'modify',
+    sticky: bool = False,
+) -> None:
+    mode = str(action or 'modify').strip().lower()
+    if mode not in {'read', 'modify'}:
+        mode = 'modify'
+    _SUDO_INTENT.set(
+        SudoIntent(
+            yes=bool(yes),
+            purpose=str(purpose),
+            action=mode,
+            sticky=bool(sticky),
+        )
+    )
 
 
 def clear_sudo_intent() -> None:
@@ -62,7 +80,7 @@ def clear_sudo_intent() -> None:
 
 def sudo_intent_auto_yes() -> bool:
     intent = _SUDO_INTENT.get()
-    return bool(intent is not None and intent.yes)
+    return bool(intent is not None and intent.sticky)
 
 
 def _consume_sudo_intent() -> SudoIntent | None:
@@ -88,7 +106,12 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
     log.opt(depth=2).info(f'  {intent.purpose}')
     ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
     if ans in {'a', 'all'}:
-        arm_sudo_intent(yes=True, purpose=intent.purpose)
+        arm_sudo_intent(
+            yes=True,
+            purpose=intent.purpose,
+            action='modify',
+            sticky=True,
+        )
         return
     if ans not in {'y', 'yes'}:
         raise RuntimeError('Aborted by user.')

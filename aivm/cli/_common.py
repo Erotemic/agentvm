@@ -30,6 +30,9 @@ _LAST_LOGGING_STATE: tuple[str, bool] | None = None
 _CURRENT_YES_SUDO: ContextVar[bool] = ContextVar(
     'aivm_current_yes_sudo', default=False
 )
+_CURRENT_PROMPT_SUDO_READONLY: ContextVar[bool] = ContextVar(
+    'aivm_current_prompt_sudo_readonly', default=False
+)
 
 
 class _BaseCommand(scfg.DataConfig):
@@ -64,6 +67,9 @@ class _BaseCommand(scfg.DataConfig):
         parsed = super().cli(*args, **kwargs)
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
         cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
+        cfg_prompt_sudo_readonly = _resolve_cfg_prompt_sudo_readonly(
+            getattr(parsed, 'config', None)
+        )
         effective_yes_sudo = bool(
             getattr(parsed, 'yes_sudo', False)
             or getattr(parsed, 'yes', False)
@@ -71,15 +77,17 @@ class _BaseCommand(scfg.DataConfig):
         )
         setattr(parsed, 'yes_sudo', effective_yes_sudo)
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
+        _CURRENT_PROMPT_SUDO_READONLY.set(bool(cfg_prompt_sudo_readonly))
         args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
         _setup_logging(args_verbose, cfg_verbosity)
         log.trace(
-            'Parsed command {} with config={} verbose={} yes={} yes_sudo={}',
+            'Parsed command {} with config={} verbose={} yes={} yes_sudo={} prompt_sudo_readonly={}',
             cls.__name__,
             getattr(parsed, 'config', None),
             args_verbose,
             bool(getattr(parsed, 'yes', False)),
             bool(getattr(parsed, 'yes_sudo', False)),
+            bool(cfg_prompt_sudo_readonly),
         )
         return parsed
 
@@ -118,6 +126,20 @@ def _resolve_cfg_yes_sudo(config_opt: str | None) -> bool:
     except Exception:
         cfg_yes_sudo = False
     return cfg_yes_sudo
+
+
+def _resolve_cfg_prompt_sudo_readonly(config_opt: str | None) -> bool:
+    prompt_sudo_readonly = False
+    try:
+        path = _cfg_path(config_opt)
+        if path.exists():
+            reg = load_store(path)
+            prompt_sudo_readonly = bool(
+                getattr(reg.behavior, 'prompt_sudo_readonly', False)
+            )
+    except Exception:
+        prompt_sudo_readonly = False
+    return prompt_sudo_readonly
 
 
 def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
@@ -329,18 +351,29 @@ def _confirm_sudo_block(
     *,
     yes: bool,
     purpose: str,
+    action: str = 'modify',
 ) -> None:
+    mode = str(action or 'modify').strip().lower()
+    if mode not in {'read', 'modify'}:
+        raise RuntimeError("--action must be either 'read' or 'modify'")
     log.trace(
-        'Confirm sudo block yes={} purpose={!r}',
+        'Confirm sudo block yes={} action={} purpose={!r}',
         yes,
+        mode,
         purpose,
     )
     if os.geteuid() == 0:
         return
-    eff_yes = bool(
-        yes or _CURRENT_YES_SUDO.get(False) or sudo_intent_auto_yes()
+    auto_yes_read = (
+        mode == 'read' and not _CURRENT_PROMPT_SUDO_READONLY.get(False)
     )
-    arm_sudo_intent(yes=eff_yes, purpose=purpose)
+    eff_yes = bool(
+        yes
+        or _CURRENT_YES_SUDO.get(False)
+        or sudo_intent_auto_yes()
+        or auto_yes_read
+    )
+    arm_sudo_intent(yes=eff_yes, purpose=purpose, action=mode, sticky=False)
 
 
 def _confirm_external_file_update(

@@ -190,6 +190,9 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
     lines.append('')
     lines.append('[behavior]')
     _emit_toml_kv(lines, 'yes_sudo', bool(reg.behavior.yes_sudo))
+    _emit_toml_kv(
+        lines, 'prompt_sudo_readonly', bool(reg.behavior.prompt_sudo_readonly)
+    )
     _emit_toml_kv(lines, 'verbose', int(reg.behavior.verbose))
     lines.append('')
 

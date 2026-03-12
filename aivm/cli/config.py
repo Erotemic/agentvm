@@ -369,6 +369,7 @@ class ConfigDiscoverCLI(_BaseCommand):
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose='Discover existing libvirt VMs via system virsh.',
+                action='read',
             )
             used_sudo = True
             names_res = run_cmd(
@@ -493,7 +494,11 @@ def _lint_store_file(path: Path) -> list[str]:
         if not isinstance(behavior, dict):
             problems.append('top-level key "behavior" should be a table/object')
         else:
-            allowed_behavior = {'yes_sudo', 'verbose'}
+            allowed_behavior = {
+                'yes_sudo',
+                'prompt_sudo_readonly',
+                'verbose',
+            }
             for key in sorted(behavior.keys()):
                 if key not in allowed_behavior:
                     problems.append(f'behavior unknown key: {key!r}')

@@ -122,6 +122,7 @@ class PathsConfig:
 @dataclass
 class BehaviorConfig:
     yes_sudo: bool = False
+    prompt_sudo_readonly: bool = False
     verbose: int = 1
 
 

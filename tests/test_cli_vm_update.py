@@ -124,8 +124,8 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
 
     sudo_prompts: list[str] = []
 
-    def fake_confirm_sudo_block(*, yes, purpose):
-        del yes
+    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
+        del yes, kwargs
         sudo_prompts.append(purpose)
 
     def fake_run_cmd(cmd, *, sudo=False, **kwargs):
@@ -190,8 +190,8 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_confirm_sudo_block(*, yes, purpose):
-        del yes, purpose
+    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
+        del yes, purpose, kwargs
 
     def fake_run_cmd(cmd, *, sudo=False, **kwargs):
         del kwargs, sudo
