@@ -1490,3 +1490,25 @@ Uncertainties/risks: none functionally expected; this is message text only. The 
 Tradeoffs and what might break: wording changed from generic to mode-specific. If external scripts parse these exact log lines, they may need updates.
 
 What I am confident about: targeted helper/util tests and full suite remain green (`136 passed, 3 skipped`).
+## 2026-03-12 20:35:37 +0000
+
+Fixed a real signature mismatch in saved-attachment restore flow: `_restore_saved_vm_attachments()` called `_record_attachment(...)` without required keyword-only `mode`, which surfaced at runtime as a warning and skipped persistence for restored attachments. Added `mode=aligned.mode` at the callsite and strengthened the existing restore test to monkeypatch `_record_attachment` with a strict keyword-only signature and assert mode is recorded for the secondary restored folder.
+
+Reflection/state of mind: this is exactly the kind of bug that can hide under broad exception handling and only show up as operational warning noise. Tightening the test seam to enforce function signature use is the right defense.
+
+Uncertainties/risks: low risk; change is localized and aligns call arguments with declared signature. Existing behavior should only improve (restored attachments now persist correctly instead of warning).
+
+Tradeoffs and what might break: none expected beyond exposing similar latent issues if other tests adopt stricter monkeypatch signatures.
+
+What I am confident about: targeted tests and full suite are green (`136 passed, 3 skipped`). I also checked local static type-check command availability; `ty` is not installed in this environment, so no type-check pass ran here.
+## 2026-03-12 20:40:52 +0000
+
+Completed the remaining `ty check aivm` cleanup after enabling local `ty`. Fixed two categories: (1) function signature alignment where `_restore_saved_vm_attachments` accepted `None` callsite for `primary_attachment` by updating annotation to `ResolvedAttachment | None`, and (2) dict key lookup typing issues in config lint by adding explicit `cast(dict[str, object], item)` after runtime `isinstance(item, dict)` guards in the `networks` and `vms` loops.
+
+Reflection/state of mind: this is a good reminder that dynamic-style data validation code benefits from small explicit casts so static checkers can follow control flow. The runtime behavior was already correct; the typing intent just needed to be made explicit.
+
+Uncertainties/risks: low; changes are type-surface only and preserve runtime logic.
+
+Tradeoffs and what might break: introducing `typing.cast` adds minor verbosity but improves static confidence and future refactor safety.
+
+What I am confident about: `ty check aivm` now reports `All checks passed!`, and full tests remain green (`136 passed, 3 skipped`).

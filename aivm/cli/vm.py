@@ -1902,7 +1902,7 @@ def _restore_saved_vm_attachments(
     cfg_path: Path,
     *,
     ip: str,
-    primary_attachment: ResolvedAttachment,
+    primary_attachment: ResolvedAttachment | None,
     yes: bool,
 ) -> None:
     saved_attachments = _saved_vm_attachments(
@@ -1985,6 +1985,7 @@ def _restore_saved_vm_attachments(
                 cfg,
                 cfg_path,
                 host_src=Path(aligned.source_dir),
+                mode=aligned.mode,
                 guest_dst=aligned.guest_dst,
                 tag=aligned.tag,
             )

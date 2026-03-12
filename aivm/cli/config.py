@@ -14,6 +14,7 @@ import sys
 import xml.etree.ElementTree as ET
 from dataclasses import fields
 from pathlib import Path
+from typing import cast
 
 import scriptconfig as scfg
 import tomllib
@@ -542,12 +543,13 @@ def _lint_store_file(path: Path) -> list[str]:
             if not isinstance(item, dict):
                 problems.append(f'networks[{idx}] is not a table/object')
                 continue
+            item = cast(dict[str, object], item)
             for key in sorted(item.keys()):
                 if key not in allowed_network_record:
                     problems.append(
                         f'networks[{idx}] unknown key/section: {key!r}'
                     )
-            net_sec = item.get('network', None)
+            net_sec = item.get('network')
             if net_sec is not None:
                 if not isinstance(net_sec, dict):
                     problems.append(
@@ -559,7 +561,7 @@ def _lint_store_file(path: Path) -> list[str]:
                             problems.append(
                                 f'networks[{idx}].network unknown key: {key!r}'
                             )
-            fw_sec = item.get('firewall', None)
+            fw_sec = item.get('firewall')
             if fw_sec is not None:
                 if not isinstance(fw_sec, dict):
                     problems.append(
@@ -579,11 +581,12 @@ def _lint_store_file(path: Path) -> list[str]:
             if not isinstance(item, dict):
                 problems.append(f'vms[{idx}] is not a table/object')
                 continue
+            item = cast(dict[str, object], item)
             for key in sorted(item.keys()):
                 if key not in allowed_vm_record:
                     problems.append(f'vms[{idx}] unknown key/section: {key!r}')
             for sec_name, allowed in section_allowed.items():
-                sec = item.get(sec_name, None)
+                sec = item.get(sec_name)
                 if sec is None:
                     continue
                 if not isinstance(sec, dict):

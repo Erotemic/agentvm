@@ -513,6 +513,32 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         'aivm.cli.vm.ensure_share_mounted',
         lambda *a, **k: mounted.append((a, k)),
     )
+    recorded: list[dict] = []
+
+    def fake_record_attachment(
+        cfg_arg,
+        cfg_path_arg,
+        *,
+        host_src,
+        mode,
+        guest_dst,
+        tag,
+        force=False,
+    ):
+        del cfg_arg, cfg_path_arg, force
+        recorded.append(
+            {
+                'host_src': str(host_src),
+                'mode': mode,
+                'guest_dst': guest_dst,
+                'tag': tag,
+            }
+        )
+        return cfg_path
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', fake_record_attachment
+    )
 
     session = _prepare_attached_session(
         config_opt=str(cfg_path),
@@ -536,3 +562,6 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         '/workspace/proj',
         '/workspace/docs',
     ]
+    assert len(recorded) == 2
+    assert recorded[1]['mode'] == 'shared'
+    assert recorded[1]['guest_dst'] == '/workspace/docs'
