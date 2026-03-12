@@ -213,11 +213,11 @@ def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
         lambda **kwargs: calls.append(kwargs),
     )
     tok_yes = common_mod._CURRENT_YES_SUDO.set(False)
-    tok = common_mod._CURRENT_PROMPT_SUDO_READONLY.set(True)
+    tok = common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.set(False)
     try:
         _confirm_sudo_block(yes=False, purpose='read check', action='read')
     finally:
-        common_mod._CURRENT_PROMPT_SUDO_READONLY.reset(tok)
+        common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.reset(tok)
         common_mod._CURRENT_YES_SUDO.reset(tok_yes)
     assert calls == [
         {
@@ -243,20 +243,20 @@ def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
     assert bool(parsed.yes_sudo) is True
 
 
-def test_cli_prompt_sudo_readonly_defaults_from_config(
+def test_cli_auto_approve_readonly_sudo_defaults_from_config(
     monkeypatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     store.defaults = AgentVMConfig()
-    store.behavior.prompt_sudo_readonly = True
+    store.behavior.auto_approve_readonly_sudo = False
     save_store(store, cfg_path)
     monkeypatch.setattr('aivm.cli.help._cfg_path', lambda p: cfg_path)
     PlanCLI.cli(
         argv=False,
         data={'config': str(cfg_path), 'yes': False, 'yes_sudo': False},
     )
-    assert common_mod._CURRENT_PROMPT_SUDO_READONLY.get(False) is True
+    assert common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.get(True) is False
 
 
 def test_cli_verbose_defaults_from_behavior_config(tmp_path: Path) -> None:

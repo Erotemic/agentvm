@@ -496,7 +496,7 @@ def _lint_store_file(path: Path) -> list[str]:
         else:
             allowed_behavior = {
                 'yes_sudo',
-                'prompt_sudo_readonly',
+                'auto_approve_readonly_sudo',
                 'verbose',
             }
             for key in sorted(behavior.keys()):

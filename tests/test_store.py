@@ -26,7 +26,7 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     store.defaults = AgentVMConfig()
     store.defaults.vm.cpus = 2
     store.behavior.yes_sudo = True
-    store.behavior.prompt_sudo_readonly = True
+    store.behavior.auto_approve_readonly_sudo = False
     store.behavior.verbose = 4
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-b'
@@ -46,7 +46,7 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     assert loaded.defaults is not None
     assert loaded.defaults.vm.cpus == 2
     assert loaded.behavior.yes_sudo is True
-    assert loaded.behavior.prompt_sudo_readonly is True
+    assert loaded.behavior.auto_approve_readonly_sudo is False
     assert loaded.behavior.verbose == 4
     assert [v.name for v in loaded.vms] == ['vm-a', 'vm-b']
     assert [a.host_path for a in loaded.attachments] == ['/tmp/a', '/tmp/z']

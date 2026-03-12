@@ -103,7 +103,7 @@ Config defaults:
 
    [behavior]
    yes_sudo = false
-   prompt_sudo_readonly = false  # set true for strict "prompt every sudo" mode
+   auto_approve_readonly_sudo = true  # set false for strict "prompt every sudo" mode
 
 Common Workflows
 ----------------

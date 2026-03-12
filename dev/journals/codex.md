@@ -1446,3 +1446,25 @@ Uncertainties/risks: action classification is callsite-driven, so future contrib
 Tradeoffs and what might break: default UX is smoother (fewer prompts for status/probes) but less visibly explicit in interactive sessions. Strict environments can flip `behavior.prompt_sudo_readonly=true` to retain previous prompting behavior. I also had to add explicit modify confirmations in a couple of paths that previously used one coarse “inspect + maybe change” prompt.
 
 What I am confident about: behavior is covered by updated tests across helper/util/store/vm update paths, config lint supports the new behavior key, and full suite passes (`134 passed, 3 skipped`). README sudo-behavior docs now describe the default and strict policy toggle.
+## 2026-03-12 20:08:17 +0000
+
+Renamed the sudo read-probe policy key from `prompt_sudo_readonly` to `auto_approve_readonly_sudo` to make intent explicit and positive (true means auto-approve read-only sudo probes). I updated config dataclass/store serialization/docs/tests and switched CLI context variable names accordingly. I also kept backward compatibility in store loading by mapping legacy `prompt_sudo_readonly` into the new key with inverted semantics so existing configs preserve behavior after upgrade.
+
+Reflection/state of mind: this naming cleanup materially improves readability and reduces polarity confusion in both docs and implementation. The old name forced mental inversion at callsites (`not prompt` means auto-approve); the new name aligns naturally with the default policy.
+
+Uncertainties/risks: mixed environments may temporarily carry both keys in manually edited configs. Current load behavior prefers direct assignment when the new key is present and still maps old key when encountered, but config hygiene still depends on users eventually normalizing files.
+
+Tradeoffs and what might break: for compatibility, lint now accepts both behavior keys, which avoids noisy failures on legacy stores but may allow stale key usage to persist longer.
+
+What I am confident about: full suite is green (`135 passed, 3 skipped`), strict-mode semantics are preserved (`auto_approve_readonly_sudo=false`), and README now documents the new key name and default.
+## 2026-03-12 20:09:17 +0000
+
+Follow-up cleanup per user direction: removed backward compatibility for the renamed sudo policy key. The code now only recognizes `behavior.auto_approve_readonly_sudo`; legacy `prompt_sudo_readonly` handling was deleted from store load path and lint whitelist. I also removed the now-obsolete legacy-key test and re-ran the full suite.
+
+Reflection/state of mind: this is the right move for current development phase because the compatibility branch was adding complexity without strong migration value yet. Keeping one canonical key reduces ambiguity and keeps docs/code/tests aligned.
+
+Uncertainties/risks: old local config files using the legacy key will now silently fall back to default behavior (`auto_approve_readonly_sudo=true`) unless users update their config. That is acceptable given explicit non-compat direction, but worth watching in local dev environments.
+
+Tradeoffs and what might break: strict-read-prompt users who had already written `prompt_sudo_readonly=true` need to rename it to `auto_approve_readonly_sudo=false`.
+
+What I am confident about: test coverage and full suite remain green (`134 passed, 3 skipped`) after removing compatibility paths.
