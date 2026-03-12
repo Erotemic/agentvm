@@ -1545,3 +1545,14 @@ Uncertainties/risks: none runtime; output-only change.
 Tradeoffs and what might break: users lose immediate visibility of raw used-count in a dedicated line, but that information is still available via shared-folder status/detail outputs.
 
 What I am confident about: status-focused tests and full suite are green (`136 passed, 3 skipped`).
+## 2026-03-12 22:04:10 +0000
+
+Expanded `dev/design/future/flexible-folder-sharing.md` with a concrete bind-mount-based single-export strategy. The new section describes why host symlinks are insufficient for arbitrary external paths, how a per-VM shared-root plus one persistent virtiofs mapping could work, rough attach/detach steps, and operational/safety concerns (reboot recovery, stale mounts, partial failure cleanup, and sudo-mutation boundaries).
+
+Reflection/state of mind: this is the most actionable follow-up to the virtiofs-slot limitation because it preserves a single virtiofs device while still enabling many host sources. Documenting it concretely now should reduce design drift later.
+
+Uncertainties/risks: guest destination mapping policy (guest symlink vs guest bind mount) remains open and should be decided with permission/safety ergonomics in mind.
+
+Tradeoffs and what might break: none runtime; design-doc only.
+
+What I am confident about: the future-design doc now includes a technically viable path that directly addresses the device-slot bottleneck.
