@@ -137,6 +137,20 @@ Use ``--guest_dst`` to override in either mode. Running VMs are live-attached wh
 ``aivm code`` and ``aivm ssh`` remount the selected folder and best-effort
 restore other folders already saved for that VM after guest startup.
 
+Major limitation: shared-mode folder count
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each ``shared`` folder uses a virtiofs device mapping in the VM definition.
+Attaching many folders can hit VM device-slot limits (for example PCI/PCIe
+capacity), which surfaces from libvirt as errors like ``No more available PCI
+slots`` during attach/restore.
+
+Workarounds today:
+
+* detach unused shared folders
+* prefer ``--mode git`` for folders that do not need live writable host sharing
+* split large folder sets across multiple VMs
+
 Use ``--mode git`` to keep a normal Git repo on guest disk instead of exposing
 a writable virtiofs share. In that mode, ``aivm`` configures the guest repo to
 accept host pushes via ``receive.denyCurrentBranch=updateInstead`` and

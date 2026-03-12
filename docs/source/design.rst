@@ -80,6 +80,9 @@ Safety and Trust Boundaries
    now one supported alternative, and future modes (for example read-only
    attachment) should continue to support secret-sensitive host repos and
    cleaner guest environments.
+   Current implementation limitation: each shared-folder attach uses a VM
+   virtiofs device mapping and can exhaust device-slot capacity (for example
+   PCI/PCIe slots) when many folders are attached to one VM.
 
 
 Reliability Principles
@@ -225,6 +228,9 @@ should be evolved in these areas:
 * Provisioning defaults:
   add ``uv`` to baseline provisioning so Python package/workflow setup is
   consistent out of the box.
+* Folder sharing backend flexibility:
+  evaluate alternatives that scale beyond per-folder virtiofs device-slot
+  limits (see ``dev/design/future/flexible-folder-sharing.md``).
 
 
 Non-goals

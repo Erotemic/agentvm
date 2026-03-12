@@ -40,6 +40,16 @@ branch state into the checked-out guest repo and fetch guest commits later.
 Git-mode default guest paths are chosen under ``/home/<vm-user>/...`` so sync
 does not depend on root-owned guest paths; use ``--guest_dst`` to override.
 
+Major limitation: shared folder count
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each ``shared`` folder consumes a virtiofs device mapping. Large attachment
+sets can exhaust VM device-slot capacity (for example PCI/PCIe slots), causing
+attach/restore failures such as ``No more available PCI slots``.
+
+If this happens, prefer ``--mode git`` for some folders, detach unused shared
+folders, or split the workload across multiple VMs.
+
 Attachment mode rules:
 
 * New folder defaults to ``shared`` when ``--mode`` is omitted.

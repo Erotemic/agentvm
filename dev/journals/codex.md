@@ -1512,3 +1512,36 @@ Uncertainties/risks: low; changes are type-surface only and preserve runtime log
 Tradeoffs and what might break: introducing `typing.cast` adds minor verbosity but improves static confidence and future refactor safety.
 
 What I am confident about: `ty check aivm` now reports `All checks passed!`, and full tests remain green (`136 passed, 3 skipped`).
+## 2026-03-12 21:14:26 +0000
+
+Documented virtiofs device-slot exhaustion as a major current limitation and added a dedicated future-design note for scalable host/guest folder sharing alternatives. I added explicit user-facing language in README and workflows docs that shared-mode folder count is constrained by VM device topology (PCI/PCIe slots), including concrete failure phrasing (`No more available PCI slots`) and current operational mitigations (use git mode, detach unused shares, split across VMs). I also updated the design contract to capture this limitation and linked a new future design note under `dev/design/future/flexible-folder-sharing.md` for potential backend directions (sshfs/network-backed/sync-based/multiplexed workspace).
+
+Reflection/state of mind: this is the right place to make the limitation explicit now rather than treating it as an incidental runtime error. Users need an upfront model of why folder attach scaling fails, and maintainers need a stable design placeholder for alternative approaches.
+
+Uncertainties/risks: the future design note is intentionally exploratory and not a committed roadmap; if we pick one backend direction later, some candidate options may be dropped.
+
+Tradeoffs and what might break: none runtime; docs-only change. The only tradeoff is acknowledging a hard limitation more prominently, which can feel heavier but improves expectation setting.
+
+What I am confident about: the limitation is now documented in both user workflow docs and design-level contract notes, and future work has a concrete file/location to accumulate backend design ideas.
+## 2026-03-12 21:48:08 +0000
+
+Added a VM status line for virtiofs slot pressure visibility. `render_status(...)` now reports `VM virtiofs slots` alongside existing `VM shared folders`, with current usage count and an explicit `available unknown (VM PCI/PCIe topology dependent)` qualifier. This gives operators immediate signal about share-device growth without implying a fake precise capacity number.
+
+Reflection/state of mind: this is a pragmatic transparency improvement. Exact remaining capacity is topology-dependent and non-trivial to compute robustly from generic libvirt XML, so reporting used-count plus clear uncertainty is better than either silence or brittle pseudo-precision.
+
+Uncertainties/risks: users may still ask for exact remaining capacity; we should treat that as future enhancement requiring deeper domain-XML/controller occupancy modeling.
+
+Tradeoffs and what might break: one extra status line in normal output; low risk. Any tests depending on exact status text ordering may need updates.
+
+What I am confident about: added regression coverage for the new status line and full suite remains green (`137 passed, 3 skipped`).
+## 2026-03-12 21:53:26 +0000
+
+Removed the recently added `VM virtiofs slots` status line after product feedback that usage-only without remaining-capacity estimation is not useful enough in default status output. Reverted the corresponding status test additions. Status output now remains focused on existing share mapping presence/count messaging without a separate slots line.
+
+Reflection/state of mind: this is a reasonable UX rollback. Even though the line was technically accurate, it added noise without giving users the actionable "how many left" value they want.
+
+Uncertainties/risks: none runtime; output-only change.
+
+Tradeoffs and what might break: users lose immediate visibility of raw used-count in a dedicated line, but that information is still available via shared-folder status/detail outputs.
+
+What I am confident about: status-focused tests and full suite are green (`136 passed, 3 skipped`).
