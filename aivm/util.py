@@ -91,13 +91,14 @@ def _consume_sudo_intent() -> SudoIntent | None:
 
 def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
     cmd_line = shell_join(cmd)
+    local_log = log.opt(depth=2)
     mode = (
         'read-only'
         if str(intent.action).strip().lower() == 'read'
         else 'state-changing'
     )
-    log.opt(depth=2).info(f'Planned privileged {mode} command(s):')
-    log.opt(depth=2).info(f'  {cmd_line}')
+    local_log.info(f'Planned privileged {mode} command(s):')
+    local_log.info(f'  {cmd_line}')
     if os.geteuid() == 0:
         return
     if intent.yes:
@@ -107,10 +108,10 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
             'Privileged host operations require confirmation, but stdin is not interactive. '
             'Re-run with --yes.'
         )
-    log.opt(depth=2).info(
+    local_log.info(
         f'About to run privileged {mode} host operations via sudo:'
     )
-    log.opt(depth=2).info(f'  {intent.purpose}')
+    local_log.info(f'  {intent.purpose}')
     ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
     if ans in {'a', 'all'}:
         arm_sudo_intent(
@@ -145,7 +146,8 @@ def run_cmd(
       users see/approve the real privileged command instead of a probe command.
     """
     original_cmd = cmd
-    log.opt(depth=1).trace(
+    local_log = log.opt(depth=1)
+    local_log.trace(
         'run_cmd entry sudo={} check={} capture={} text={} cmd={}',
         sudo,
         check,
@@ -160,16 +162,16 @@ def run_cmd(
         # Use interactive sudo when stdin is a TTY so the user sees/authenticates
         # on the actual command. In non-interactive mode, fail fast.
         cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
-        log.opt(depth=1).debug(
+        local_log.debug(
             'Running with sudo: {}', shell_join(original_cmd)
         )
     run_line = shell_join(cmd)
     if check:
         # check=True generally corresponds to imperative setup/change steps.
-        log.opt(depth=1).info('RUN: {}', run_line)
+        local_log.info('RUN: {}', run_line)
     else:
         # check=False is commonly used for probes/introspection.
-        log.opt(depth=1).debug('RUN: {}', run_line)
+        local_log.debug('RUN: {}', run_line)
     try:
         p = subprocess.run(
             cmd,
@@ -188,7 +190,7 @@ def run_cmd(
         if not isinstance(stderr, str):
             stderr = stderr.decode(errors='replace')
         res = CmdResult(124, stdout, (stderr + '\ncommand timed out').strip())
-        log.opt(depth=1).warning(
+        local_log.warning(
             'Command timed out after {}s cmd={}',
             timeout,
             shell_join(cmd),
@@ -196,7 +198,7 @@ def run_cmd(
         if check:
             raise CmdError(cmd, res) from ex
         return res
-    log.opt(depth=1).trace(
+    local_log.trace(
         'run_cmd result code={} stdout_len={} stderr_len={} cmd={}',
         res.code,
         len(res.stdout),
@@ -204,7 +206,7 @@ def run_cmd(
         shell_join(cmd),
     )
     if check and p.returncode != 0:
-        log.opt(depth=1).error(
+        local_log.error(
             'Command failed code={} cmd={} stderr={} stdout={}',
             p.returncode,
             shell_join(cmd),
@@ -213,7 +215,7 @@ def run_cmd(
         )
         raise CmdError(cmd, res)
     if p.returncode == 0:
-        log.opt(depth=1).debug('Command ok code=0 cmd={}', shell_join(cmd))
+        local_log.debug('Command ok code=0 cmd={}', shell_join(cmd))
     return res
 
 

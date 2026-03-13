@@ -1600,3 +1600,25 @@ Uncertainties/risks: low risk, primarily around test brittleness from exact purp
 Tradeoffs and what might break: prompts are now more explicit and include previous URL during update; this increases clarity but couples tests to message text. Runtime behavior for git remote management is unchanged.
 
 What I am confident about: local coverage for both register/update flows is in place and the full attach test module passes (`pytest -q tests/test_cli_vm_attach.py` -> `16 passed`).
+## 2026-03-13 18:40:05 +0000
+
+Refactored `run_cmd(...)` logging in `aivm/util.py` to bind `local_log = log.opt(depth=1)` once and reuse it for all log calls within the function, replacing repeated `log.opt(depth=1)` invocations. This is a readability/maintainability cleanup with no behavior change intended.
+
+Reflection/state of mind: this is a small consistency improvement that reduces repeated boilerplate and makes the function easier to scan. I avoided broader logging changes because depth handling is subtle and this adjustment preserves the existing depth option as-is.
+
+Uncertainties/risks: low risk; main risk would be unintended callsite-depth differences, but using the same configured logger object should preserve emitted caller context.
+
+Tradeoffs and what might break: no functional command-execution behavior changed; only logging call sites were rewritten to use a local alias. If downstream tooling depends on exact logger-object internals rather than emitted output, that tooling could be sensitive, but that scenario is unlikely.
+
+What I am confident about: syntax check passes (`python -m py_compile aivm/util.py`), and the refactor is localized to `run_cmd(...)`.
+## 2026-03-13 18:41:36 +0000
+
+Extended the same logging-localization cleanup to `_ensure_sudo_ready(...)` in `aivm/util.py`, introducing `local_log = log.opt(depth=2)` and reusing it for repeated info logs. This follows the same pattern as the prior `run_cmd(...)` update and leaves callsite depth explicit per function.
+
+Reflection/state of mind: this was a straightforward follow-through on consistency. Keeping both utility functions aligned makes the logging style easier to maintain and reduces repeated option-object construction noise.
+
+Uncertainties/risks: very low; primary concern remains preserving callsite depth semantics, which should be unchanged because the same opt depth is used.
+
+Tradeoffs and what might break: no command behavior changes; only internal logging expression style changed. If anyone relied on exact source formatting (unlikely), that would differ, but emitted log meaning should remain the same.
+
+What I am confident about: `aivm/util.py` compiles cleanly (`python -m py_compile aivm/util.py`) and there are now only two `log.opt(depth=...)` sites in-module, both centralized local aliases per function.
