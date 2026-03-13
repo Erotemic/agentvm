@@ -885,7 +885,9 @@ class VMAttachCLI(_BaseCommand):
                 dry_run=False,
                 ensure_shared_root_host_side=False,
             )
-        print(f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode)')
+        print(
+            f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode)'
+        )
         if vm_running and attachment.mode in {
             ATTACHMENT_MODE_SHARED,
             ATTACHMENT_MODE_SHARED_ROOT,
@@ -1031,7 +1033,9 @@ class VMDetachCLI(_BaseCommand):
                     resolved.source_dir,
                 )
 
-        removed = remove_attachment(reg, host_path=host_src, vm_name=cfg.vm.name)
+        removed = remove_attachment(
+            reg, host_path=host_src, vm_name=cfg.vm.name
+        )
         if removed:
             save_store(reg, cfg_path)
 
@@ -1704,7 +1708,7 @@ def _ensure_shared_root_host_bind(
     target = _shared_root_host_target(cfg, attachment.tag)
     purpose = (
         f"Create/update host bind mount for shared-root attachment on VM '{cfg.vm.name}' "
-        f"(source={source_dir} target={target})."
+        f'(source={source_dir} target={target}).'
     )
     _confirm_sudo_block(yes=bool(yes), purpose=purpose)
     if dry_run:
@@ -1856,12 +1860,15 @@ def _detach_shared_root_host_bind(
     if dry_run:
         print(f'DRYRUN: would unmount shared-root host bind target {target}')
         return
-    mounted = run_cmd(
-        ['mountpoint', '-q', str(target)],
-        sudo=True,
-        check=False,
-        capture=True,
-    ).code == 0
+    mounted = (
+        run_cmd(
+            ['mountpoint', '-q', str(target)],
+            sudo=True,
+            check=False,
+            capture=True,
+        ).code
+        == 0
+    )
     if mounted:
         run_cmd(['umount', str(target)], sudo=True, check=True, capture=True)
     run_cmd(['rmdir', str(target)], sudo=True, check=False, capture=True)
@@ -2258,9 +2265,7 @@ def _saved_vm_attachments(
                 host_src,
             )
             continue
-        attachments.append(
-            _resolve_attachment(cfg, cfg_path, host_src, '')
-        )
+        attachments.append(_resolve_attachment(cfg, cfg_path, host_src, ''))
         seen_sources.add(source_dir)
     return attachments
 
@@ -2283,7 +2288,9 @@ def _restore_saved_vm_attachments(
 
     secondary_attachments = saved_attachments[1:]
     shared_secondary = [
-        att for att in secondary_attachments if att.mode == ATTACHMENT_MODE_SHARED
+        att
+        for att in secondary_attachments
+        if att.mode == ATTACHMENT_MODE_SHARED
     ]
     mappings: list[tuple[str, str]] = []
     if shared_secondary:
@@ -2528,7 +2535,9 @@ def _reconcile_attached_vm(
             virtiofs_mapping = _virtiofs_mapping_for_attachment(cfg, attachment)
         if virtiofs_mapping is not None:
             req_src, req_tag = virtiofs_mapping
-            has_share = any(src == req_src and tag == req_tag for src, tag in mappings)
+            has_share = any(
+                src == req_src and tag == req_tag for src, tag in mappings
+            )
 
     need_vm_start_or_create = policy.dry_run or (vm_running is not True)
     if need_vm_start_or_create:
@@ -2556,7 +2565,9 @@ def _reconcile_attached_vm(
                 cfg,
                 dry_run=policy.dry_run,
                 recreate=False,
-                share_source_dir=(virtiofs_mapping[0] if virtiofs_mapping else ''),
+                share_source_dir=(
+                    virtiofs_mapping[0] if virtiofs_mapping else ''
+                ),
                 share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
             )
         except Exception as ex:
@@ -2575,7 +2586,9 @@ def _reconcile_attached_vm(
                     cfg,
                     dry_run=False,
                     recreate=True,
-                    share_source_dir=(virtiofs_mapping[0] if virtiofs_mapping else ''),
+                    share_source_dir=(
+                        virtiofs_mapping[0] if virtiofs_mapping else ''
+                    ),
                     share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
                 )
             else:
@@ -2593,10 +2606,14 @@ def _reconcile_attached_vm(
                 attachment = _align_attachment_tag_with_mappings(
                     attachment, host_src, mappings
                 )
-                virtiofs_mapping = _virtiofs_mapping_for_attachment(cfg, attachment)
+                virtiofs_mapping = _virtiofs_mapping_for_attachment(
+                    cfg, attachment
+                )
             if virtiofs_mapping is not None:
                 req_src, req_tag = virtiofs_mapping
-                has_share = any(src == req_src and tag == req_tag for src, tag in mappings)
+                has_share = any(
+                    src == req_src and tag == req_tag for src, tag in mappings
+                )
 
     if (
         virtiofs_mapping is not None
@@ -2742,16 +2759,12 @@ def _prepare_attached_session(
                 ) from ex
             print('No managed VM found for this folder.')
             if need_init:
-                prompt = 'Run `aivm config init` and `aivm vm create` now? [Y/n]: '
-            else:
                 prompt = (
-                    'Run `aivm vm create` now using existing config defaults? [Y/n]: '
+                    'Run `aivm config init` and `aivm vm create` now? [Y/n]: '
                 )
-            ans = (
-                input(prompt)
-                .strip()
-                .lower()
-            )
+            else:
+                prompt = 'Run `aivm vm create` now using existing config defaults? [Y/n]: '
+            ans = input(prompt).strip().lower()
             if ans not in {'', 'y', 'yes'}:
                 raise RuntimeError('Aborted by user.') from ex
         if need_init:

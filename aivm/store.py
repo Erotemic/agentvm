@@ -428,7 +428,9 @@ def remove_attachment(
     return len(reg.attachments) != orig_n
 
 
-def find_attachments(reg: Store, host_path: str | Path) -> list[AttachmentEntry]:
+def find_attachments(
+    reg: Store, host_path: str | Path
+) -> list[AttachmentEntry]:
     norm = _norm_dir(host_path)
     return [att for att in reg.attachments if att.host_path == norm]
 

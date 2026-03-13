@@ -108,9 +108,7 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
             'Privileged host operations require confirmation, but stdin is not interactive. '
             'Re-run with --yes.'
         )
-    local_log.info(
-        f'About to run privileged {mode} host operations via sudo:'
-    )
+    local_log.info(f'About to run privileged {mode} host operations via sudo:')
     local_log.info(f'  {intent.purpose}')
     ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
     if ans in {'a', 'all'}:
@@ -162,9 +160,7 @@ def run_cmd(
         # Use interactive sudo when stdin is a TTY so the user sees/authenticates
         # on the actual command. In non-interactive mode, fail fast.
         cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
-        local_log.debug(
-            'Running with sudo: {}', shell_join(original_cmd)
-        )
+        local_log.debug('Running with sudo: {}', shell_join(original_cmd))
     run_line = shell_join(cmd)
     if check:
         # check=True generally corresponds to imperative setup/change steps.

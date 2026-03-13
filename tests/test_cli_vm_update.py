@@ -657,7 +657,8 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     shared_root_host_binds: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         'aivm.cli.vm._ensure_shared_root_host_bind',
-        lambda *a, **k: shared_root_host_binds.append((a, k)) or Path('/tmp/token'),
+        lambda *a, **k: shared_root_host_binds.append((a, k))
+        or Path('/tmp/token'),
     )
     shared_root_vm_mappings: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(

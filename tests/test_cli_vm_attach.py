@@ -361,7 +361,10 @@ def test_vm_attach_shared_root_running_ensures_guest_ready(
     )
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
-        lambda *a, **k: (ProbeOutcome(True, 'vm-shared-root state=running'), True),
+        lambda *a, **k: (
+            ProbeOutcome(True, 'vm-shared-root state=running'),
+            True,
+        ),
     )
     monkeypatch.setattr(
         'aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path
@@ -502,7 +505,10 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
 
     command_text = [' '.join(c) for c in calls]
     assert any(line.startswith('mountpoint -q') for line in command_text)
-    assert any(line.startswith('findmnt -n -o SOURCE --target') for line in command_text)
+    assert any(
+        line.startswith('findmnt -n -o SOURCE --target')
+        for line in command_text
+    )
     assert all(not line.startswith('umount ') for line in command_text)
     assert all(not line.startswith('mount --bind') for line in command_text)
 
@@ -557,7 +563,10 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
 
     command_text = [' '.join(c) for c in calls]
     assert any(line.startswith('mountpoint -q') for line in command_text)
-    assert any(line.startswith('findmnt -n -o SOURCE --target') for line in command_text)
+    assert any(
+        line.startswith('findmnt -n -o SOURCE --target')
+        for line in command_text
+    )
     assert all(not line.startswith('umount ') for line in command_text)
     assert all(not line.startswith('mount --bind') for line in command_text)
 
@@ -771,7 +780,15 @@ def test_upsert_host_git_remote_updates_remote_url(
     cfg.vm.name = 'vm-git'
     remote_name = _git_attachment_remote_name(cfg, repo)
     subprocess.run(
-        ['git', '-C', str(repo), 'remote', 'add', remote_name, 'vm-git:/old/path'],
+        [
+            'git',
+            '-C',
+            str(repo),
+            'remote',
+            'add',
+            remote_name,
+            'vm-git:/old/path',
+        ],
         check=True,
         capture_output=True,
     )

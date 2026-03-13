@@ -69,8 +69,9 @@ class _BaseCommand(scfg.DataConfig):
         cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
         cfg_auto_approve_readonly_sudo = (
             _resolve_cfg_auto_approve_readonly_sudo(
-            getattr(parsed, 'config', None)
-        ))
+                getattr(parsed, 'config', None)
+            )
+        )
         effective_yes_sudo = bool(
             getattr(parsed, 'yes_sudo', False)
             or getattr(parsed, 'yes', False)

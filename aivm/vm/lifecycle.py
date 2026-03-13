@@ -171,9 +171,7 @@ def _paths(cfg: AgentVMConfig, *, dry_run: bool = False) -> dict[str, Path]:
     }
 
 
-def _resolve_expected_image_sha256(
-    *, image_url: str
-) -> tuple[str | None, str]:
+def _resolve_expected_image_sha256(*, image_url: str) -> tuple[str | None, str]:
     digest = SUPPORTED_IMAGE_SHA256.get(image_url, '').strip().lower()
     if digest:
         return digest, 'built-in supported-image hash registry'
@@ -257,7 +255,9 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
     )
     parsed = urlparse(url)
     local_file_src = (
-        Path(unquote(parsed.path)).expanduser() if parsed.scheme == 'file' else None
+        Path(unquote(parsed.path)).expanduser()
+        if parsed.scheme == 'file'
+        else None
     )
     if _sudo_file_exists(base_img) and not cfg.image.redownload:
         if dry_run:
@@ -302,7 +302,9 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
     )
     run_cmd(['rm', '-f', str(tmp_img)], sudo=True, check=False, capture=True)
     if local_file_src is not None:
-        log.info('Copying local base image to {} via atomic temp file', base_img)
+        log.info(
+            'Copying local base image to {} via atomic temp file', base_img
+        )
     else:
         log.info('Downloading base image to {} (showing progress)', base_img)
     try:
@@ -315,7 +317,15 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
             )
         else:
             run_cmd(
-                ['curl', '-L', '--fail', '--progress-bar', '-o', str(tmp_img), url],
+                [
+                    'curl',
+                    '-L',
+                    '--fail',
+                    '--progress-bar',
+                    '-o',
+                    str(tmp_img),
+                    url,
+                ],
                 sudo=True,
                 check=True,
                 capture=False,

@@ -70,9 +70,7 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
     assert find_attachment_for_vm(store, host_src, cfg.vm.name) is None
 
 
-def test_vm_detach_git_only_updates_store(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
     cfg_path = tmp_path / 'config.toml'
@@ -174,7 +172,9 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     monkeypatch.setattr(
         'aivm.cli.vm.detach_vm_share',
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError('detach_vm_share should not be called for shared-root mode')
+            AssertionError(
+                'detach_vm_share should not be called for shared-root mode'
+            )
         ),
     )
     saved: list[Path] = []

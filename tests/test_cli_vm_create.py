@@ -144,9 +144,7 @@ def test_vm_create_yes_preserves_existing_active_vm(
     assert any(v.name == 'new-vm' for v in loaded.vms)
 
 
-def test_vm_create_set_default_opt_in(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_vm_create_set_default_opt_in(monkeypatch, tmp_path: Path) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     defaults = AgentVMConfig()
@@ -371,6 +369,7 @@ def test_vm_create_interactive_edit_overrides_defaults(
             'y',
         ]
     )
+
     def fake_input(_prompt: str) -> str:
         try:
             return next(answers)

@@ -285,7 +285,14 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
             env=env,
         )
         _run_cli(
-            ['vm', 'up', *cli_verbosity_args, '--yes', '--config', str(cfg_path)],
+            [
+                'vm',
+                'up',
+                *cli_verbosity_args,
+                '--yes',
+                '--config',
+                str(cfg_path),
+            ],
             cwd=repo_root,
             timeout_s=timeout_s,
             env=env,
