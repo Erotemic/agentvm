@@ -522,6 +522,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         *,
         host_src,
         mode,
+        access,
         guest_dst,
         tag,
         force=False,
@@ -531,6 +532,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
             {
                 'host_src': str(host_src),
                 'mode': mode,
+                'access': access,
                 'guest_dst': guest_dst,
                 'tag': tag,
             }
@@ -679,6 +681,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         *,
         host_src,
         mode,
+        access,
         guest_dst,
         tag,
         force=False,
@@ -688,6 +691,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
             {
                 'host_src': str(host_src),
                 'mode': mode,
+                'access': access,
                 'guest_dst': guest_dst,
                 'tag': tag,
             }

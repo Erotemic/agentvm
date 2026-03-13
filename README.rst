@@ -220,6 +220,7 @@ Config-store lifecycle (explicit flow)
    aivm config edit
    aivm help plan
    aivm help tree
+   aivm help completion
    aivm host doctor
 
 Settings sync configuration

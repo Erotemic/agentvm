@@ -10,7 +10,7 @@ import pytest
 
 import aivm.cli._common as common_mod
 from aivm.cli._common import _confirm_external_file_update, _confirm_sudo_block
-from aivm.cli.help import HelpRawCLI, PlanCLI
+from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
 from aivm.cli.vm import (
     _auto_share_tag_for_path,
     _parse_sync_paths_arg,
@@ -295,6 +295,22 @@ def test_help_raw_outputs_direct_system_commands(
     assert 'sudo virsh dominfo vm-raw' in clean
     assert 'sudo virsh net-info net-raw' in clean
     assert 'sudo nft list table inet fw-raw' in clean
+
+
+def test_help_completion_outputs_bash_setup(capsys) -> None:
+    rc = HelpCompletionCLI.main(argv=False, shell='bash', yes=True)
+    assert rc == 0
+    out = capsys.readouterr().out
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', out)
+    assert 'aivm help completion' in clean
+    assert 'python -m pip install argcomplete' in clean
+    assert 'register-python-argcomplete aivm' in clean
+    assert 'activate-global-python-argcomplete' in clean
+
+
+def test_help_completion_rejects_unknown_shell() -> None:
+    with pytest.raises(RuntimeError, match='--shell must be one of'):
+        HelpCompletionCLI.main(argv=False, shell='tcsh', yes=True)
 
 
 def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(

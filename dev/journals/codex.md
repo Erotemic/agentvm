@@ -1655,3 +1655,84 @@ Uncertainties/risks: low risk; equality-based no-op detection depends on datacla
 Tradeoffs and what might break: one fewer INFO log line (`Writing config store ...`) on no-op runs; workflows relying on file mtime bumps from repeated no-op commands will no longer get them.
 
 What I am confident about: added regression coverage in `tests/test_cli_vm_attach.py` to assert `save_store` is not called when record content is unchanged; targeted and full attach tests pass (`pytest -q tests/test_cli_vm_attach.py -k "record_attachment_skips_save_when_unchanged or upsert_host_git_remote or git_current_branch"` -> `6 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `20 passed`).
+## 2026-03-13 19:14:37 +0000
+
+Implemented attachment access-mode plumbing with a new `--access` flag (`rw`/`ro`) across `aivm code`, `aivm ssh`, and `aivm attach`, and persisted the setting in store attachments (`access` field, default `rw`). The resolver now treats access similarly to mode for existing mappings (saved-value reuse when omitted, mismatch requires detach+reattach when explicitly changed). Per request, `ro` is currently implemented only for `shared` mode; requesting `ro` with `shared-root` or `git` now raises `NotImplementedError`.
+
+On mount behavior, `ensure_share_mounted(...)` now accepts `read_only` and mounts `virtiofs` with `-o ro` when requested, plus remounts existing mountpoints to match desired `ro/rw` state. Shared-mode guest mount calls now pass `read_only` from resolved attachment access. I also updated list output to show attachment access and config-lint allowed keys to include `attachments[].access`.
+
+Reflection/state of mind: this was a good scoped increment. I intentionally avoided broad RO semantics across shared-root and git until there is a clear policy for host bind/export enforcement and guest write semantics.
+
+Uncertainties/risks: `shared` RO currently enforces at guest mount/remount level; if stronger host-side enforcement is desired, further libvirt/device-level constraints may be needed.
+
+Tradeoffs and what might break: store serialization now writes `access = "..."` for attachments, which is backward-compatible on load but changes config file text output and diffs. Existing automation parsing attachment blocks should tolerate the added key.
+
+What I am confident about: focused regression coverage was added for access resolution/mismatch and RO mount command generation; affected suites pass (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py tests/test_vm_helpers.py tests/test_store.py tests/test_cli_config_lint.py` -> `61 passed`), and changed modules compile cleanly.
+## 2026-03-13 19:19:30 +0000
+
+Added a new `aivm help completion` subcommand (`aivm/cli/help.py`) to provide explicit shell-completion setup instructions for argcomplete/scriptconfig users. It supports `--shell {bash,zsh,fish}` (auto-detect defaults) and prints shell-specific commands for one-time activation and persistence, including the `python -m pip install argcomplete` prerequisite and `register-python-argcomplete` usage. I also wired this command into the help modal tree, updated docs references in `README.rst` and `docs/source/workflows.rst`, and added tests for output and invalid-shell validation.
+
+Reflection/state of mind: this is the right UX for this project. Installing shell hooks automatically during `pip install` is brittle and intrusive because package installers cannot safely mutate per-user shell rc files in a predictable way across shells/environments.
+
+Uncertainties/risks: minimal runtime risk; the main variability is user environment differences (missing `register-python-argcomplete`, shell startup nuances), which the help output now calls out directly.
+
+Tradeoffs and what might break: command tree output gained one new line (`aivm help completion ...`), so tests asserting exact help-tree entries needed updating. No VM/runtime behavior changed.
+
+What I am confident about: updated tests pass (`pytest -q tests/test_cli_helpers.py tests/test_cli_dryrun.py` -> `24 passed`) and touched CLI modules compile (`python -m py_compile aivm/cli/help.py aivm/cli/main.py`).
+## 2026-03-13 19:23:30 +0000
+
+Added the requested global argcomplete note to `aivm help completion`. The command output now includes an explicit optional system-wide setup line using `activate-global-python-argcomplete` (resolved from PATH when available), alongside the existing per-shell user-level setup steps.
+
+Reflection/state of mind: this small addition improves discoverability for users who want one-time global completion behavior across Python CLIs without changing default safety assumptions.
+
+Uncertainties/risks: global activation behavior can vary by distro/shell integration; the help text labels it as optional and keeps the local per-shell path as primary guidance.
+
+Tradeoffs and what might break: none functionally; output text is longer and tests that assert help text were updated accordingly.
+
+What I am confident about: targeted help-completion tests pass (`pytest -q tests/test_cli_helpers.py -k "help_completion"` -> `2 passed`).
+## 2026-03-13 19:33:41 +0000
+
+Extended read-only access support to `shared-root` mode (while keeping `git` as not implemented for RO). In `aivm/cli/vm.py`, `_resolve_attachment(...)` now allows `access=ro` for `shared-root` and only raises `NotImplementedError` for `mode=git`. I also updated `_ensure_shared_root_guest_bind(...)` to enforce desired bind mount access inside the guest via `mount -o remount,bind,ro|rw`, including initial bind + remount and reconciliation when already mounted.
+
+Reflection/state of mind: this is a pragmatic increment that aligns with the requested scope and avoids overreaching into full host-side RO export policy changes. It keeps the access-mode contract consistent with current architecture.
+
+Uncertainties/risks: `shared-root` still exposes the shared-root mount path inside guest, so access control is currently enforced at the requested guest destination bind mount rather than a stronger per-export host-side policy.
+
+Tradeoffs and what might break: behavior changed for `--access ro --mode shared-root` from hard failure to success; tests expecting the previous NotImplemented behavior were updated accordingly. `git` RO remains intentionally unsupported.
+
+What I am confident about: added regression coverage in `tests/test_cli_vm_attach.py` for (1) shared-root RO resolution accepted, (2) git RO still not implemented, and (3) shared-root guest bind script includes `remount,bind,ro`; attach and update suites pass (`pytest -q tests/test_cli_vm_attach.py` -> `25 passed`; `pytest -q tests/test_cli_vm_update.py` -> `11 passed`).
+## 2026-03-13 19:36:28 +0000
+
+Follow-up fix for a real user failure in `aivm attach ... --mode shared-root --access ro`: guest-side bind setup failed with `mkdir: ... Transport endpoint is not connected` when a stale/broken mountpoint already existed at the destination. I updated `_ensure_shared_root_guest_bind(...)` to recover from this condition by retrying `mkdir -p` with explicit error capture and, on transport-endpoint errors, performing `umount -l <guest_dst>` before a second `mkdir` attempt.
+
+Reflection/state of mind: this was a good real-world hardening pass. The prior flow assumed destination mkdir would always be safe before remount checks, which is false under disconnected mount edge cases.
+
+Uncertainties/risks: lazy unmount fallback is intentionally scoped to the known transport-endpoint error string; different localized/system-specific error text variants may still bypass the recovery path.
+
+Tradeoffs and what might break: the guest-side shell script is more complex and now conditionally uses `grep`/`printf` in the remote command path. This improves robustness but adds parsing/command dependencies that were not previously exercised in this branch.
+
+What I am confident about: regression tests remain green for attach/update suites (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `36 passed`), and updated modules compile.
+## 2026-03-13 19:42:00 +0000
+
+Addressed a second real-world shared-root attach failure: host-side bind reconciliation could fail with `umount: target is busy` in `_ensure_shared_root_host_bind(...)` when replacing an existing mountpoint. I changed this path to attempt normal `umount` first (non-fatal probe), then fall back to `umount -l` for known transient/busy cases (`target is busy` and `transport endpoint is not connected`) before rebinding the desired source.
+
+Reflection/state of mind: this complements the earlier guest-side stale-endpoint fix; both host and guest paths now handle common mount lifecycle hazards that show up in iterative attach workflows.
+
+Uncertainties/risks: lazy unmount can defer actual cleanup until references drain, so if another process continuously pins the old mount, behavior may still require manual operator intervention.
+
+Tradeoffs and what might break: recovery path is more permissive for busy mounts, prioritizing forward progress for attach operations over strict immediate unmount guarantees.
+
+What I am confident about: added regression coverage (`test_shared_root_host_bind_lazy_unmounts_busy_target`) and attach/update suites remain green (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `37 passed`), with compile checks passing.
+## 2026-03-13 21:07:47 +0000
+
+Investigated a user report that `aivm attach .` in `shared-root` mode appeared to skip guest-side reconciliation when the VM was already running. I traced the attach flow in `VMAttachCLI.main(...)` and confirmed `_ensure_attachment_available_in_guest(...)` is invoked under `if vm_running:`; there is already regression coverage (`test_vm_attach_shared_root_running_ensures_guest_ready`) that asserts this call path. The ambiguity came from default-verbosity output: the reconciliation path had no info-level marker unless retries/errors occurred.
+
+I added explicit `INFO` logs in two places in `aivm/cli/vm.py`: (1) right before the running-VM guest reconcile call in `VMAttachCLI.main(...)`, and (2) at entry to `_ensure_shared_root_guest_bind(...)` including token/destination/access. This makes the runtime behavior observable in normal logs and reduces false negatives when users diagnose attach behavior.
+
+Reflection/state of mind: this felt like a visibility/operability issue rather than a missing branch. The code path was present, but the absence of positive confirmation made it easy to infer it was skipped. I prioritized instrumentation over structural churn because the control flow already had targeted tests and recent hardening.
+
+Uncertainties/risks: low code risk, but info logs are now a bit more chatty for successful attaches on running VMs. If users find this noisy, we may revisit log level or wording.
+
+Tradeoffs and what might break: no behavior change in mount mechanics, only observability change. Any tests asserting exact CLI/log text could need updates if they start checking this path in the future.
+
+What I am confident about: attach/update regression suites pass after the edit (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `37 passed`).

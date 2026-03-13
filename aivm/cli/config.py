@@ -602,7 +602,14 @@ def _lint_store_file(path: Path) -> list[str]:
     elif vms is not None:
         problems.append('top-level key "vms" should be an array of tables')
 
-    allowed_attachment = {'host_path', 'vm_name', 'mode', 'guest_dst', 'tag'}
+    allowed_attachment = {
+        'host_path',
+        'vm_name',
+        'mode',
+        'access',
+        'guest_dst',
+        'tag',
+    }
     atts = raw.get('attachments', [])
     if isinstance(atts, list):
         for idx, item in enumerate(atts):

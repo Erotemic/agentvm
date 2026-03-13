@@ -8,12 +8,15 @@ from pathlib import Path
 import pytest
 
 from aivm.cli.vm import (
+    ATTACHMENT_ACCESS_RO,
+    ATTACHMENT_ACCESS_RW,
     ATTACHMENT_MODE_GIT,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     ResolvedAttachment,
     VMAttachCLI,
     _ensure_shared_root_host_bind,
+    _ensure_shared_root_guest_bind,
     _git_attachment_remote_name,
     _git_current_branch,
     _record_attachment,
@@ -310,6 +313,34 @@ def test_resolve_attachment_reuses_saved_shared_mode_when_mode_omitted(
     assert resolved.tag == 'hostcode-proj'
 
 
+def test_resolve_attachment_reuses_saved_access_when_access_omitted(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-access-existing'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+
+    store = Store()
+    store.attachments.append(
+        AttachmentEntry(
+            host_path=str(host_src.resolve()),
+            vm_name=cfg.vm.name,
+            mode=ATTACHMENT_MODE_SHARED,
+            access=ATTACHMENT_ACCESS_RO,
+            guest_dst='/workspace/proj',
+            tag='hostcode-proj',
+        )
+    )
+    save_store(store, cfg_path)
+
+    resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
+
+    assert resolved.mode == ATTACHMENT_MODE_SHARED
+    assert resolved.access == ATTACHMENT_ACCESS_RO
+
+
 def test_resolve_attachment_rejects_mode_change_for_existing_attachment(
     tmp_path: Path,
 ) -> None:
@@ -340,6 +371,85 @@ def test_resolve_attachment_rejects_mode_change_for_existing_attachment(
 
     assert 'Attachment mode mismatch' in msg
     assert 'detach + reattach' in msg
+
+
+def test_resolve_attachment_rejects_access_change_for_existing_attachment(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-access'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+
+    store = Store()
+    store.attachments.append(
+        AttachmentEntry(
+            host_path=str(host_src.resolve()),
+            vm_name=cfg.vm.name,
+            mode=ATTACHMENT_MODE_SHARED,
+            access=ATTACHMENT_ACCESS_RW,
+            guest_dst='/workspace/proj',
+            tag='hostcode-proj',
+        )
+    )
+    save_store(store, cfg_path)
+
+    with pytest.raises(RuntimeError, match='Attachment access mismatch'):
+        _resolve_attachment(
+            cfg,
+            cfg_path,
+            host_src,
+            '',
+            '',
+            ATTACHMENT_ACCESS_RO,
+        )
+
+
+def test_resolve_attachment_accepts_ro_for_shared_root_mode(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-ro-shared-root'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    save_store(Store(), cfg_path)
+
+    resolved = _resolve_attachment(
+        cfg,
+        cfg_path,
+        host_src,
+        '',
+        ATTACHMENT_MODE_SHARED_ROOT,
+        ATTACHMENT_ACCESS_RO,
+    )
+    assert resolved.mode == ATTACHMENT_MODE_SHARED_ROOT
+    assert resolved.access == ATTACHMENT_ACCESS_RO
+
+
+def test_resolve_attachment_ro_not_implemented_for_git_mode(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-ro-mode'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    save_store(Store(), cfg_path)
+
+    with pytest.raises(
+        NotImplementedError,
+        match='Read-only attachments are currently only implemented',
+    ):
+        _resolve_attachment(
+            cfg,
+            cfg_path,
+            host_src,
+            '',
+            ATTACHMENT_MODE_GIT,
+            ATTACHMENT_ACCESS_RO,
+        )
 
 
 def test_vm_attach_shared_root_running_ensures_guest_ready(
@@ -580,6 +690,118 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
     )
     assert all(not line.startswith('umount ') for line in command_text)
     assert all(not line.startswith('mount --bind') for line in command_text)
+
+
+def test_shared_root_host_bind_lazy_unmounts_busy_target(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-root-bind-busy'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    source_dir = tmp_path / 'source'
+    source_dir.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        source_dir=str(source_dir.resolve()),
+        guest_dst='/workspace/source',
+        tag='hostcode-source',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
+    )
+    calls: list[list[str]] = []
+    target = (
+        Path(cfg.paths.base_dir)
+        / cfg.vm.name
+        / 'shared-root'
+        / attachment.tag
+    )
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        cmd = [str(part) for part in cmd]
+        calls.append(cmd)
+        if cmd[:2] == ['mkdir', '-p']:
+            return CmdResult(0, '', '')
+        if cmd[:2] == ['mountpoint', '-q']:
+            return CmdResult(0, '', '')
+        if cmd[:2] == ['findmnt', '-n']:
+            return CmdResult(0, '/other/source\n', '')
+        if cmd == ['umount', str(target)]:
+            return CmdResult(32, '', 'umount: target is busy')
+        if cmd == ['umount', '-l', str(target)]:
+            return CmdResult(0, '', '')
+        if cmd[:2] == ['mount', '--bind']:
+            return CmdResult(0, '', '')
+        raise AssertionError(f'unexpected command: {cmd}')
+
+    monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
+
+    _ensure_shared_root_host_bind(
+        cfg,
+        attachment,
+        yes=True,
+        dry_run=False,
+    )
+
+    command_text = [' '.join(c) for c in calls]
+    assert any(line == f'umount {target}' for line in command_text)
+    assert any(line == f'umount -l {target}' for line in command_text)
+    assert any(line.startswith('mount --bind') for line in command_text)
+
+
+def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-root-ro'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        access=ATTACHMENT_ACCESS_RO,
+        source_dir=str((tmp_path / 'source').resolve()),
+        guest_dst='/workspace/source',
+        tag='token-source',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm.ensure_share_mounted',
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.require_ssh_identity',
+        lambda p: p or '/tmp/id_ed25519',
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id_ed25519'],
+    )
+    cmds: list[list[str]] = []
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        cmds.append([str(c) for c in cmd])
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
+
+    _ensure_shared_root_guest_bind(
+        cfg,
+        '10.0.0.2',
+        attachment,
+        dry_run=False,
+    )
+
+    assert len(cmds) == 1
+    remote_script = cmds[0][-1]
+    assert 'mount -o remount,bind,ro' in remote_script
+    assert 'umount -l' in remote_script
+    assert 'shared-root bind verification failed: unexpected source' in remote_script
+    assert 'shared-root bind verification failed: unexpected mount options' in remote_script
 
 
 def test_resolve_attachment_git_defaults_to_guest_home_path(
@@ -910,6 +1132,7 @@ def test_record_attachment_skips_save_when_unchanged(
         cfg_path,
         host_src=host_src,
         mode='git',
+        access=ATTACHMENT_ACCESS_RW,
         guest_dst=guest_dst,
         tag='',
     )

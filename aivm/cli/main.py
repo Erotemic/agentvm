@@ -99,7 +99,8 @@ class ListCLI(_BaseCommand):
                 ):
                     print(
                         f'  - {att.host_path} | vm={att.vm_name} '
-                        f'| mode={att.mode} | guest_dst={att.guest_dst or "(default)"}'
+                        f'| mode={att.mode} | access={getattr(att, "access", "rw")} '
+                        f'| guest_dst={att.guest_dst or "(default)"}'
                     )
         print('')
         print(f'Config store: {reg_path}')

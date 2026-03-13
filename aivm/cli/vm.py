@@ -84,6 +84,12 @@ ATTACHMENT_MODES = {
     ATTACHMENT_MODE_SHARED_ROOT,
     ATTACHMENT_MODE_GIT,
 }
+ATTACHMENT_ACCESS_RW = 'rw'
+ATTACHMENT_ACCESS_RO = 'ro'
+ATTACHMENT_ACCESS_MODES = {
+    ATTACHMENT_ACCESS_RW,
+    ATTACHMENT_ACCESS_RO,
+}
 SHARED_ROOT_VIRTIOFS_TAG = 'aivm-shared-root'
 SHARED_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-shared'
 
@@ -527,6 +533,10 @@ class VMCodeCLI(_BaseCommand):
         '',
         help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
+    access = scfg.Value(
+        '',
+        help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
+    )
     recreate_if_needed = scfg.Value(
         False,
         isflag=True,
@@ -576,6 +586,7 @@ class VMCodeCLI(_BaseCommand):
                 host_src=Path(args.host_src).resolve(),
                 guest_dst_opt=args.guest_dst,
                 attach_mode_opt=args.mode,
+                attach_access_opt=args.access,
                 recreate_if_needed=bool(args.recreate_if_needed),
                 ensure_firewall_opt=bool(args.ensure_firewall),
                 force=bool(args.force),
@@ -659,6 +670,10 @@ class VMSSHCLI(_BaseCommand):
         '',
         help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
+    access = scfg.Value(
+        '',
+        help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
+    )
     recreate_if_needed = scfg.Value(
         False,
         isflag=True,
@@ -696,6 +711,7 @@ class VMSSHCLI(_BaseCommand):
                 host_src=Path(args.host_src).resolve(),
                 guest_dst_opt=args.guest_dst,
                 attach_mode_opt=args.mode,
+                attach_access_opt=args.access,
                 recreate_if_needed=bool(args.recreate_if_needed),
                 ensure_firewall_opt=bool(args.ensure_firewall),
                 force=bool(args.force),
@@ -758,6 +774,10 @@ class VMAttachCLI(_BaseCommand):
         '',
         help='Attachment mode: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
+    access = scfg.Value(
+        '',
+        help='Attachment access: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
+    )
     force = scfg.Value(
         False,
         isflag=True,
@@ -771,11 +791,12 @@ class VMAttachCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
-            'VMAttachCLI.main host_src={} vm={} guest_dst={} force={} dry_run={} yes={}',
+            'VMAttachCLI.main host_src={} vm={} guest_dst={} mode={} access={} force={} dry_run={} yes={}',
             args.host_src,
             args.vm,
             args.guest_dst,
             args.mode,
+            args.access,
             bool(args.force),
             bool(args.dry_run),
             bool(args.yes),
@@ -798,12 +819,12 @@ class VMAttachCLI(_BaseCommand):
             )
 
         attachment = _resolve_attachment(
-            cfg, cfg_path, host_src, args.guest_dst, args.mode
+            cfg, cfg_path, host_src, args.guest_dst, args.mode, args.access
         )
 
         if args.dry_run:
             print(
-                f'DRYRUN: would attach {host_src} to VM {cfg.vm.name} at {attachment.guest_dst} ({attachment.mode} mode)'
+                f'DRYRUN: would attach {host_src} to VM {cfg.vm.name} at {attachment.guest_dst} ({attachment.mode} mode, access={attachment.access})'
             )
             return 0
 
@@ -866,11 +887,19 @@ class VMAttachCLI(_BaseCommand):
             cfg_path,
             host_src=host_src,
             mode=attachment.mode,
+            access=attachment.access,
             guest_dst=attachment.guest_dst,
             tag=attachment.tag,
             force=bool(args.force),
         )
         if vm_running:
+            log.info(
+                'VM {} is running; reconciling attachment in guest: {} (mode={} access={})',
+                cfg.vm.name,
+                attachment.guest_dst,
+                attachment.mode,
+                attachment.access,
+            )
             ip = _resolve_ip_for_ssh_ops(
                 cfg,
                 yes=bool(args.yes),
@@ -886,7 +915,7 @@ class VMAttachCLI(_BaseCommand):
                 ensure_shared_root_host_side=False,
             )
         print(
-            f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode)'
+            f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode, access={attachment.access})'
         )
         if vm_running and attachment.mode in {
             ATTACHMENT_MODE_SHARED,
@@ -965,6 +994,7 @@ class VMDetachCLI(_BaseCommand):
         resolved = ResolvedAttachment(
             vm_name=cfg.vm.name,
             mode=mode,
+            access=_normalize_attachment_access(getattr(att, 'access', '')),
             source_dir=str(host_src),
             guest_dst=att.guest_dst or str(host_src),
             tag=att.tag,
@@ -1176,6 +1206,7 @@ class VMModalCLI(scfg.ModalCLI):
 class ResolvedAttachment:
     vm_name: str
     mode: str = ATTACHMENT_MODE_SHARED
+    access: str = ATTACHMENT_ACCESS_RW
     source_dir: str = ''
     guest_dst: str = ''
     tag: str = ''
@@ -1752,7 +1783,26 @@ def _ensure_shared_root_host_bind(
                 candidate_abs = candidate
             if candidate_abs == source_dir:
                 return target
-        run_cmd(['umount', str(target)], sudo=True, check=True, capture=True)
+        # Busy mountpoints are possible when the shared-root parent export is
+        # actively used by a running guest. Fall back to lazy unmount so we can
+        # rebind the requested host source deterministically.
+        unmount = run_cmd(
+            ['umount', str(target)],
+            sudo=True,
+            check=False,
+            capture=True,
+        )
+        if unmount.code != 0:
+            msg = (unmount.stderr or unmount.stdout).strip().lower()
+            if 'target is busy' in msg or 'transport endpoint is not connected' in msg:
+                run_cmd(
+                    ['umount', '-l', str(target)],
+                    sudo=True,
+                    check=True,
+                    capture=True,
+                )
+            else:
+                raise CmdError(['umount', str(target)], unmount)
     run_cmd(
         ['mount', '--bind', source_dir, str(target)],
         sudo=True,
@@ -1795,6 +1845,13 @@ def _ensure_shared_root_guest_bind(
     *,
     dry_run: bool,
 ) -> None:
+    log.info(
+        'Reconciling shared-root guest bind for VM {}: {} -> {} (access={})',
+        cfg.vm.name,
+        attachment.tag,
+        attachment.guest_dst,
+        attachment.access,
+    )
     ensure_share_mounted(
         cfg,
         ip,
@@ -1808,21 +1865,60 @@ def _ensure_shared_root_guest_bind(
     )
     if not attachment.tag:
         raise RuntimeError('shared-root attachment token is empty.')
+    remount_cmd = (
+        f'sudo mount -o remount,bind,ro {shlex.quote(attachment.guest_dst)}'
+        if attachment.access == ATTACHMENT_ACCESS_RO
+        else f'sudo mount -o remount,bind,rw {shlex.quote(attachment.guest_dst)}'
+    )
+    desired_opt = (
+        ATTACHMENT_ACCESS_RO
+        if attachment.access == ATTACHMENT_ACCESS_RO
+        else ATTACHMENT_ACCESS_RW
+    )
     script = (
         'set -euo pipefail; '
         f'if [ ! -d {shlex.quote(source_in_guest)} ]; then '
         f'echo "shared-root source missing in guest: {source_in_guest}" >&2; '
         'exit 2; '
         'fi; '
-        f'sudo mkdir -p {shlex.quote(attachment.guest_dst)}; '
         f'if mountpoint -q {shlex.quote(attachment.guest_dst)}; then '
         f'cur="$(findmnt -n -o SOURCE --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
         f'if [ "$cur" != {shlex.quote(source_in_guest)} ]; then '
         f'sudo umount {shlex.quote(attachment.guest_dst)}; '
         'fi; '
         'fi; '
-        f'mountpoint -q {shlex.quote(attachment.guest_dst)} || '
-        f'sudo mount --bind {shlex.quote(source_in_guest)} {shlex.quote(attachment.guest_dst)}'
+        f'if ! mkdir_err="$(sudo mkdir -p {shlex.quote(attachment.guest_dst)} 2>&1)"; then '
+        'if printf "%s" "$mkdir_err" | grep -qi "transport endpoint is not connected"; then '
+        f'sudo umount -l {shlex.quote(attachment.guest_dst)} >/dev/null 2>&1 || true; '
+        f'sudo mkdir -p {shlex.quote(attachment.guest_dst)}; '
+        'else '
+        'printf "%s\\n" "$mkdir_err" >&2; '
+        'exit 2; '
+        'fi; '
+        'fi; '
+        f'if mountpoint -q {shlex.quote(attachment.guest_dst)}; then '
+        f'opts="$(findmnt -n -o OPTIONS --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
+        f'case ",$opts," in *,{desired_opt},*) : ;; *) {remount_cmd} ;; esac; '
+        'else '
+        f'sudo mount --bind {shlex.quote(source_in_guest)} {shlex.quote(attachment.guest_dst)}; '
+        f'{remount_cmd}; '
+        'fi; '
+        f'final_src="$(findmnt -n -o SOURCE --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
+        f'if [ "$final_src" != {shlex.quote(source_in_guest)} ]; then '
+        'echo "shared-root bind verification failed: unexpected source at guest destination" >&2; '
+        'echo "  expected: '
+        f'{source_in_guest}" >&2; '
+        'echo "  actual:   $final_src" >&2; '
+        'exit 2; '
+        'fi; '
+        f'final_opts="$(findmnt -n -o OPTIONS --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
+        f'case ",$final_opts," in *,{desired_opt},*) : ;; *) '
+        'echo "shared-root bind verification failed: unexpected mount options at guest destination" >&2; '
+        'echo "  expected option: '
+        f'{desired_opt}" >&2; '
+        'echo "  actual options: $final_opts" >&2; '
+        'exit 2; '
+        'esac'
     )
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     cmd = [
@@ -1917,6 +2013,7 @@ def _ensure_attachment_available_in_guest(
             ip,
             guest_dst=attachment.guest_dst,
             tag=attachment.tag,
+            read_only=(attachment.access == ATTACHMENT_ACCESS_RO),
             dry_run=dry_run,
         )
         return
@@ -2142,6 +2239,7 @@ def _record_attachment(
     *,
     host_src: Path,
     mode: str,
+    access: str,
     guest_dst: str,
     tag: str,
     force: bool = False,
@@ -2155,6 +2253,7 @@ def _record_attachment(
         host_path=host_src,
         vm_name=cfg.vm.name,
         mode=mode,
+        access=access,
         guest_dst=guest_dst,
         tag=tag,
         force=force,
@@ -2176,15 +2275,20 @@ def _resolve_attachment(
     host_src: Path,
     guest_dst_opt: str,
     mode_opt: str = '',
+    access_opt: str = '',
 ) -> ResolvedAttachment:
     source_dir = str(host_src.resolve())
     guest_dst = _resolve_guest_dst(host_src, guest_dst_opt)
     tag = _ensure_share_tag_len('', host_src, set())
     mode = _normalize_attachment_mode(mode_opt)
+    access = _normalize_attachment_access(access_opt)
     reg = load_store(cfg_path)
     att = find_attachment_for_vm(reg, host_src, cfg.vm.name)
     if att is not None:
         saved_mode = _normalize_attachment_mode(att.mode)
+        saved_access = _normalize_attachment_access(
+            getattr(att, 'access', '')
+        )
         if mode_opt and mode != saved_mode:
             raise RuntimeError(
                 'Attachment mode mismatch for existing folder attachment.\n'
@@ -2197,12 +2301,32 @@ def _resolve_attachment(
                 f'  aivm detach {host_src}\n'
                 f'  aivm attach {host_src} --mode {mode}'
             )
+        if access_opt and access != saved_access:
+            raise RuntimeError(
+                'Attachment access mismatch for existing folder attachment.\n'
+                f'VM: {cfg.vm.name}\n'
+                f'Host folder: {host_src}\n'
+                f'Saved access: {saved_access}\n'
+                f'Requested access: {access}\n'
+                'Changing attachment access requires an explicit detach + reattach.\n'
+                'Run:\n'
+                f'  aivm detach {host_src}\n'
+                f'  aivm attach {host_src} --access {access}'
+            )
         if not mode_opt and att.mode:
             mode = saved_mode
+        if not access_opt:
+            access = saved_access
         if not guest_dst_opt and att.guest_dst:
             guest_dst = att.guest_dst
         if att.tag:
             tag = att.tag
+    if access == ATTACHMENT_ACCESS_RO and mode == ATTACHMENT_MODE_GIT:
+        raise NotImplementedError(
+            'Read-only attachments are currently only implemented for '
+            f"'{ATTACHMENT_MODE_SHARED}' and '{ATTACHMENT_MODE_SHARED_ROOT}' modes. "
+            f'Requested mode: {mode}'
+        )
     # Git mode should default to a guest-user writable path rather than host
     # absolute path mirroring, which may point to an unwritable guest location.
     if mode == ATTACHMENT_MODE_GIT and not guest_dst_opt:
@@ -2224,6 +2348,7 @@ def _resolve_attachment(
     return ResolvedAttachment(
         vm_name=cfg.vm.name,
         mode=mode,
+        access=access,
         source_dir=source_dir,
         guest_dst=guest_dst,
         tag=tag,
@@ -2348,6 +2473,7 @@ def _restore_saved_vm_attachments(
                     cfg_path,
                     host_src=Path(aligned.source_dir),
                     mode=aligned.mode,
+                    access=aligned.access,
                     guest_dst=aligned.guest_dst,
                     tag=aligned.tag,
                 )
@@ -2408,6 +2534,7 @@ def _restore_saved_vm_attachments(
                 ip,
                 guest_dst=aligned.guest_dst,
                 tag=aligned.tag,
+                read_only=(aligned.access == ATTACHMENT_ACCESS_RO),
                 dry_run=False,
             )
             _record_attachment(
@@ -2415,6 +2542,7 @@ def _restore_saved_vm_attachments(
                 cfg_path,
                 host_src=Path(aligned.source_dir),
                 mode=aligned.mode,
+                access=aligned.access,
                 guest_dst=aligned.guest_dst,
                 tag=aligned.tag,
             )
@@ -2724,6 +2852,7 @@ def _prepare_attached_session(
     host_src: Path,
     guest_dst_opt: str,
     attach_mode_opt: str = '',
+    attach_access_opt: str = '',
     recreate_if_needed: bool,
     ensure_firewall_opt: bool,
     force: bool,
@@ -2800,9 +2929,14 @@ def _prepare_attached_session(
             host_src=host_src,
         )
 
-    if attach_mode_opt:
+    if attach_mode_opt or attach_access_opt:
         attachment = _resolve_attachment(
-            cfg, cfg_path, host_src, guest_dst_opt, attach_mode_opt
+            cfg,
+            cfg_path,
+            host_src,
+            guest_dst_opt,
+            attach_mode_opt,
+            attach_access_opt,
         )
     else:
         attachment = _resolve_attachment(cfg, cfg_path, host_src, guest_dst_opt)
@@ -2839,6 +2973,7 @@ def _prepare_attached_session(
         cfg_path,
         host_src=host_src,
         mode=attachment.mode,
+        access=attachment.access,
         guest_dst=attachment.guest_dst,
         tag=attachment.tag,
         force=bool(force),
@@ -2927,6 +3062,27 @@ def _normalize_attachment_mode(mode: str) -> str:
     if resolved not in ATTACHMENT_MODES:
         allowed = ', '.join(sorted(ATTACHMENT_MODES))
         raise RuntimeError(f'--mode must be one of: {allowed}')
+    return resolved
+
+
+def _normalize_attachment_access(access: str) -> str:
+    raw = str(access or '').strip().lower()
+    if not raw:
+        return ATTACHMENT_ACCESS_RW
+    aliases = {
+        'readonly': ATTACHMENT_ACCESS_RO,
+        'read-only': ATTACHMENT_ACCESS_RO,
+        'read_only': ATTACHMENT_ACCESS_RO,
+        ATTACHMENT_ACCESS_RO: ATTACHMENT_ACCESS_RO,
+        'readwrite': ATTACHMENT_ACCESS_RW,
+        'read-write': ATTACHMENT_ACCESS_RW,
+        'read_write': ATTACHMENT_ACCESS_RW,
+        ATTACHMENT_ACCESS_RW: ATTACHMENT_ACCESS_RW,
+    }
+    resolved = aliases.get(raw, raw)
+    if resolved not in ATTACHMENT_ACCESS_MODES:
+        allowed = ', '.join(sorted(ATTACHMENT_ACCESS_MODES))
+        raise RuntimeError(f'--access must be one of: {allowed}')
     return resolved
 
 

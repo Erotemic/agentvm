@@ -178,6 +178,40 @@ def test_ensure_share_mounted_raises_after_retries(monkeypatch) -> None:
     assert len(sleeps) == 11
 
 
+def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+    cmds: list[list[str]] = []
+
+    monkeypatch.setattr(
+        'aivm.vm.share.require_ssh_identity', lambda p: p or '/tmp/id_ed25519'
+    )
+    monkeypatch.setattr(
+        'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
+    )
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        cmds.append([str(c) for c in cmd])
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
+
+    ensure_share_mounted(
+        cfg,
+        '10.0.0.2',
+        guest_dst='/workspace',
+        tag='hostcode-workspace',
+        read_only=True,
+        dry_run=False,
+    )
+
+    assert len(cmds) == 1
+    remote_script = cmds[0][-1]
+    assert 'mount -t virtiofs -o ro' in remote_script
+
+
 def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
     cfg = AgentVMConfig()
     monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: False)

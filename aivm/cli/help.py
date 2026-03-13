@@ -5,7 +5,9 @@ These commands are intentionally descriptive and non-mutating.
 
 from __future__ import annotations
 
+import os
 import shlex
+import shutil
 import textwrap
 from pathlib import Path
 
@@ -145,12 +147,41 @@ class HelpRawCLI(_BaseCommand):
         return 0
 
 
+class HelpCompletionCLI(_BaseCommand):
+    """Show shell-completion setup for aivm (argcomplete/scriptconfig)."""
+
+    shell = scfg.Value(
+        '',
+        help='Optional shell override: bash, zsh, or fish.',
+    )
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        args = cls.cli(argv=argv, data=kwargs)
+        shell = _resolve_completion_shell(str(args.shell or ''))
+        reg = shutil.which('register-python-argcomplete') or 'register-python-argcomplete'
+        activate_global = (
+            shutil.which('activate-global-python-argcomplete')
+            or 'activate-global-python-argcomplete'
+        )
+        suggested_shell = Path(os.environ.get('SHELL', '')).name or '(unknown)'
+        lines = _render_completion_help(
+            shell=shell,
+            register_cmd=reg,
+            activate_global_cmd=activate_global,
+            suggested_shell=suggested_shell,
+        )
+        print(ub.highlight_code(lines, lexer_name='bash'))
+        return 0
+
+
 class HelpModalCLI(scfg.ModalCLI):
     """Help and discovery commands."""
 
     plan = PlanCLI
     tree = HelpTreeCLI
     raw = HelpRawCLI
+    completion = HelpCompletionCLI
 
 
 def _resolve_raw_targets(
@@ -230,3 +261,86 @@ def _render_command_tree(
 
     walk(modal_cls, prefix, '')
     return '\n'.join(lines)
+
+
+def _resolve_completion_shell(shell_opt: str) -> str:
+    raw = str(shell_opt or '').strip().lower()
+    if raw in {'', 'auto'}:
+        detected = Path(os.environ.get('SHELL', '')).name.strip().lower()
+        if detected in {'bash', 'zsh', 'fish'}:
+            return detected
+        return 'bash'
+    aliases = {
+        'bash': 'bash',
+        'zsh': 'zsh',
+        'fish': 'fish',
+    }
+    resolved = aliases.get(raw, raw)
+    if resolved not in {'bash', 'zsh', 'fish'}:
+        raise RuntimeError('--shell must be one of: bash, zsh, fish')
+    return resolved
+
+
+def _render_completion_help(
+    *,
+    shell: str,
+    register_cmd: str,
+    activate_global_cmd: str,
+    suggested_shell: str,
+) -> str:
+    if shell == 'bash':
+        hook_now = f'eval "$({register_cmd} aivm)"'
+        persist = f'echo \'{hook_now}\' >> ~/.bashrc'
+        reload_cmd = 'source ~/.bashrc'
+    elif shell == 'zsh':
+        hook_now = textwrap.dedent(
+            f"""
+            autoload -U +X bashcompinit && bashcompinit
+            eval "$({register_cmd} aivm)"
+            """
+        ).strip()
+        persist = textwrap.dedent(
+            f"""
+            printf '%s\\n' 'autoload -U +X bashcompinit && bashcompinit' >> ~/.zshrc
+            printf '%s\\n' 'eval "$({register_cmd} aivm)"' >> ~/.zshrc
+            """
+        ).strip()
+        reload_cmd = 'source ~/.zshrc'
+    else:
+        hook_now = (
+            f'{register_cmd} --shell fish aivm > '
+            '~/.config/fish/completions/aivm.fish'
+        )
+        persist = '(fish uses the completions file above; no extra rc hook needed)'
+        reload_cmd = 'exec fish'
+
+    return textwrap.dedent(
+        f"""
+        # aivm help completion
+        # Suggested shell: {suggested_shell}
+        # Using instructions for: {shell}
+        #
+        # NOTE: pip install does not reliably install shell hooks because this
+        # depends on user shell rc files. Run these once per user shell setup.
+        #
+        # 1) Ensure argcomplete is installed in the same environment as aivm.
+        python -m pip install argcomplete
+        #
+        # 2) Enable completion now in the current shell session.
+        {hook_now}
+        #
+        # 3) Persist completion for future shells.
+        {persist}
+        #
+        # 4) Reload shell config (or open a new terminal).
+        {reload_cmd}
+        #
+        # 5) Verify by typing:
+        #    aivm <TAB>
+        #    aivm help <TAB>
+        #
+        # Optional global enable (all argcomplete-enabled Python CLIs):
+        #   sudo {activate_global_cmd}
+        # This usually installs a system-wide completion loader script.
+        """
+    ).strip()

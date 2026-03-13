@@ -125,3 +125,4 @@ Get command tree
 
    aivm help tree
    aivm help plan
+   aivm help completion

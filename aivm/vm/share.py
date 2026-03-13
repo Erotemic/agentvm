@@ -214,6 +214,7 @@ def ensure_share_mounted(
     *,
     guest_dst: str,
     tag: str,
+    read_only: bool = False,
     dry_run: bool = False,
 ) -> None:
     cfg = cfg.expanded_paths()
@@ -222,11 +223,25 @@ def ensure_share_mounted(
         raise RuntimeError('Share guest_dst is empty.')
     if not tag:
         raise RuntimeError('Share tag is empty.')
+    mount_cmd = (
+        f'sudo mount -t virtiofs -o ro {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+        if read_only
+        else f'sudo mount -t virtiofs {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+    )
+    remount_cmd = (
+        f'sudo mount -o remount,ro {shlex.quote(guest_dst)}'
+        if read_only
+        else f'sudo mount -o remount,rw {shlex.quote(guest_dst)}'
+    )
     remote = (
         'set -euo pipefail; '
         f'sudo mkdir -p {shlex.quote(guest_dst)}; '
-        f'mountpoint -q {shlex.quote(guest_dst)} || '
-        f'sudo mount -t virtiofs {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+        f'if mountpoint -q {shlex.quote(guest_dst)}; then '
+        f'opts="$(findmnt -n -o OPTIONS --target {shlex.quote(guest_dst)} 2>/dev/null || true)"; '
+        f'case ",$opts," in *,{"ro" if read_only else "rw"},*) : ;; *) {remount_cmd} ;; esac; '
+        'else '
+        f'{mount_cmd}; '
+        'fi'
     )
     cmd = [
         'ssh',
