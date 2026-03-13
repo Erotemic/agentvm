@@ -1644,3 +1644,14 @@ Uncertainties/risks: low risk; the main user-visible change is exception wording
 Tradeoffs and what might break: replacing implicit `CmdError` from `check=True` with a shaped RuntimeError improves readability and context, but any tests or consumers expecting the prior raw exception text could need updates.
 
 What I am confident about: added regression coverage for invalid repo handling in `tests/test_cli_vm_attach.py`; targeted and full attach tests pass (`pytest -q tests/test_cli_vm_attach.py -k "upsert_host_git_remote or git_current_branch"` -> `5 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `19 passed`).
+## 2026-03-13 19:02:01 +0000
+
+Addressed a noisy/unnecessary store write in the `aivm code ... --mode git` attachment-prep flow. In `_record_attachment(...)` (`aivm/cli/vm.py`), I now snapshot the loaded store, apply network/vm/attachment upserts, and only call `save_store(...)` if the store actually changed. When no changes are detected, it logs a debug "already up to date" message and returns the existing config path without rewriting `config.toml`.
+
+Reflection/state of mind: this is an important ergonomics fix because repeated no-op runs should not look state-changing. The previous unconditional save blurred signal in verbose logs and caused needless disk writes.
+
+Uncertainties/risks: low risk; equality-based no-op detection depends on dataclass value equality, which is appropriate here but should be revisited if mutable/non-deterministic fields are introduced into store records.
+
+Tradeoffs and what might break: one fewer INFO log line (`Writing config store ...`) on no-op runs; workflows relying on file mtime bumps from repeated no-op commands will no longer get them.
+
+What I am confident about: added regression coverage in `tests/test_cli_vm_attach.py` to assert `save_store` is not called when record content is unchanged; targeted and full attach tests pass (`pytest -q tests/test_cli_vm_attach.py -k "record_attachment_skips_save_when_unchanged or upsert_host_git_remote or git_current_branch"` -> `6 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `20 passed`).

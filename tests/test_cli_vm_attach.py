@@ -16,11 +16,19 @@ from aivm.cli.vm import (
     _ensure_shared_root_host_bind,
     _git_attachment_remote_name,
     _git_current_branch,
+    _record_attachment,
     _resolve_attachment,
     _upsert_host_git_remote,
 )
 from aivm.config import AgentVMConfig
-from aivm.store import AttachmentEntry, Store, save_store
+from aivm.store import (
+    AttachmentEntry,
+    Store,
+    save_store,
+    upsert_attachment,
+    upsert_network,
+    upsert_vm_with_network,
+)
 from aivm.status import ProbeOutcome
 from aivm.util import CmdResult
 
@@ -866,3 +874,44 @@ def test_upsert_host_git_remote_raises_on_invalid_repo(tmp_path: Path) -> None:
             remote_url='vm-git:/workspace/repo',
             yes=True,
         )
+
+
+def test_record_attachment_skips_save_when_unchanged(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'repo'
+    host_src.mkdir()
+    guest_dst = '/workspace/repo'
+
+    reg = Store()
+    upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
+    upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
+    upsert_attachment(
+        reg,
+        host_path=host_src,
+        vm_name=cfg.vm.name,
+        mode='git',
+        guest_dst=guest_dst,
+        tag='',
+    )
+    save_store(reg, cfg_path)
+
+    save_calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm.save_store',
+        lambda *a, **k: save_calls.append((a, k)) or cfg_path,
+    )
+
+    out = _record_attachment(
+        cfg,
+        cfg_path,
+        host_src=host_src,
+        mode='git',
+        guest_dst=guest_dst,
+        tag='',
+    )
+    assert out == cfg_path
+    assert save_calls == []

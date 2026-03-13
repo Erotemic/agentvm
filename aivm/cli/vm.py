@@ -2147,6 +2147,7 @@ def _record_attachment(
     force: bool = False,
 ) -> Path:
     reg = load_store(cfg_path)
+    before = deepcopy(reg)
     upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
     upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
     upsert_attachment(
@@ -2158,6 +2159,14 @@ def _record_attachment(
         tag=tag,
         force=force,
     )
+    if reg == before:
+        log.debug(
+            'Attachment record already up to date for vm={} host_src={} in {}',
+            cfg.vm.name,
+            host_src,
+            cfg_path,
+        )
+        return cfg_path
     return save_store(reg, cfg_path)
 
 
