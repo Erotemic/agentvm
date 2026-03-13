@@ -2960,6 +2960,13 @@ def _upsert_host_git_remote(
     remote_url: str,
     yes: bool,
 ) -> tuple[Path, bool]:
+    """Ensure a host Git remote exists with the requested URL.
+
+    "Upsert" means insert+update: update if the remote already exists,
+    otherwise register it.  Returns ``(git_config_path, changed)`` where
+    ``changed`` is ``True`` only when this function adds or updates the remote
+    entry.
+    """
     git_dir_probe = run_cmd(
         [
             'git',
@@ -2970,9 +2977,16 @@ def _upsert_host_git_remote(
             '--git-common-dir',
         ],
         sudo=False,
-        check=True,
+        check=False,
         capture=True,
     )
+    if git_dir_probe.code != 0:
+        msg = (git_dir_probe.stderr or git_dir_probe.stdout).strip()
+        raise RuntimeError(
+            'Could not locate Git config for host repository.\n'
+            f'Repo: {repo_root}\n'
+            f'Git said: {msg}'
+        )
     git_cfg = Path((git_dir_probe.stdout or '').strip()) / 'config'
     probe = run_cmd(
         ['git', '-C', str(repo_root), 'remote', 'get-url', remote_name],
@@ -3036,9 +3050,16 @@ def _git_current_branch(repo_root: Path) -> str:
     branch = run_cmd(
         ['git', '-C', str(repo_root), 'rev-parse', '--abbrev-ref', 'HEAD'],
         sudo=False,
-        check=True,
+        check=False,
         capture=True,
     )
+    if branch.code != 0:
+        msg = (branch.stderr or branch.stdout).strip()
+        raise RuntimeError(
+            'Could not determine current Git branch for attachment sync.\n'
+            f'Repo: {repo_root}\n'
+            f'Git said: {msg}'
+        )
     name = (branch.stdout or '').strip()
     if not name or name == 'HEAD':
         raise RuntimeError(

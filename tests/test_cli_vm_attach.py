@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from aivm.cli.vm import (
     ATTACHMENT_MODE_GIT,
     ATTACHMENT_MODE_SHARED,
@@ -13,6 +15,7 @@ from aivm.cli.vm import (
     VMAttachCLI,
     _ensure_shared_root_host_bind,
     _git_attachment_remote_name,
+    _git_current_branch,
     _resolve_attachment,
     _upsert_host_git_remote,
 )
@@ -688,6 +691,38 @@ def test_vm_attach_git_mode_syncs_guest_repo_when_running(
     assert len(sync_calls) == 1
 
 
+def test_git_current_branch_returns_named_branch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+
+    monkeypatch.setattr(
+        'aivm.cli.vm.run_cmd',
+        lambda *a, **k: CmdResult(0, 'feature-x\n', ''),
+    )
+
+    branch = _git_current_branch(repo)
+    assert branch == 'feature-x'
+
+
+def test_git_current_branch_raises_on_git_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+
+    monkeypatch.setattr(
+        'aivm.cli.vm.run_cmd',
+        lambda *a, **k: CmdResult(128, '', 'fatal: not a git repository'),
+    )
+
+    with pytest.raises(
+        RuntimeError, match='Could not determine current Git branch'
+    ):
+        _git_current_branch(repo)
+
+
 def test_upsert_host_git_remote_adds_remote(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -818,3 +853,16 @@ def test_upsert_host_git_remote_updates_remote_url(
         text=True,
     )
     assert probe.stdout.strip() == 'vm-git:/workspace/repo'
+
+
+def test_upsert_host_git_remote_raises_on_invalid_repo(tmp_path: Path) -> None:
+    repo = tmp_path / 'not-a-repo'
+    repo.mkdir()
+
+    with pytest.raises(RuntimeError, match='Could not locate Git config'):
+        _upsert_host_git_remote(
+            repo,
+            remote_name='aivm-test',
+            remote_url='vm-git:/workspace/repo',
+            yes=True,
+        )

@@ -195,11 +195,10 @@ def run_cmd(
             raise CmdError(cmd, res) from ex
         return res
     local_log.trace(
-        'run_cmd result code={} stdout_len={} stderr_len={} cmd={}',
+        'run_cmd result code={} stdout_len={} stderr_len={}',
         res.code,
         len(res.stdout),
         len(res.stderr),
-        shell_join(cmd),
     )
     if check and p.returncode != 0:
         local_log.error(
@@ -210,8 +209,6 @@ def run_cmd(
             res.stdout.strip(),
         )
         raise CmdError(cmd, res)
-    if p.returncode == 0:
-        local_log.debug('Command ok code=0 cmd={}', shell_join(cmd))
     return res
 
 

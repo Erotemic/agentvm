@@ -1622,3 +1622,25 @@ Uncertainties/risks: very low; primary concern remains preserving callsite depth
 Tradeoffs and what might break: no command behavior changes; only internal logging expression style changed. If anyone relied on exact source formatting (unlikely), that would differ, but emitted log meaning should remain the same.
 
 What I am confident about: `aivm/util.py` compiles cleanly (`python -m py_compile aivm/util.py`) and there are now only two `log.opt(depth=...)` sites in-module, both centralized local aliases per function.
+## 2026-03-13 18:54:21 +0000
+
+Adjusted `_git_current_branch(...)` in `aivm/cli/vm.py` to use `run_cmd(..., check=False)` so branch discovery is treated as probe logging (debug-level `RUN:`) instead of imperative logging (info-level). Added explicit non-zero exit handling that raises a focused RuntimeError including repo path and git output. Also added unit tests in `tests/test_cli_vm_attach.py` for successful named-branch detection and failure-path error reporting.
+
+Reflection/state of mind: this aligns command logging with intent: branch lookup is introspection, not a state-changing step. I kept the change narrowly scoped to avoid broader behavioral shifts in other git flows.
+
+Uncertainties/risks: low risk; only message text changed for git command failures in this specific helper. Detached-HEAD semantics remain unchanged.
+
+Tradeoffs and what might break: we lose automatic `CmdError` wrapping from `check=True` in favor of manual RuntimeError shaping, which is intentional for better UX/context. Any tests that expected prior exception wording would need adjustment.
+
+What I am confident about: targeted and module tests pass (`pytest -q tests/test_cli_vm_attach.py -k "git_current_branch or upsert_host_git_remote"` -> `4 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `18 passed`).
+## 2026-03-13 18:56:28 +0000
+
+Updated `_upsert_host_git_remote(...)` in `aivm/cli/vm.py` to better match probe logging semantics and clarify intent. Specifically, I changed the git common-dir lookup (`rev-parse --git-common-dir`) to `check=False` with explicit error handling, so this introspection step logs at debug instead of info and returns a clearer contextual RuntimeError when the repo is invalid. I also added a docstring that explains what “upsert” means in plain language (update if present, register if missing) and what the tuple return value represents.
+
+Reflection/state of mind: this was the right follow-up to the earlier branch-probe adjustment; keeping probe-vs-imperative logging consistent across helper functions makes command logs less noisy and more semantically accurate.
+
+Uncertainties/risks: low risk; the main user-visible change is exception wording for invalid/non-git repo handling in this helper.
+
+Tradeoffs and what might break: replacing implicit `CmdError` from `check=True` with a shaped RuntimeError improves readability and context, but any tests or consumers expecting the prior raw exception text could need updates.
+
+What I am confident about: added regression coverage for invalid repo handling in `tests/test_cli_vm_attach.py`; targeted and full attach tests pass (`pytest -q tests/test_cli_vm_attach.py -k "upsert_host_git_remote or git_current_branch"` -> `5 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `19 passed`).
