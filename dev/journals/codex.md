@@ -1773,3 +1773,32 @@ Tests: updated existing sticky expectation and added a regression test for read-
 Reflection/state of mind: this was a straightforward state-lifetime bug that matched user telemetry perfectly. The fix is intentionally minimal and localized to avoid changing confirmation semantics beyond preserving what the user explicitly asked for with `[a]ll`.
 
 Uncertainties/risks: low. Behavior when users never choose `[a]ll` is unchanged; behavior with `[a]ll` is now consistent across the full command execution.
+## 2026-03-16 14:48:09 +0000
+
+Addressed an e2e instability where shared-root attach reconciliation could appear to hang (20s+ silent stretches) and trigger outer harness timeouts. The logs showed long gaps around guest SSH mount commands after VM readiness checks. I hardened guest-side mount calls in both `ensure_share_mounted(...)` and `_ensure_shared_root_guest_bind(...)`.
+
+Changes made:
+- Switched guest-side privileged commands in these remote scripts from `sudo` to `sudo -n` so they fail fast instead of blocking on password prompts.
+- Added SSH non-interactive/connect controls (`batch_mode=True`, `connect_timeout=5`) to these remote calls.
+- Added `run_cmd(..., timeout=20)` for both calls to bound per-attempt latency and surface a concrete timeout error instead of hanging indefinitely.
+
+I added/updated assertions in unit tests to lock in the new behavior (presence of `sudo -n` and timeout kwargs), then ran focused suites: `tests/test_vm_helpers.py`, `tests/test_cli_vm_attach.py`, `tests/test_cli_vm_update.py`, and `tests/test_cli_helpers.py` (`81 passed`). A direct run of `tests/test_e2e_bootstrap_context.py` is skipped in this environment, so I could not locally reproduce that full e2e workflow end-to-end.
+
+Reflection/state of mind: this is a pragmatic hardening pass that trades potential single-attempt patience for deterministic failure semantics and clearer diagnostics, which is preferable in CI/e2e contexts where silent stalls are costly.
+
+Uncertainties/risks: if guest command execution legitimately needs more than 20 seconds in some environments, we may need a configurable timeout knob, but with retries in `ensure_share_mounted` this should still be robust for readiness races.
+## 2026-03-16 14:59:32 +0000
+
+Follow-up on probe wording: I initially introduced an implicit mapping of `sudo + check=False` to read-only mode in `run_cmd`, then reverted that assumption based on user feedback. The final approach is explicit intent marking only.
+
+Implementation details:
+- `run_cmd` now supports an explicit `sudo_action` override (`read`/`modify`) but does not infer from `check=False`.
+- I marked probe-heavy sudo calls with `sudo_action='read'` in key lifecycle paths (`_sudo_path_exists`, `_sudo_file_exists`, `_vm_defined`, `wait_for_ip` probes, `vm_status`), plus network/share probe calls where appropriate.
+- I kept destructive `check=False` calls explicitly marked `sudo_action='modify'` (destroy/undefine/rm/virt-install first-pass, detach-device, unmount/rmdir paths).
+- Added the requested e2e visibility line after the expected attachment-mode mismatch failure assertion in `tests/test_e2e_full.py`.
+
+Reflection/state of mind: explicitness is cleaner here. Probe-vs-modify semantics are domain-level intent, not something that should be guessed from `check` behavior. This preserves control and keeps logging trustworthy.
+
+Risk/tradeoff: requires callsite discipline; missing `sudo_action` at a new probe callsite can still inherit broader action context and produce noisy wording. However, this is preferable to a silent global assumption.
+
+Validation: `pytest -q tests/test_util.py tests/test_vm_helpers.py tests/test_cli_vm_attach.py tests/test_cli_vm_update.py tests/test_cli_helpers.py tests/test_e2e_full.py` -> `89 passed, 1 skipped`; compile checks for touched files pass.

@@ -128,3 +128,71 @@ def test_run_cmd_sudo_prompt_all_sticks_for_remaining_ops(
     assert calls[0] == ['sudo', 'virsh', 'dominfo', 'x']
     assert calls[1] == ['sudo', 'virsh', 'domstate', 'x']
     assert len(prompts) == 1
+
+
+def test_run_cmd_sudo_action_override_read(monkeypatch) -> None:
+    seen_actions: list[str] = []
+    calls = []
+
+    class P:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    monkeypatch.setattr('aivm.util.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.util.sys.stdin.isatty', lambda: True)
+
+    def fake_ensure(intent, cmd):
+        del cmd
+        seen_actions.append(intent.action)
+
+    monkeypatch.setattr('aivm.util._ensure_sudo_ready', fake_ensure)
+    monkeypatch.setattr(
+        'aivm.util.subprocess.run',
+        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+    )
+    arm_sudo_intent(yes=True, purpose='test intent', action='modify')
+    _run_cmd(
+        ['virsh', 'dominfo', 'x'],
+        sudo=True,
+        sudo_action='read',
+        check=False,
+        capture=True,
+    )
+
+    assert seen_actions == ['read']
+    assert calls[0] == ['sudo', 'virsh', 'dominfo', 'x']
+
+
+def test_run_cmd_sudo_action_override_modify(monkeypatch) -> None:
+    seen_actions: list[str] = []
+    calls = []
+
+    class P:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    monkeypatch.setattr('aivm.util.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.util.sys.stdin.isatty', lambda: True)
+
+    def fake_ensure(intent, cmd):
+        del cmd
+        seen_actions.append(intent.action)
+
+    monkeypatch.setattr('aivm.util._ensure_sudo_ready', fake_ensure)
+    monkeypatch.setattr(
+        'aivm.util.subprocess.run',
+        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+    )
+    arm_sudo_intent(yes=True, purpose='test intent', action='modify')
+    _run_cmd(
+        ['virsh', 'destroy', 'x'],
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
+
+    assert seen_actions == ['modify']
+    assert calls[0] == ['sudo', 'virsh', 'destroy', 'x']

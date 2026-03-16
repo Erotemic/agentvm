@@ -183,6 +183,7 @@ def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
     cmds: list[list[str]] = []
+    run_kwargs: list[dict] = []
 
     monkeypatch.setattr(
         'aivm.vm.share.require_ssh_identity', lambda p: p or '/tmp/id_ed25519'
@@ -192,8 +193,8 @@ def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
     )
 
     def fake_run_cmd(cmd, **kwargs):
-        del kwargs
         cmds.append([str(c) for c in cmd])
+        run_kwargs.append(dict(kwargs))
         return CmdResult(0, '', '')
 
     monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
@@ -209,6 +210,8 @@ def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
 
     assert len(cmds) == 1
     remote_script = cmds[0][-1]
+    assert run_kwargs[0]['timeout'] == 20
+    assert 'sudo -n mount -t virtiofs -o ro' in remote_script
     assert 'mount -t virtiofs -o ro' in remote_script
 
 

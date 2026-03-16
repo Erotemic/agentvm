@@ -1758,6 +1758,7 @@ def _ensure_shared_root_host_bind(
         run_cmd(
             ['mountpoint', '-q', str(target)],
             sudo=True,
+            sudo_action='read',
             check=False,
             capture=True,
         ).code
@@ -1767,6 +1768,7 @@ def _ensure_shared_root_host_bind(
         probe = run_cmd(
             ['findmnt', '-n', '-o', 'SOURCE', '--target', str(target)],
             sudo=True,
+            sudo_action='read',
             check=False,
             capture=True,
         )
@@ -1789,6 +1791,7 @@ def _ensure_shared_root_host_bind(
         unmount = run_cmd(
             ['umount', str(target)],
             sudo=True,
+            sudo_action='modify',
             check=False,
             capture=True,
         )
@@ -1867,9 +1870,9 @@ def _ensure_shared_root_guest_bind(
     if not attachment.tag:
         raise RuntimeError('shared-root attachment token is empty.')
     remount_cmd = (
-        f'sudo mount -o remount,bind,ro {shlex.quote(attachment.guest_dst)}'
+        f'sudo -n mount -o remount,bind,ro {shlex.quote(attachment.guest_dst)}'
         if attachment.access == ATTACHMENT_ACCESS_RO
-        else f'sudo mount -o remount,bind,rw {shlex.quote(attachment.guest_dst)}'
+        else f'sudo -n mount -o remount,bind,rw {shlex.quote(attachment.guest_dst)}'
     )
     desired_opt = (
         ATTACHMENT_ACCESS_RO
@@ -1893,16 +1896,16 @@ def _ensure_shared_root_guest_bind(
         f'src_stat="$(stat -Lc %d:%i {shlex.quote(source_in_guest)} 2>/dev/null || true)"; '
         f'cur_stat="$(stat -Lc %d:%i {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
         'if [ -n "$src_stat" ] && [ "$src_stat" = "$cur_stat" ]; then :; else '
-        f'sudo umount {shlex.quote(attachment.guest_dst)}; '
+        f'sudo -n umount {shlex.quote(attachment.guest_dst)}; '
         'fi; '
         'else '
-        f'sudo umount {shlex.quote(attachment.guest_dst)}; '
+        f'sudo -n umount {shlex.quote(attachment.guest_dst)}; '
         'fi; '
         'fi; '
-        f'if ! mkdir_err="$(sudo mkdir -p {shlex.quote(attachment.guest_dst)} 2>&1)"; then '
+        f'if ! mkdir_err="$(sudo -n mkdir -p {shlex.quote(attachment.guest_dst)} 2>&1)"; then '
         'if printf "%s" "$mkdir_err" | grep -qi "transport endpoint is not connected"; then '
-        f'sudo umount -l {shlex.quote(attachment.guest_dst)} >/dev/null 2>&1 || true; '
-        f'sudo mkdir -p {shlex.quote(attachment.guest_dst)}; '
+        f'sudo -n umount -l {shlex.quote(attachment.guest_dst)} >/dev/null 2>&1 || true; '
+        f'sudo -n mkdir -p {shlex.quote(attachment.guest_dst)}; '
         'else '
         'printf "%s\\n" "$mkdir_err" >&2; '
         'exit 2; '
@@ -1912,7 +1915,7 @@ def _ensure_shared_root_guest_bind(
         f'opts="$(findmnt -n -o OPTIONS --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
         f'case ",$opts," in *,{desired_opt},*) : ;; *) {remount_cmd} ;; esac; '
         'else '
-        f'sudo mount --bind {shlex.quote(source_in_guest)} {shlex.quote(attachment.guest_dst)}; '
+        f'sudo -n mount --bind {shlex.quote(source_in_guest)} {shlex.quote(attachment.guest_dst)}; '
         f'{remount_cmd}; '
         'fi; '
         f'final_src="$(findmnt -n -o SOURCE --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
@@ -1957,14 +1960,19 @@ def _ensure_shared_root_guest_bind(
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     cmd = [
         'ssh',
-        *ssh_base_args(ident, strict_host_key_checking='accept-new'),
+        *ssh_base_args(
+            ident,
+            strict_host_key_checking='accept-new',
+            connect_timeout=5,
+            batch_mode=True,
+        ),
         f'{cfg.vm.user}@{ip}',
         script,
     ]
     if dry_run:
         log.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
-    res = run_cmd(cmd, sudo=False, check=False, capture=True)
+    res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=20)
     if res.code != 0:
         raise RuntimeError(
             'Failed to bind-mount shared-root attachment inside guest.\n'
@@ -1994,6 +2002,7 @@ def _detach_shared_root_host_bind(
         run_cmd(
             ['mountpoint', '-q', str(target)],
             sudo=True,
+            sudo_action='read',
             check=False,
             capture=True,
         ).code
@@ -2001,7 +2010,13 @@ def _detach_shared_root_host_bind(
     )
     if mounted:
         run_cmd(['umount', str(target)], sudo=True, check=True, capture=True)
-    run_cmd(['rmdir', str(target)], sudo=True, check=False, capture=True)
+    run_cmd(
+        ['rmdir', str(target)],
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
 
 
 def _detach_shared_root_guest_bind(

@@ -36,6 +36,7 @@ def vm_has_virtiofs_shared_memory(
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -64,6 +65,7 @@ def vm_has_share(
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -94,6 +96,7 @@ def vm_share_mappings(
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -146,6 +149,7 @@ def attach_vm_share(
         run_cmd(
             ['virsh', 'domstate', cfg.vm.name],
             sudo=True,
+            sudo_action='read',
             check=False,
             capture=True,
         )
@@ -187,6 +191,7 @@ def detach_vm_share(
         run_cmd(
             ['virsh', 'domstate', cfg.vm.name],
             sudo=True,
+            sudo_action='read',
             check=False,
             capture=True,
         )
@@ -199,7 +204,13 @@ def detach_vm_share(
         if is_running
         else ['virsh', 'detach-device', cfg.vm.name, tmp, '--config']
     )
-    res = run_cmd(detach_cmd, sudo=True, check=False, capture=True)
+    res = run_cmd(
+        detach_cmd,
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
     if res.code != 0:
         msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
         if 'not found' in msg or 'no matching device' in msg:
@@ -224,18 +235,18 @@ def ensure_share_mounted(
     if not tag:
         raise RuntimeError('Share tag is empty.')
     mount_cmd = (
-        f'sudo mount -t virtiofs -o ro {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+        f'sudo -n mount -t virtiofs -o ro {shlex.quote(tag)} {shlex.quote(guest_dst)}'
         if read_only
-        else f'sudo mount -t virtiofs {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+        else f'sudo -n mount -t virtiofs {shlex.quote(tag)} {shlex.quote(guest_dst)}'
     )
     remount_cmd = (
-        f'sudo mount -o remount,ro {shlex.quote(guest_dst)}'
+        f'sudo -n mount -o remount,ro {shlex.quote(guest_dst)}'
         if read_only
-        else f'sudo mount -o remount,rw {shlex.quote(guest_dst)}'
+        else f'sudo -n mount -o remount,rw {shlex.quote(guest_dst)}'
     )
     remote = (
         'set -euo pipefail; '
-        f'sudo mkdir -p {shlex.quote(guest_dst)}; '
+        f'sudo -n mkdir -p {shlex.quote(guest_dst)}; '
         f'if mountpoint -q {shlex.quote(guest_dst)}; then '
         f'opts="$(findmnt -n -o OPTIONS --target {shlex.quote(guest_dst)} 2>/dev/null || true)"; '
         f'case ",$opts," in *,{"ro" if read_only else "rw"},*) : ;; *) {remount_cmd} ;; esac; '
@@ -245,7 +256,12 @@ def ensure_share_mounted(
     )
     cmd = [
         'ssh',
-        *ssh_base_args(ident, strict_host_key_checking='accept-new'),
+        *ssh_base_args(
+            ident,
+            strict_host_key_checking='accept-new',
+            connect_timeout=5,
+            batch_mode=True,
+        ),
         f'{cfg.vm.user}@{ip}',
         remote,
     ]
@@ -255,7 +271,7 @@ def ensure_share_mounted(
     max_attempts = 12
     retry_sleep_s = 2.0
     for attempt in range(1, max_attempts + 1):
-        res = run_cmd(cmd, sudo=False, check=False, capture=True)
+        res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=20)
         if res.code == 0:
             if attempt > 1:
                 log.info(

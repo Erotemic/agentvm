@@ -781,10 +781,11 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
         lambda *a, **k: ['-i', '/tmp/id_ed25519'],
     )
     cmds: list[list[str]] = []
+    run_kwargs: list[dict] = []
 
     def fake_run_cmd(cmd, **kwargs):
-        del kwargs
         cmds.append([str(c) for c in cmd])
+        run_kwargs.append(dict(kwargs))
         return CmdResult(0, '', '')
 
     monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
@@ -798,6 +799,8 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
 
     assert len(cmds) == 1
     remote_script = cmds[0][-1]
+    assert run_kwargs[0]['timeout'] == 20
+    assert 'sudo -n mount --bind' in remote_script
     assert 'mount -o remount,bind,ro' in remote_script
     assert 'umount -l' in remote_script
     assert 'findmnt -n -o ROOT --target' in remote_script

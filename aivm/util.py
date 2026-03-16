@@ -97,8 +97,7 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
         if str(intent.action).strip().lower() == 'read'
         else 'state-changing'
     )
-    local_log.info(f'Planned privileged {mode} command(s):')
-    local_log.info(f'  {cmd_line}')
+    local_log.info(f'Planned privileged {mode} command: {cmd_line}')
     if os.geteuid() == 0:
         return
     if intent.yes:
@@ -127,6 +126,7 @@ def run_cmd(
     cmd: Sequence[str],
     *,
     sudo: bool = False,
+    sudo_action: str | None = None,
     check: bool = True,
     capture: bool = True,
     text: bool = True,
@@ -156,6 +156,17 @@ def run_cmd(
     if sudo and os.geteuid() != 0:
         intent = _consume_sudo_intent()
         if intent is not None:
+            action_override = str(sudo_action or '').strip().lower()
+            if (
+                action_override in {'read', 'modify'}
+                and action_override != intent.action
+            ):
+                intent = SudoIntent(
+                    yes=intent.yes,
+                    purpose=intent.purpose,
+                    action=action_override,
+                    sticky=intent.sticky,
+                )
             _ensure_sudo_ready(intent, original_cmd)
         # Use interactive sudo when stdin is a TTY so the user sees/authenticates
         # on the actual command. In non-interactive mode, fail fast.

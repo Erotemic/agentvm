@@ -254,6 +254,10 @@ def test_e2e_full_cycle(tmp_path: Path) -> None:
         )
         assert mismatch_res.returncode != 0
         assert 'Attachment mode mismatch' in mismatch_res.stdout
+        print(
+            'Verified expected failure: conflicting attachment mode request '
+            'is rejected with a detach+reattach guidance message.'
+        )
 
         # Detach then reattach explicitly in shared-root mode.
         _run_cli(
