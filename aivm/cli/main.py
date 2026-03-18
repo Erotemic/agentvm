@@ -29,7 +29,7 @@ from ._common import (
 from .config import ConfigModalCLI
 from .help import HelpModalCLI
 from .host import HostModalCLI
-from .vm import SSHCLI, AttachCLI, CodeCLI, VMModalCLI
+from .vm import SSHCLI, AttachCLI, CodeCLI, DetachCLI, VMModalCLI
 
 
 class ListCLI(_BaseCommand):
@@ -99,7 +99,8 @@ class ListCLI(_BaseCommand):
                 ):
                     print(
                         f'  - {att.host_path} | vm={att.vm_name} '
-                        f'| mode={att.mode} | guest_dst={att.guest_dst or "(default)"}'
+                        f'| mode={att.mode} | access={getattr(att, "access", "rw")} '
+                        f'| guest_dst={att.guest_dst or "(default)"}'
                     )
         print('')
         print(f'Config store: {reg_path}')
@@ -150,6 +151,7 @@ class StatusCLI(_BaseCommand):
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose=f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'.",
+                action='read',
             )
         print(
             render_status(
@@ -168,6 +170,7 @@ class AgentVMModalCLI(scfg.ModalCLI):
     code = CodeCLI
     ssh = SSHCLI
     attach = AttachCLI
+    detach = DetachCLI
     config = ConfigModalCLI
     vm = VMModalCLI
     host = HostModalCLI

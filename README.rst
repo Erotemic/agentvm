@@ -87,17 +87,23 @@ Status and sudo behavior
 By default, ``aivm status`` avoids privileged probes. Use ``--sudo`` for
 network/firewall/libvirt/image checks.
 
-Privileged host actions prompt before sudo operations. Use:
+Sudo policy defaults:
+
+* read-only sudo probes (inspect/query/status) are auto-approved
+* state-changing sudo actions still prompt unless ``--yes``/``--yes-sudo`` is set
+
+Use:
 
 * ``--yes`` to auto-approve all prompts
 * ``--yes-sudo`` to auto-approve only sudo prompts
 
-Config default:
+Config defaults:
 
 .. code-block:: toml
 
    [behavior]
-   yes_sudo = true
+   yes_sudo = false
+   auto_approve_readonly_sudo = true  # set false for strict "prompt every sudo" mode
 
 Common Workflows
 ----------------
@@ -120,12 +126,74 @@ Folder attachment
 .. code-block:: bash
 
    aivm attach .
+   aivm detach .
    aivm vm attach --vm aivm-2404 --host_src .
+   aivm attach . --mode git
 
-By default, attached folders mount to the same absolute path inside the guest.
-Use ``--guest_dst`` to override. Running VMs are live-attached when possible.
+Attachment modes:
+
+* ``shared-root`` (default for new attachments): one VM-level virtiofs mapping
+  exports ``/var/lib/libvirt/aivm/<vm>/shared-root``; each attached folder is
+  bind-mounted under that root on host and then bind-mounted to ``guest_dst`` in
+  guest.
+* ``shared``: direct per-folder virtiofs mapping from host source to guest. This
+  is simpler but consumes one VM virtiofs device slot per folder.
+* ``git``: guest-local Git clone, synced via host/guest remotes.
+
+In ``shared`` and ``shared-root`` modes, attached folders mount to the same
+absolute path inside the guest by default. In ``git`` mode, default guest paths
+are placed under ``/home/<vm-user>/...`` so Git sync can run without guest root
+privileges. Use ``--guest_dst`` to override in any mode. Running VMs are
+live-attached when possible.
 ``aivm code`` and ``aivm ssh`` remount the selected folder and best-effort
 restore other folders already saved for that VM after guest startup.
+
+Major limitation: shared-mode folder count
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each ``shared`` folder uses a dedicated virtiofs device mapping in the VM
+definition. Attaching many folders can hit VM device-slot limits (for example
+PCI/PCIe capacity), which surfaces from libvirt as errors like
+``No more available PCI slots`` during attach/restore.
+
+``shared-root`` is designed to reduce this pressure by using one persistent
+virtiofs mapping per VM and per-attachment host/guest bind mounts.
+
+Workarounds today:
+
+* detach unused shared folders
+* prefer ``--mode git`` for folders that do not need live writable host sharing
+* split large folder sets across multiple VMs
+
+Use ``--mode git`` to keep a normal Git repo on guest disk instead of exposing
+a writable virtiofs share. In that mode, ``aivm`` configures the guest repo to
+accept host pushes via ``receive.denyCurrentBranch=updateInstead`` and
+registers a host-side remote pointing at the guest repo over the VM SSH alias.
+The host can push committed branch state into the VM and fetch guest commits
+back later. Uncommitted host changes stay on the host until you commit them.
+
+``aivm code --mode git .`` behavior:
+
+* New folder (no saved attachment): creates/uses a git-mode attachment and
+  defaults guest destination under ``/home/<vm-user>/...``.
+* Folder previously attached as ``shared`` or ``shared-root``: returns an error
+  (mode mismatch). Detach + reattach is required to switch modes.
+* ``aivm code .`` without ``--mode``: reuses saved mode if present; otherwise
+  creates a new ``shared-root`` attachment.
+
+Mode selection behavior:
+
+* New folder (no saved attachment record): defaults to ``shared-root`` unless
+  ``--mode`` is explicitly set.
+* Existing folder attachment: omitting ``--mode`` reuses the saved mode for that
+  ``(host folder, VM)`` pair.
+* Existing folder attachment + explicit different ``--mode``: this now errors.
+  You must explicitly detach then reattach to change mode:
+
+.. code-block:: bash
+
+   aivm detach .
+   aivm attach . --mode git
 
 Inventory and visibility
 
@@ -152,6 +220,7 @@ Config-store lifecycle (explicit flow)
    aivm config edit
    aivm help plan
    aivm help tree
+   aivm help completion
    aivm host doctor
 
 Settings sync configuration

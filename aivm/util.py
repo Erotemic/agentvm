@@ -41,6 +41,8 @@ class CmdError(RuntimeError):
 class SudoIntent:
     yes: bool
     purpose: str
+    action: str = 'modify'
+    sticky: bool = False
 
 
 _SUDO_INTENT: ContextVar[SudoIntent | None] = ContextVar(
@@ -52,8 +54,24 @@ def shell_join(cmd: Sequence[str]) -> str:
     return ' '.join(shlex.quote(c) for c in cmd)
 
 
-def arm_sudo_intent(*, yes: bool, purpose: str) -> None:
-    _SUDO_INTENT.set(SudoIntent(yes=bool(yes), purpose=str(purpose)))
+def arm_sudo_intent(
+    *,
+    yes: bool,
+    purpose: str,
+    action: str = 'modify',
+    sticky: bool = False,
+) -> None:
+    mode = str(action or 'modify').strip().lower()
+    if mode not in {'read', 'modify'}:
+        mode = 'modify'
+    _SUDO_INTENT.set(
+        SudoIntent(
+            yes=bool(yes),
+            purpose=str(purpose),
+            action=mode,
+            sticky=bool(sticky),
+        )
+    )
 
 
 def clear_sudo_intent() -> None:
@@ -62,7 +80,7 @@ def clear_sudo_intent() -> None:
 
 def sudo_intent_auto_yes() -> bool:
     intent = _SUDO_INTENT.get()
-    return bool(intent is not None and intent.yes)
+    return bool(intent is not None and intent.sticky)
 
 
 def _consume_sudo_intent() -> SudoIntent | None:
@@ -73,9 +91,21 @@ def _consume_sudo_intent() -> SudoIntent | None:
 
 def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
     cmd_line = shell_join(cmd)
-    log.opt(depth=2).info('Planned privileged command(s):')
-    log.opt(depth=2).info(f'  {cmd_line}')
-    if os.geteuid() == 0:
+    local_log = log.opt(depth=2)
+    mode = (
+        'read-only'
+        if str(intent.action).strip().lower() == 'read'
+        else 'state-changing'
+    )
+    as_root = os.geteuid() == 0
+    needs_confirm = (not as_root) and (not intent.yes)
+    if needs_confirm or mode == 'state-changing':
+        local_log.info(f'Planned privileged {mode} command: {cmd_line}')
+    else:
+        # Auto-approved read-only probes can be very chatty in polling loops.
+        # Keep intent visible at TRACE while DEBUG shows the concrete RUN line.
+        local_log.trace(f'Planned privileged {mode} command: {cmd_line}')
+    if as_root:
         return
     if intent.yes:
         return
@@ -84,11 +114,16 @@ def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
             'Privileged host operations require confirmation, but stdin is not interactive. '
             'Re-run with --yes.'
         )
-    log.opt(depth=2).info('About to run privileged host operations via sudo:')
-    log.opt(depth=2).info(f'  {intent.purpose}')
+    local_log.info(f'About to run privileged {mode} host operations via sudo:')
+    local_log.info(f'  {intent.purpose}')
     ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
     if ans in {'a', 'all'}:
-        arm_sudo_intent(yes=True, purpose=intent.purpose)
+        arm_sudo_intent(
+            yes=True,
+            purpose=intent.purpose,
+            action='modify',
+            sticky=True,
+        )
         return
     if ans not in {'y', 'yes'}:
         raise RuntimeError('Aborted by user.')
@@ -98,6 +133,7 @@ def run_cmd(
     cmd: Sequence[str],
     *,
     sudo: bool = False,
+    sudo_action: str | None = None,
     check: bool = True,
     capture: bool = True,
     text: bool = True,
@@ -115,7 +151,8 @@ def run_cmd(
       users see/approve the real privileged command instead of a probe command.
     """
     original_cmd = cmd
-    log.opt(depth=1).trace(
+    local_log = log.opt(depth=1)
+    local_log.trace(
         'run_cmd entry sudo={} check={} capture={} text={} cmd={}',
         sudo,
         check,
@@ -126,20 +163,29 @@ def run_cmd(
     if sudo and os.geteuid() != 0:
         intent = _consume_sudo_intent()
         if intent is not None:
+            action_override = str(sudo_action or '').strip().lower()
+            if (
+                action_override in {'read', 'modify'}
+                and action_override != intent.action
+            ):
+                intent = SudoIntent(
+                    yes=intent.yes,
+                    purpose=intent.purpose,
+                    action=action_override,
+                    sticky=intent.sticky,
+                )
             _ensure_sudo_ready(intent, original_cmd)
         # Use interactive sudo when stdin is a TTY so the user sees/authenticates
         # on the actual command. In non-interactive mode, fail fast.
         cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
-        log.opt(depth=1).debug(
-            'Running with sudo: {}', shell_join(original_cmd)
-        )
+        local_log.trace('Running with sudo: {}', shell_join(original_cmd))
     run_line = shell_join(cmd)
     if check:
         # check=True generally corresponds to imperative setup/change steps.
-        log.opt(depth=1).info('RUN: {}', run_line)
+        local_log.info('RUN: {}', run_line)
     else:
         # check=False is commonly used for probes/introspection.
-        log.opt(depth=1).debug('RUN: {}', run_line)
+        local_log.debug('RUN: {}', run_line)
     try:
         p = subprocess.run(
             cmd,
@@ -158,7 +204,7 @@ def run_cmd(
         if not isinstance(stderr, str):
             stderr = stderr.decode(errors='replace')
         res = CmdResult(124, stdout, (stderr + '\ncommand timed out').strip())
-        log.opt(depth=1).warning(
+        local_log.warning(
             'Command timed out after {}s cmd={}',
             timeout,
             shell_join(cmd),
@@ -166,15 +212,14 @@ def run_cmd(
         if check:
             raise CmdError(cmd, res) from ex
         return res
-    log.opt(depth=1).trace(
-        'run_cmd result code={} stdout_len={} stderr_len={} cmd={}',
+    local_log.trace(
+        'run_cmd result code={} stdout_len={} stderr_len={}',
         res.code,
         len(res.stdout),
         len(res.stderr),
-        shell_join(cmd),
     )
     if check and p.returncode != 0:
-        log.opt(depth=1).error(
+        local_log.error(
             'Command failed code={} cmd={} stderr={} stdout={}',
             p.returncode,
             shell_join(cmd),
@@ -182,8 +227,6 @@ def run_cmd(
             res.stdout.strip(),
         )
         raise CmdError(cmd, res)
-    if p.returncode == 0:
-        log.opt(depth=1).debug('Command ok code=0 cmd={}', shell_join(cmd))
     return res
 
 

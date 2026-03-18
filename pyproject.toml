@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aivm"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local libvirt/KVM sandbox VM manager for coding agents (Ubuntu 24.04 cloud-image, SSH, optional virtiofs share, optional nftables isolation)."
 readme = "README.rst"
 requires-python = ">=3.11"
@@ -84,7 +84,7 @@ pkg_name = "aivm"
 rel_mod_parent_dpath = "."
 os = [ "linux" ]
 min_python = "3.11"
-version = "0.2.0"
+version = "0.3.0"
 url = "https://github.com/Erotemic/aivm"
 author = "Jon Crall"
 author_email = "erotemic@gmail.com"

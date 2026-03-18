@@ -63,6 +63,7 @@ class NetStatusCLI(_BaseCommand):
         _confirm_sudo_block(
             yes=bool(args.yes),
             purpose='Inspect libvirt network status via virsh.',
+            action='read',
         )
         print(network_status(cfg))
         return 0

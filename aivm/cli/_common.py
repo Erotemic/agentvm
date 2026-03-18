@@ -30,6 +30,9 @@ _LAST_LOGGING_STATE: tuple[str, bool] | None = None
 _CURRENT_YES_SUDO: ContextVar[bool] = ContextVar(
     'aivm_current_yes_sudo', default=False
 )
+_CURRENT_AUTO_APPROVE_READONLY_SUDO: ContextVar[bool] = ContextVar(
+    'aivm_current_auto_approve_readonly_sudo', default=True
+)
 
 
 class _BaseCommand(scfg.DataConfig):
@@ -64,6 +67,11 @@ class _BaseCommand(scfg.DataConfig):
         parsed = super().cli(*args, **kwargs)
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
         cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
+        cfg_auto_approve_readonly_sudo = (
+            _resolve_cfg_auto_approve_readonly_sudo(
+                getattr(parsed, 'config', None)
+            )
+        )
         effective_yes_sudo = bool(
             getattr(parsed, 'yes_sudo', False)
             or getattr(parsed, 'yes', False)
@@ -71,15 +79,19 @@ class _BaseCommand(scfg.DataConfig):
         )
         setattr(parsed, 'yes_sudo', effective_yes_sudo)
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
+        _CURRENT_AUTO_APPROVE_READONLY_SUDO.set(
+            bool(cfg_auto_approve_readonly_sudo)
+        )
         args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
         _setup_logging(args_verbose, cfg_verbosity)
         log.trace(
-            'Parsed command {} with config={} verbose={} yes={} yes_sudo={}',
+            'Parsed command {} with config={} verbose={} yes={} yes_sudo={} auto_approve_readonly_sudo={}',
             cls.__name__,
             getattr(parsed, 'config', None),
             args_verbose,
             bool(getattr(parsed, 'yes', False)),
             bool(getattr(parsed, 'yes_sudo', False)),
+            bool(cfg_auto_approve_readonly_sudo),
         )
         return parsed
 
@@ -118,6 +130,20 @@ def _resolve_cfg_yes_sudo(config_opt: str | None) -> bool:
     except Exception:
         cfg_yes_sudo = False
     return cfg_yes_sudo
+
+
+def _resolve_cfg_auto_approve_readonly_sudo(config_opt: str | None) -> bool:
+    auto_approve_readonly_sudo = True
+    try:
+        path = _cfg_path(config_opt)
+        if path.exists():
+            reg = load_store(path)
+            auto_approve_readonly_sudo = bool(
+                getattr(reg.behavior, 'auto_approve_readonly_sudo', True)
+            )
+    except Exception:
+        auto_approve_readonly_sudo = True
+    return auto_approve_readonly_sudo
 
 
 def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
@@ -329,18 +355,33 @@ def _confirm_sudo_block(
     *,
     yes: bool,
     purpose: str,
+    action: str = 'modify',
 ) -> None:
+    mode = str(action or 'modify').strip().lower()
+    if mode not in {'read', 'modify'}:
+        raise RuntimeError("--action must be either 'read' or 'modify'")
     log.trace(
-        'Confirm sudo block yes={} purpose={!r}',
+        'Confirm sudo block yes={} action={} purpose={!r}',
         yes,
+        mode,
         purpose,
     )
     if os.geteuid() == 0:
         return
-    eff_yes = bool(
-        yes or _CURRENT_YES_SUDO.get(False) or sudo_intent_auto_yes()
+    auto_yes_read = mode == 'read' and _CURRENT_AUTO_APPROVE_READONLY_SUDO.get(
+        True
     )
-    arm_sudo_intent(yes=eff_yes, purpose=purpose)
+    sticky_all = sudo_intent_auto_yes()
+    eff_yes = bool(
+        yes
+        or _CURRENT_YES_SUDO.get(False)
+        or sticky_all
+        or auto_yes_read
+    )
+    # Preserve "accept all" across later confirm blocks in the same command.
+    arm_sudo_intent(
+        yes=eff_yes, purpose=purpose, action=mode, sticky=sticky_all
+    )
 
 
 def _confirm_external_file_update(
@@ -380,6 +421,7 @@ class PreparedSession:
     cfg: AgentVMConfig
     cfg_path: Path
     host_src: Path
+    attachment_mode: str
     share_source_dir: str
     share_tag: str
     share_guest_dst: str

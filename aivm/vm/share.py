@@ -36,6 +36,7 @@ def vm_has_virtiofs_shared_memory(
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -64,6 +65,7 @@ def vm_has_share(
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -94,6 +96,7 @@ def vm_share_mappings(
     xml = run_cmd(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -146,6 +149,7 @@ def attach_vm_share(
         run_cmd(
             ['virsh', 'domstate', cfg.vm.name],
             sudo=True,
+            sudo_action='read',
             check=False,
             capture=True,
         )
@@ -161,12 +165,67 @@ def attach_vm_share(
     run_cmd(attach_cmd, sudo=True, check=True, capture=True)
 
 
+def detach_vm_share(
+    cfg: AgentVMConfig, source_dir: str, tag: str, *, dry_run: bool = False
+) -> bool:
+    """Detach a virtiofs share mapping from an existing VM definition."""
+    cfg = cfg.expanded_paths()
+    if not source_dir or not tag:
+        return False
+    source_dir = str(Path(source_dir).resolve())
+    xml = f"""<filesystem type='mount' accessmode='passthrough'>
+  <driver type='virtiofs'/>
+  <source dir='{source_dir}'/>
+  <target dir='{tag}'/>
+</filesystem>
+"""
+    if dry_run:
+        log.info(
+            'DRYRUN: detach virtiofs share source={} tag={}', source_dir, tag
+        )
+        return True
+    with tempfile.NamedTemporaryFile('w', delete=False) as f:
+        f.write(xml)
+        tmp = f.name
+    state = (
+        run_cmd(
+            ['virsh', 'domstate', cfg.vm.name],
+            sudo=True,
+            sudo_action='read',
+            check=False,
+            capture=True,
+        )
+        .stdout.strip()
+        .lower()
+    )
+    is_running = 'running' in state
+    detach_cmd = (
+        ['virsh', 'detach-device', cfg.vm.name, tmp, '--live', '--config']
+        if is_running
+        else ['virsh', 'detach-device', cfg.vm.name, tmp, '--config']
+    )
+    res = run_cmd(
+        detach_cmd,
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
+    if res.code != 0:
+        msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
+        if 'not found' in msg or 'no matching device' in msg:
+            return False
+        raise CmdError(detach_cmd, res)
+    return True
+
+
 def ensure_share_mounted(
     cfg: AgentVMConfig,
     ip: str,
     *,
     guest_dst: str,
     tag: str,
+    read_only: bool = False,
     dry_run: bool = False,
 ) -> None:
     cfg = cfg.expanded_paths()
@@ -175,15 +234,34 @@ def ensure_share_mounted(
         raise RuntimeError('Share guest_dst is empty.')
     if not tag:
         raise RuntimeError('Share tag is empty.')
+    mount_cmd = (
+        f'sudo -n mount -t virtiofs -o ro {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+        if read_only
+        else f'sudo -n mount -t virtiofs {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+    )
+    remount_cmd = (
+        f'sudo -n mount -o remount,ro {shlex.quote(guest_dst)}'
+        if read_only
+        else f'sudo -n mount -o remount,rw {shlex.quote(guest_dst)}'
+    )
     remote = (
         'set -euo pipefail; '
-        f'sudo mkdir -p {shlex.quote(guest_dst)}; '
-        f'mountpoint -q {shlex.quote(guest_dst)} || '
-        f'sudo mount -t virtiofs {shlex.quote(tag)} {shlex.quote(guest_dst)}'
+        f'sudo -n mkdir -p {shlex.quote(guest_dst)}; '
+        f'if mountpoint -q {shlex.quote(guest_dst)}; then '
+        f'opts="$(findmnt -n -o OPTIONS --target {shlex.quote(guest_dst)} 2>/dev/null || true)"; '
+        f'case ",$opts," in *,{"ro" if read_only else "rw"},*) : ;; *) {remount_cmd} ;; esac; '
+        'else '
+        f'{mount_cmd}; '
+        'fi'
     )
     cmd = [
         'ssh',
-        *ssh_base_args(ident, strict_host_key_checking='accept-new'),
+        *ssh_base_args(
+            ident,
+            strict_host_key_checking='accept-new',
+            connect_timeout=5,
+            batch_mode=True,
+        ),
         f'{cfg.vm.user}@{ip}',
         remote,
     ]
@@ -193,7 +271,7 @@ def ensure_share_mounted(
     max_attempts = 12
     retry_sleep_s = 2.0
     for attempt in range(1, max_attempts + 1):
-        res = run_cmd(cmd, sudo=False, check=False, capture=True)
+        res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=20)
         if res.code == 0:
             if attempt > 1:
                 log.info(

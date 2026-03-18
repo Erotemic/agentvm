@@ -14,6 +14,7 @@ import sys
 import xml.etree.ElementTree as ET
 from dataclasses import fields
 from pathlib import Path
+from typing import cast
 
 import scriptconfig as scfg
 import tomllib
@@ -369,6 +370,7 @@ class ConfigDiscoverCLI(_BaseCommand):
             _confirm_sudo_block(
                 yes=bool(args.yes),
                 purpose='Discover existing libvirt VMs via system virsh.',
+                action='read',
             )
             used_sudo = True
             names_res = run_cmd(
@@ -493,7 +495,11 @@ def _lint_store_file(path: Path) -> list[str]:
         if not isinstance(behavior, dict):
             problems.append('top-level key "behavior" should be a table/object')
         else:
-            allowed_behavior = {'yes_sudo', 'verbose'}
+            allowed_behavior = {
+                'yes_sudo',
+                'auto_approve_readonly_sudo',
+                'verbose',
+            }
             for key in sorted(behavior.keys()):
                 if key not in allowed_behavior:
                     problems.append(f'behavior unknown key: {key!r}')
@@ -537,12 +543,13 @@ def _lint_store_file(path: Path) -> list[str]:
             if not isinstance(item, dict):
                 problems.append(f'networks[{idx}] is not a table/object')
                 continue
+            item = cast(dict[str, object], item)
             for key in sorted(item.keys()):
                 if key not in allowed_network_record:
                     problems.append(
                         f'networks[{idx}] unknown key/section: {key!r}'
                     )
-            net_sec = item.get('network', None)
+            net_sec = item.get('network')
             if net_sec is not None:
                 if not isinstance(net_sec, dict):
                     problems.append(
@@ -554,7 +561,7 @@ def _lint_store_file(path: Path) -> list[str]:
                             problems.append(
                                 f'networks[{idx}].network unknown key: {key!r}'
                             )
-            fw_sec = item.get('firewall', None)
+            fw_sec = item.get('firewall')
             if fw_sec is not None:
                 if not isinstance(fw_sec, dict):
                     problems.append(
@@ -574,11 +581,12 @@ def _lint_store_file(path: Path) -> list[str]:
             if not isinstance(item, dict):
                 problems.append(f'vms[{idx}] is not a table/object')
                 continue
+            item = cast(dict[str, object], item)
             for key in sorted(item.keys()):
                 if key not in allowed_vm_record:
                     problems.append(f'vms[{idx}] unknown key/section: {key!r}')
             for sec_name, allowed in section_allowed.items():
-                sec = item.get(sec_name, None)
+                sec = item.get(sec_name)
                 if sec is None:
                     continue
                 if not isinstance(sec, dict):
@@ -594,7 +602,14 @@ def _lint_store_file(path: Path) -> list[str]:
     elif vms is not None:
         problems.append('top-level key "vms" should be an array of tables')
 
-    allowed_attachment = {'host_path', 'vm_name', 'mode', 'guest_dst', 'tag'}
+    allowed_attachment = {
+        'host_path',
+        'vm_name',
+        'mode',
+        'access',
+        'guest_dst',
+        'tag',
+    }
     atts = raw.get('attachments', [])
     if isinstance(atts, list):
         for idx, item in enumerate(atts):

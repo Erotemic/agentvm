@@ -75,10 +75,14 @@ Safety and Trust Boundaries
 
 5. Shared-folder trust is a mode, not an assumption
 
-   Read/write host-folder sharing is the practical default today, but future
-   isolation-oriented modes are expected (for example read-only attachment or
-   git-based host/guest synchronization) to support secret-sensitive host repos
-   and cleaner guest environments.
+   Read/write host-folder sharing is the practical default today, but
+   isolation-oriented modes should remain first-class. Git-backed attachment is
+   now one supported alternative, and future modes (for example read-only
+   attachment) should continue to support secret-sensitive host repos and
+   cleaner guest environments.
+   Current implementation limitation: each shared-folder attach uses a VM
+   virtiofs device mapping and can exhaust device-slot capacity (for example
+   PCI/PCIe slots) when many folders are attached to one VM.
 
 
 Reliability Principles
@@ -149,6 +153,10 @@ Operational command execution
   policy, logging, and error semantics.
 * Keep privilege handling explicit and auditable.
 * Preserve ``--dry_run`` as a true non-destructive preview path.
+* Automatic/background reconciliation must avoid disruptive host operations
+  against existing mounts (for example, forced/lazy unmount of busy targets).
+  If repair might break active guest workflows, skip with a warning and require
+  an explicit user-invoked reconcile command.
 
 State management
 ~~~~~~~~~~~~~~~~
@@ -224,6 +232,9 @@ should be evolved in these areas:
 * Provisioning defaults:
   add ``uv`` to baseline provisioning so Python package/workflow setup is
   consistent out of the box.
+* Folder sharing backend flexibility:
+  evaluate alternatives that scale beyond per-folder virtiofs device-slot
+  limits (see ``dev/design/future/flexible-folder-sharing.md``).
 
 
 Non-goals

@@ -15,7 +15,11 @@ from pathlib import Path
 from loguru import logger
 
 from .config import AgentVMConfig
-from .resource_checks import host_cpu_count, host_free_disk_gb, host_mem_total_mb
+from .resource_checks import (
+    host_cpu_count,
+    host_free_disk_gb,
+    host_mem_total_mb,
+)
 from .util import expand, run_cmd, which
 
 log = logger
@@ -146,7 +150,10 @@ def pick_free_subnet(preferred: list[str]) -> str:
 
 
 def _recommend_vm_resources(
-    *, host_cpus: int | None, host_mem_total_mb: int | None, host_free_disk: float | None
+    *,
+    host_cpus: int | None,
+    host_mem_total_mb: int | None,
+    host_free_disk: float | None,
 ) -> tuple[int, int, int]:
     """Choose conservative VM defaults based on host resource tiers."""
     cpus = 4

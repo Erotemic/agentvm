@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aivm.cli.vm import (
+    ATTACHMENT_MODE_SHARED_ROOT,
     ReconcileResult,
     ResolvedAttachment,
     VMUpdateCLI,
@@ -124,8 +125,8 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
 
     sudo_prompts: list[str] = []
 
-    def fake_confirm_sudo_block(*, yes, purpose):
-        del yes
+    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
+        del yes, kwargs
         sudo_prompts.append(purpose)
 
     def fake_run_cmd(cmd, *, sudo=False, **kwargs):
@@ -190,8 +191,8 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_confirm_sudo_block(*, yes, purpose):
-        del yes, purpose
+    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
+        del yes, purpose, kwargs
 
     def fake_run_cmd(cmd, *, sudo=False, **kwargs):
         del kwargs, sudo
@@ -513,6 +514,34 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         'aivm.cli.vm.ensure_share_mounted',
         lambda *a, **k: mounted.append((a, k)),
     )
+    recorded: list[dict] = []
+
+    def fake_record_attachment(
+        cfg_arg,
+        cfg_path_arg,
+        *,
+        host_src,
+        mode,
+        access,
+        guest_dst,
+        tag,
+        force=False,
+    ):
+        del cfg_arg, cfg_path_arg, force
+        recorded.append(
+            {
+                'host_src': str(host_src),
+                'mode': mode,
+                'access': access,
+                'guest_dst': guest_dst,
+                'tag': tag,
+            }
+        )
+        return cfg_path
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', fake_record_attachment
+    )
 
     session = _prepare_attached_session(
         config_opt=str(cfg_path),
@@ -536,3 +565,160 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         '/workspace/proj',
         '/workspace/docs',
     ]
+    assert len(recorded) == 2
+    assert recorded[1]['mode'] == 'shared'
+    assert recorded[1]['guest_dst'] == '/workspace/docs'
+
+
+def test_prepare_attached_session_restores_saved_shared_root_attachments(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from aivm.store import Store, save_store, upsert_attachment, upsert_vm
+
+    host_src = tmp_path / 'proj'
+    other_src = tmp_path / 'docs'
+    host_src.mkdir()
+    other_src.mkdir()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'restore-shared-root-vm'
+    cfg_path = tmp_path / 'config.toml'
+
+    store = Store()
+    upsert_vm(store, cfg)
+    upsert_attachment(
+        store,
+        host_path=host_src,
+        vm_name=cfg.vm.name,
+        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        guest_dst='/workspace/proj',
+        tag='token-proj',
+    )
+    upsert_attachment(
+        store,
+        host_path=other_src,
+        vm_name=cfg.vm.name,
+        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        guest_dst='/workspace/docs',
+        tag='token-docs',
+    )
+    save_store(store, cfg_path)
+
+    current_attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        source_dir=str(host_src.resolve()),
+        guest_dst='/workspace/proj',
+        tag='token-proj',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code',
+        lambda **kwargs: (cfg, cfg_path),
+    )
+
+    def fake_resolve_attachment(_cfg, _cfg_path, host_path, _guest_dst_opt):
+        host_path = Path(host_path).resolve()
+        if host_path == host_src.resolve():
+            return current_attachment
+        if host_path == other_src.resolve():
+            return ResolvedAttachment(
+                vm_name=cfg.vm.name,
+                mode=ATTACHMENT_MODE_SHARED_ROOT,
+                source_dir=str(other_src.resolve()),
+                guest_dst='/workspace/docs',
+                tag='token-docs',
+            )
+        raise AssertionError(f'unexpected host_path={host_path}')
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_attachment',
+        fake_resolve_attachment,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_attached_vm',
+        lambda *a, **k: ReconcileResult(
+            attachment=current_attachment,
+            cached_ip='10.0.0.3',
+            cached_ssh_ok=True,
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_ssh_ready',
+        lambda *a, **k: ProbeOutcome(True, 'ready', ''),
+    )
+
+    primary_ready_calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_attachment_available_in_guest',
+        lambda *a, **k: primary_ready_calls.append((a, k)) or None,
+    )
+
+    shared_root_host_binds: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_shared_root_host_bind',
+        lambda *a, **k: shared_root_host_binds.append((a, k))
+        or Path('/tmp/token'),
+    )
+    shared_root_vm_mappings: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_shared_root_vm_mapping',
+        lambda *a, **k: shared_root_vm_mappings.append((a, k)) or None,
+    )
+    shared_root_guest_binds: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_shared_root_guest_bind',
+        lambda *a, **k: shared_root_guest_binds.append((a, k)) or None,
+    )
+
+    recorded: list[dict] = []
+
+    def fake_record_attachment(
+        cfg_arg,
+        cfg_path_arg,
+        *,
+        host_src,
+        mode,
+        access,
+        guest_dst,
+        tag,
+        force=False,
+    ):
+        del cfg_arg, cfg_path_arg, force
+        recorded.append(
+            {
+                'host_src': str(host_src),
+                'mode': mode,
+                'access': access,
+                'guest_dst': guest_dst,
+                'tag': tag,
+            }
+        )
+        return cfg_path
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', fake_record_attachment
+    )
+
+    session = _prepare_attached_session(
+        config_opt=str(cfg_path),
+        vm_opt='',
+        host_src=host_src,
+        guest_dst_opt='',
+        recreate_if_needed=False,
+        ensure_firewall_opt=True,
+        force=False,
+        dry_run=False,
+        yes=True,
+    )
+
+    assert session.cfg.vm.name == 'restore-shared-root-vm'
+    assert len(primary_ready_calls) == 1
+    assert len(shared_root_host_binds) == 1
+    assert len(shared_root_vm_mappings) == 1
+    assert len(shared_root_guest_binds) == 1
+    assert len(recorded) == 2
+    assert recorded[1]['mode'] == ATTACHMENT_MODE_SHARED_ROOT
+    assert recorded[1]['guest_dst'] == '/workspace/docs'

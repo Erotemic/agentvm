@@ -73,6 +73,7 @@ def ensure_network(
                 check=False,
                 capture=True,
                 sudo=True,
+                sudo_action='read',
             ).code
             == 0
         )
@@ -90,12 +91,14 @@ def ensure_network(
             run_cmd(
                 ['virsh', 'net-destroy', name],
                 sudo=True,
+                sudo_action='modify',
                 check=False,
                 capture=True,
             )
             run_cmd(
                 ['virsh', 'net-undefine', name],
                 sudo=True,
+                sudo_action='modify',
                 check=False,
                 capture=True,
             )
@@ -131,10 +134,18 @@ def ensure_network(
 def network_status(cfg: AgentVMConfig) -> str:
     name = cfg.network.name
     info = run_cmd(
-        ['virsh', 'net-info', name], sudo=True, check=False, capture=True
+        ['virsh', 'net-info', name],
+        sudo=True,
+        sudo_action='read',
+        check=False,
+        capture=True,
     )
     dump = run_cmd(
-        ['virsh', 'net-dumpxml', name], sudo=True, check=False, capture=True
+        ['virsh', 'net-dumpxml', name],
+        sudo=True,
+        sudo_action='read',
+        check=False,
+        capture=True,
     )
     return info.stdout + '\n' + dump.stdout
 
@@ -147,9 +158,17 @@ def destroy_network(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         )
         return
     run_cmd(
-        ['virsh', 'net-destroy', name], sudo=True, check=False, capture=True
+        ['virsh', 'net-destroy', name],
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
     )
     run_cmd(
-        ['virsh', 'net-undefine', name], sudo=True, check=False, capture=True
+        ['virsh', 'net-undefine', name],
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
     )
     log.info('Network removed: {}', name)

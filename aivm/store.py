@@ -35,6 +35,7 @@ class AttachmentEntry:
     host_path: str
     vm_name: str
     mode: str = 'shared'
+    access: str = 'rw'
     guest_dst: str = ''
     tag: str = ''
 
@@ -174,6 +175,7 @@ def load_store(path: Path | None = None) -> Store:
                 host_path=_norm_dir(host_path),
                 vm_name=vm_name,
                 mode=str(item.get('mode', 'shared') or 'shared'),
+                access=str(item.get('access', 'rw') or 'rw'),
                 guest_dst=str(item.get('guest_dst', '')).strip(),
                 tag=str(item.get('tag', '')).strip(),
             )
@@ -190,6 +192,11 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
     lines.append('')
     lines.append('[behavior]')
     _emit_toml_kv(lines, 'yes_sudo', bool(reg.behavior.yes_sudo))
+    _emit_toml_kv(
+        lines,
+        'auto_approve_readonly_sudo',
+        bool(reg.behavior.auto_approve_readonly_sudo),
+    )
     _emit_toml_kv(lines, 'verbose', int(reg.behavior.verbose))
     lines.append('')
 
@@ -254,6 +261,7 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
         lines.append(f'host_path = "{_toml_escape(att.host_path)}"')
         lines.append(f'vm_name = "{_toml_escape(att.vm_name)}"')
         lines.append(f'mode = "{_toml_escape(att.mode)}"')
+        lines.append(f'access = "{_toml_escape(att.access)}"')
         lines.append(f'guest_dst = "{_toml_escape(att.guest_dst)}"')
         lines.append(f'tag = "{_toml_escape(att.tag)}"')
         lines.append('')
@@ -381,6 +389,7 @@ def upsert_attachment(
     host_path: str | Path,
     vm_name: str,
     mode: str = 'shared',
+    access: str = 'rw',
     guest_dst: str = '',
     tag: str = '',
     force: bool = False,
@@ -396,6 +405,7 @@ def upsert_attachment(
         host_path=norm,
         vm_name=vm_name,
         mode=mode,
+        access=access,
         guest_dst=guest_dst,
         tag=tag,
     )
@@ -406,7 +416,26 @@ def upsert_attachment(
         reg.attachments.append(rec)
 
 
-def find_attachments(reg: Store, host_path: str | Path) -> list[AttachmentEntry]:
+def remove_attachment(
+    reg: Store,
+    *,
+    host_path: str | Path,
+    vm_name: str,
+) -> bool:
+    norm = _norm_dir(host_path)
+    vm_name = str(vm_name).strip()
+    orig_n = len(reg.attachments)
+    reg.attachments = [
+        a
+        for a in reg.attachments
+        if not (a.host_path == norm and a.vm_name == vm_name)
+    ]
+    return len(reg.attachments) != orig_n
+
+
+def find_attachments(
+    reg: Store, host_path: str | Path
+) -> list[AttachmentEntry]:
     norm = _norm_dir(host_path)
     return [att for att in reg.attachments if att.host_path == norm]
 

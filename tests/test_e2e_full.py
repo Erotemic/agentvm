@@ -35,7 +35,13 @@ from test_e2e_nested import (
 )
 
 from aivm.config import AgentVMConfig
-from aivm.store import Store, save_store, upsert_vm
+from aivm.store import (
+    Store,
+    find_attachment_for_vm,
+    load_store,
+    save_store,
+    upsert_vm,
+)
 
 # Re‑use the same helper logic from test_e2e_nested.
 
@@ -208,7 +214,7 @@ def test_e2e_full_cycle(tmp_path: Path) -> None:
             env=env,
         )
 
-        # attach the host folder explicitly (should already be attached by ssh above)
+        # Attach with no explicit mode and verify the new default is shared-root.
         _run_cli(
             [
                 'vm',
@@ -222,6 +228,77 @@ def test_e2e_full_cycle(tmp_path: Path) -> None:
             timeout_s=timeout_s,
             env=env,
         )
+        reg_after_default_attach = load_store(cfg_path)
+        default_att = find_attachment_for_vm(
+            reg_after_default_attach, share_dir, cfg.vm.name
+        )
+        assert default_att is not None
+        assert default_att.mode == 'shared-root'
+
+        # Explicit mode disagreement on existing attachment should error.
+        mismatch_res = _run_cli(
+            [
+                'vm',
+                'attach',
+                str(share_dir),
+                '--mode',
+                'git',
+                '--yes',
+                '--config',
+                str(cfg_path),
+            ],
+            cwd=repo_root,
+            timeout_s=timeout_s,
+            env=env,
+            check=False,
+        )
+        assert mismatch_res.returncode != 0
+        assert 'Attachment mode mismatch' in mismatch_res.stdout
+        print(
+            'Verified expected failure: conflicting attachment mode request '
+            'is rejected with a detach+reattach guidance message.'
+        )
+
+        # Detach then reattach explicitly in shared-root mode.
+        _run_cli(
+            [
+                'vm',
+                'detach',
+                str(share_dir),
+                '--yes',
+                '--config',
+                str(cfg_path),
+            ],
+            cwd=repo_root,
+            timeout_s=timeout_s,
+            env=env,
+        )
+        reg_after_detach = load_store(cfg_path)
+        assert (
+            find_attachment_for_vm(reg_after_detach, share_dir, cfg.vm.name)
+            is None
+        )
+        _run_cli(
+            [
+                'vm',
+                'attach',
+                str(share_dir),
+                '--mode',
+                'shared-root',
+                '--yes',
+                '--config',
+                str(cfg_path),
+            ],
+            cwd=repo_root,
+            timeout_s=timeout_s,
+            env=env,
+        )
+        reg_after_shared_root_attach = load_store(cfg_path)
+        shared_root_att = find_attachment_for_vm(
+            reg_after_shared_root_attach, share_dir, cfg.vm.name
+        )
+        assert shared_root_att is not None
+        assert shared_root_att.mode == 'shared-root'
 
         # sync a tiny settings file to ensure the sync code path runs
         test_sync = tmp_path / 'testrc'

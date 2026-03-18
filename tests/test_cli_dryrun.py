@@ -32,6 +32,7 @@ def test_dryrun_commands_with_yes(tmp_path: Path) -> None:
     commands = [
         ['help', 'plan', '--yes', '--config', str(cfg_path)],
         ['help', 'tree', '--yes', '--config', str(cfg_path)],
+        ['help', 'completion', '--yes', '--config', str(cfg_path)],
         [
             'host',
             'net',
@@ -93,6 +94,10 @@ def test_help_tree_includes_one_line_descriptions(
     assert 'aivm help tree - Print the expanded aivm command tree.' in out
     assert (
         'aivm help raw - Print direct system-tool commands equivalent to common aivm checks.'
+        in out
+    )
+    assert (
+        'aivm help completion - Show shell-completion setup for aivm (argcomplete/scriptconfig).'
         in out
     )
     assert (

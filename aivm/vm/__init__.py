@@ -23,6 +23,7 @@ from .lifecycle import (
 )
 from .share import (
     attach_vm_share,
+    detach_vm_share,
     ensure_share_mounted,
     vm_has_share,
     vm_has_virtiofs_shared_memory,
@@ -40,6 +41,7 @@ __all__ = [
     '_write_cloud_init',
     'attach_vm_share',
     'create_or_start_vm',
+    'detach_vm_share',
     'destroy_vm',
     'ensure_share_mounted',
     'fetch_image',

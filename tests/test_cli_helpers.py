@@ -10,7 +10,7 @@ import pytest
 
 import aivm.cli._common as common_mod
 from aivm.cli._common import _confirm_external_file_update, _confirm_sudo_block
-from aivm.cli.help import HelpRawCLI, PlanCLI
+from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
 from aivm.cli.vm import (
     _auto_share_tag_for_path,
     _parse_sync_paths_arg,
@@ -125,6 +125,8 @@ def test_confirm_sudo_block_arms_intent(monkeypatch) -> None:
         {
             'yes': True,
             'purpose': 'test',
+            'action': 'modify',
+            'sticky': False,
         }
     ]
 
@@ -154,7 +156,14 @@ def test_confirm_sudo_block_uses_effective_yes_sudo_context(
         _confirm_sudo_block(yes=False, purpose='test')
     finally:
         common_mod._CURRENT_YES_SUDO.reset(token)
-    assert calls == [{'yes': True, 'purpose': 'test'}]
+    assert calls == [
+        {
+            'yes': True,
+            'purpose': 'test',
+            'action': 'modify',
+            'sticky': False,
+        }
+    ]
 
 
 def test_confirm_sudo_block_honors_sticky_all_choice(monkeypatch) -> None:
@@ -166,7 +175,79 @@ def test_confirm_sudo_block_honors_sticky_all_choice(monkeypatch) -> None:
     )
     monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: True)
     _confirm_sudo_block(yes=False, purpose='test')
-    assert calls == [{'yes': True, 'purpose': 'test'}]
+    assert calls == [
+        {
+            'yes': True,
+            'purpose': 'test',
+            'action': 'modify',
+            'sticky': True,
+        }
+    ]
+
+
+def test_confirm_sudo_block_read_preserves_sticky_all_choice(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
+    calls = []
+    monkeypatch.setattr(
+        'aivm.cli._common.arm_sudo_intent',
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: True)
+    _confirm_sudo_block(yes=False, purpose='read check', action='read')
+    assert calls == [
+        {
+            'yes': True,
+            'purpose': 'read check',
+            'action': 'read',
+            'sticky': True,
+        }
+    ]
+
+
+def test_confirm_sudo_block_read_auto_approved_by_default(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: False)
+    calls = []
+    monkeypatch.setattr(
+        'aivm.cli._common.arm_sudo_intent',
+        lambda **kwargs: calls.append(kwargs),
+    )
+    _confirm_sudo_block(yes=False, purpose='read check', action='read')
+    assert calls == [
+        {
+            'yes': True,
+            'purpose': 'read check',
+            'action': 'read',
+            'sticky': False,
+        }
+    ]
+
+
+def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: False)
+    calls = []
+    monkeypatch.setattr(
+        'aivm.cli._common.arm_sudo_intent',
+        lambda **kwargs: calls.append(kwargs),
+    )
+    tok_yes = common_mod._CURRENT_YES_SUDO.set(False)
+    tok = common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.set(False)
+    try:
+        _confirm_sudo_block(yes=False, purpose='read check', action='read')
+    finally:
+        common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.reset(tok)
+        common_mod._CURRENT_YES_SUDO.reset(tok_yes)
+    assert calls == [
+        {
+            'yes': False,
+            'purpose': 'read check',
+            'action': 'read',
+            'sticky': False,
+        }
+    ]
 
 
 def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
@@ -181,6 +262,22 @@ def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
         data={'config': str(cfg_path), 'yes': False, 'yes_sudo': False},
     )
     assert bool(parsed.yes_sudo) is True
+
+
+def test_cli_auto_approve_readonly_sudo_defaults_from_config(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg_path = tmp_path / 'config.toml'
+    store = Store()
+    store.defaults = AgentVMConfig()
+    store.behavior.auto_approve_readonly_sudo = False
+    save_store(store, cfg_path)
+    monkeypatch.setattr('aivm.cli.help._cfg_path', lambda p: cfg_path)
+    PlanCLI.cli(
+        argv=False,
+        data={'config': str(cfg_path), 'yes': False, 'yes_sudo': False},
+    )
+    assert common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.get(True) is False
 
 
 def test_cli_verbose_defaults_from_behavior_config(tmp_path: Path) -> None:
@@ -219,6 +316,22 @@ def test_help_raw_outputs_direct_system_commands(
     assert 'sudo virsh dominfo vm-raw' in clean
     assert 'sudo virsh net-info net-raw' in clean
     assert 'sudo nft list table inet fw-raw' in clean
+
+
+def test_help_completion_outputs_bash_setup(capsys) -> None:
+    rc = HelpCompletionCLI.main(argv=False, shell='bash', yes=True)
+    assert rc == 0
+    out = capsys.readouterr().out
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', out)
+    assert 'aivm help completion' in clean
+    assert 'python -m pip install argcomplete' in clean
+    assert 'register-python-argcomplete aivm' in clean
+    assert 'activate-global-python-argcomplete' in clean
+
+
+def test_help_completion_rejects_unknown_shell() -> None:
+    with pytest.raises(RuntimeError, match='--shell must be one of'):
+        HelpCompletionCLI.main(argv=False, shell='tcsh', yes=True)
 
 
 def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(

@@ -1391,3 +1391,449 @@ Uncertainties/risks: secondary attachment restoration now depends on the saved r
 Tradeoffs and what might break: I chose best-effort behavior for secondary attachments. That means `aivm code` / `aivm ssh` can succeed even if one of several saved folders no longer exists on the host or cannot be reattached cleanly. The tradeoff is that a user could miss a secondary restore failure unless they notice the warning logs. I think that is the better default because failing the main coding session over an old side attachment would be too brittle.
 
 What I am confident about: the new path is covered by targeted tests, the primary attachment flow remains unchanged for single-folder sessions, and a VM recreate/start path will now repopulate saved secondary attachments instead of silently leaving them behind after boot.
+## 2026-03-11 01:35:02 +0000
+
+Worked on the `0.3.0` cut while adding a second attachment mode for folder-oriented workflows. The core change is that attachments are no longer treated as synonymous with virtiofs shares: `shared` remains the default, but `git` now records an attachment that seeds a guest-local clone, skips virtiofs reconciliation, and registers a pull-only Git remote in the host repo that targets the guest clone over the managed SSH alias. I kept the implementation inside the existing `attach` / `code` / `ssh` orchestration instead of adding a separate command family because the user intent is still “work in this folder with this VM”; only the transport changes.
+
+Reflection/state of mind: this feature looked straightforward at the concept level, but the real engineering pressure was in not letting “attach” mean one hidden mechanism forever. The right move was to make mode explicit in the resolved attachment model and let session prep branch on that, otherwise every future isolation mode would keep fighting shared-folder assumptions baked into the main workflow. I also wanted to keep the host-side Git remote stable across VM IP churn, which is why I bound it to the existing SSH config alias rather than writing a transient raw-IP remote URL.
+
+Uncertainties/risks: Git mode currently seeds committed repository state only. If the host worktree is dirty, the guest clone will not include those uncommitted changes, and if the requested host path only exists in uncommitted state the guest path will be missing and the flow now errors clearly. There is also an implicit assumption that the operator is attaching a Git worktree (or a subdirectory inside one); non-Git directories still need `shared` mode.
+
+Tradeoffs and what might break: I chose host-driven seeding via a temporary mirrored repo copied over SSH/SCP instead of trying to make the guest clone directly from the host filesystem. That keeps the host repo unshared and works for ordinary repos, but it adds more moving pieces than virtiofs and depends on Git plus SSH/SCP behavior being available on the host side. I also left saved-attachment restoration focused on shared attachments because those are the ones that disappear across reboot; Git attachments persist on guest disk and only need remote refresh when they are actively used again.
+
+What I am confident about: the mode split is covered by targeted tests, version metadata and docs were updated alongside the code, and the host-side remote registration is stable and idempotent for normal Git repos. The main residual rough edge is product policy around dirty worktrees, which is now surfaced clearly but not yet given a richer sync story.
+## 2026-03-11 01:45:05 +0000
+
+Tightened the Git-attachment documentation after noticing an ambiguity in my own wording. The code adds a host-side remote pointed at the guest clone's `.git` directory, which is enough for the host to fetch guest commits, but that should not be described as a general bidirectional push/pull channel. Pushing from the host into a checked-out non-bare guest repo is not configured as a supported update path here, and even when Git permits it under some settings it would still leave working-tree update semantics underspecified.
+
+Reflection/state of mind: this is the kind of correction that matters because the implementation is easy to mentally round up into “Git sync in both directions” when it is really “guest-local clone plus host fetch access.” I wanted the docs to say exactly what the code guarantees, not what a future extension might enable.
+
+Uncertainties/risks: operators may still try a manual `git push` to the generated remote out of habit. Depending on the guest repo state and Git defaults, that may fail fast or partially succeed in ways that do not match expectations. The docs now discourage that path explicitly, but the CLI itself does not yet enforce it.
+
+Tradeoffs and what might break: being precise here makes the current feature look narrower, but that is preferable to advertising a push path that is not managed end-to-end. If we later decide to support host-to-guest push, we will need to choose an intentional design for checked-out-branch updates rather than inheriting Git's defaults accidentally.
+
+What I am confident about: the documented contract now matches the implemented behavior more closely: seed committed host state into a guest-local clone, let the guest commit locally, and let the host fetch those guest commits through the registered remote.
+## 2026-03-11 02:01:05 +0000
+
+Reworked the Git attachment transport to match the user's intended two-working-copies model more closely. Instead of copying a temporary mirrored seed repo into the guest and cloning from it, the Git-mode path now prepares a normal repo directly at the guest destination, configures `receive.denyCurrentBranch=updateInstead`, registers a host-side remote pointing at that working repo, and pushes the current host branch into the guest repo. This keeps the UX centered on direct host<->guest sync while still limiting transfer to committed Git state.
+
+Reflection/state of mind: this is a better fit for the actual product story. The temporary mirror was defensible as a conservative first pass, but it was making the workflow feel more like one-way seeding than two endpoints a developer intentionally syncs between. Once the comparison to `git_well.git_sync` was explicit, the cleaner abstraction was obvious: make the guest repo itself the endpoint and let Git's checked-out-branch update behavior be an intentional policy rather than an avoided edge case.
+
+Uncertainties/risks: `updateInstead` still requires the guest working tree to be clean enough for Git to update it. If the VM side has incompatible local modifications, the host push will fail and the user will need to resolve or discard those changes. Detached HEAD on the host side is also rejected for now because there is no stable branch name to sync against.
+
+Tradeoffs and what might break: direct push is simpler and aligns with the requested UX, but it is also less conservative than the mirror seed flow because the guest working copy is now a live receive endpoint. That is acceptable for the stated single-developer workflow, but it means Git-mode errors are now more about branch/worktree state than about seed creation. The docs were updated accordingly so the contract is explicit.
+
+What I am confident about: the code path now matches the intended model much better, the host remote points at the guest working repo rather than a staging artifact, and the sync policy is anchored in a specific Git mechanism (`receive.denyCurrentBranch=updateInstead`) instead of ad hoc repo copying.
+## 2026-03-12 19:13:45 +0000
+
+Worked on hardening attachment-mode semantics to avoid silent trust-boundary flips. I changed the shared/git mode resolution path in `aivm/cli/vm.py` so an existing `(host folder, VM)` attachment now rejects an explicit conflicting `--mode` with a clear error instead of mutating the saved record. To support the intended explicit workflow, I added `aivm vm detach` and top-level `aivm detach` commands, wired command-tree registration in `aivm/cli/main.py`, and implemented detach behavior as: remove the saved attachment record, and for `shared` mode best-effort detach the virtiofs mapping from libvirt using a new helper (`detach_vm_share`) in `aivm/vm/share.py`.
+
+Reflection/state of mind: this felt like an important safety-contract correction rather than a feature expansion. Silent in-place mode rewrites made it too easy to change from isolated git-backed workflow to direct host sharing (or vice versa) by accident. For attachment mode, explicit user intent should be reversible and auditable in command history, so forcing detach+reattach is the right bar.
+
+Uncertainties/risks: detach currently prioritizes deterministic state-store cleanup and best-effort libvirt mapping cleanup for shared attachments. If the VM is running and the guest still has an old mountpoint active, the CLI cannot fully guarantee guest-side unmount without additional in-guest ops, so it now prints guidance. Another risk is user migration friction: scripts that previously used `--mode` to flip an existing attachment now need a two-step command sequence.
+
+Tradeoffs and what might break: I chose strict rejection of mode mismatch at attachment resolution time, which is safer but intentionally breaks permissive behavior. I also introduced a new detach command surface instead of expecting manual config edits, which increases CLI surface area slightly but keeps the workflow explicit and discoverable.
+
+What I am confident about: targeted regression tests cover mode-mismatch rejection, store-level removal semantics, and detach command behavior for shared/git attachments; full suite is green (`131 passed, 3 skipped`). README and workflows docs now spell out the exact default-mode behavior and the mandatory detach+reattach process for mode changes.
+## 2026-03-12 19:40:34 +0000
+
+Implemented a sudo-confirmation policy split between read-only and state-changing operations. The core wiring changes are in `aivm/cli/_common.py` and `aivm/util.py`: `_confirm_sudo_block` now accepts an action (`read` or `modify`), read-only sudo confirmations auto-approve by default, and sticky “all” approval remains explicit (user enters `a`) instead of being accidentally inferred from read-only auto-allow behavior. I added a config behavior flag `prompt_sudo_readonly` (default `false`) to support the strict mode you requested (`true` restores prompt-on-every-readonly-sudo behavior). Then I updated callsites to mark query/inspect/status probes as `action='read'` while leaving mutating operations on the existing confirmation path.
+
+Reflection/state of mind: this was a policy-boundary cleanup that required careful separation of intent propagation from prompt behavior. The subtle bug to avoid was letting one auto-approved read probe implicitly approve later mutating sudo actions; the intent model now distinguishes sticky user approval from non-sticky auto-read approval.
+
+Uncertainties/risks: action classification is callsite-driven, so future contributors can misclassify new sudo operations if they do not follow the same discipline. The current implementation catches invalid action values, but cannot infer read/write semantics from arbitrary shell commands.
+
+Tradeoffs and what might break: default UX is smoother (fewer prompts for status/probes) but less visibly explicit in interactive sessions. Strict environments can flip `behavior.prompt_sudo_readonly=true` to retain previous prompting behavior. I also had to add explicit modify confirmations in a couple of paths that previously used one coarse “inspect + maybe change” prompt.
+
+What I am confident about: behavior is covered by updated tests across helper/util/store/vm update paths, config lint supports the new behavior key, and full suite passes (`134 passed, 3 skipped`). README sudo-behavior docs now describe the default and strict policy toggle.
+## 2026-03-12 20:08:17 +0000
+
+Renamed the sudo read-probe policy key from `prompt_sudo_readonly` to `auto_approve_readonly_sudo` to make intent explicit and positive (true means auto-approve read-only sudo probes). I updated config dataclass/store serialization/docs/tests and switched CLI context variable names accordingly. I also kept backward compatibility in store loading by mapping legacy `prompt_sudo_readonly` into the new key with inverted semantics so existing configs preserve behavior after upgrade.
+
+Reflection/state of mind: this naming cleanup materially improves readability and reduces polarity confusion in both docs and implementation. The old name forced mental inversion at callsites (`not prompt` means auto-approve); the new name aligns naturally with the default policy.
+
+Uncertainties/risks: mixed environments may temporarily carry both keys in manually edited configs. Current load behavior prefers direct assignment when the new key is present and still maps old key when encountered, but config hygiene still depends on users eventually normalizing files.
+
+Tradeoffs and what might break: for compatibility, lint now accepts both behavior keys, which avoids noisy failures on legacy stores but may allow stale key usage to persist longer.
+
+What I am confident about: full suite is green (`135 passed, 3 skipped`), strict-mode semantics are preserved (`auto_approve_readonly_sudo=false`), and README now documents the new key name and default.
+## 2026-03-12 20:09:17 +0000
+
+Follow-up cleanup per user direction: removed backward compatibility for the renamed sudo policy key. The code now only recognizes `behavior.auto_approve_readonly_sudo`; legacy `prompt_sudo_readonly` handling was deleted from store load path and lint whitelist. I also removed the now-obsolete legacy-key test and re-ran the full suite.
+
+Reflection/state of mind: this is the right move for current development phase because the compatibility branch was adding complexity without strong migration value yet. Keeping one canonical key reduces ambiguity and keeps docs/code/tests aligned.
+
+Uncertainties/risks: old local config files using the legacy key will now silently fall back to default behavior (`auto_approve_readonly_sudo=true`) unless users update their config. That is acceptable given explicit non-compat direction, but worth watching in local dev environments.
+
+Tradeoffs and what might break: strict-read-prompt users who had already written `prompt_sudo_readonly=true` need to rename it to `auto_approve_readonly_sudo=false`.
+
+What I am confident about: test coverage and full suite remain green (`134 passed, 3 skipped`) after removing compatibility paths.
+## 2026-03-12 20:12:28 +0000
+
+Debugged and fixed a real `aivm code --mode git .` failure where guest repo initialization attempted to create host-mirrored absolute paths (for example `/home/joncrall/...`) inside the VM and failed with permission denied for the VM user. Root cause was default guest destination derivation being shared-mode-centric (`guest_dst = host_src`) even in git mode. I updated attachment resolution so git mode defaults to a VM-user-writable path under `/home/<vm-user>/...`, and added auto-migration for legacy git attachments that had saved the old host-mirror guest path (`guest_dst == host_src`) when no explicit `--guest_dst` is provided.
+
+Reflection/state of mind: this was a good product-contract correction because git mode should not rely on guest root path creation to function. The failure trace made it clear the issue was deterministic default-path policy, not flaky SSH/Git behavior.
+
+Uncertainties/risks: path migration heuristic intentionally targets the narrow legacy case (`saved guest_dst equals host source path`). It should be low risk, but if someone intentionally set that exact path and made it writable in guest, the new logic may remap unless they set explicit `--guest_dst`/saved path differently.
+
+Tradeoffs and what might break: git mode default guest path no longer exactly mirrors host absolute path. This is safer and more portable across differing host/guest usernames, but it is a behavioral change users may notice when they relied on exact path identity.
+
+What I am confident about: added tests for new git default destination and legacy migration path, docs now clarify shared-vs-git default path behavior, and full suite is green (`136 passed, 3 skipped`).
+## 2026-03-12 20:30:32 +0000
+
+Applied a focused UX/logging tweak for sudo transparency: when a sudo intent is read-only, the user-visible planning log now explicitly says "read-only" instead of a generic "privileged command(s)" label. State-changing intents are labeled as such. This change is localized to `aivm/util.py::_ensure_sudo_ready` and does not alter execution policy; it only improves clarity in logs shown before sudo execution/prompt.
+
+Reflection/state of mind: this is a small change but materially improves trust and debuggability because users can now distinguish probe-style elevation from mutating elevation at a glance in the same place they approve commands.
+
+Uncertainties/risks: none functionally expected; this is message text only. The only possible impact is downstream tests/tools that grep exact prior log phrases.
+
+Tradeoffs and what might break: wording changed from generic to mode-specific. If external scripts parse these exact log lines, they may need updates.
+
+What I am confident about: targeted helper/util tests and full suite remain green (`136 passed, 3 skipped`).
+## 2026-03-12 20:35:37 +0000
+
+Fixed a real signature mismatch in saved-attachment restore flow: `_restore_saved_vm_attachments()` called `_record_attachment(...)` without required keyword-only `mode`, which surfaced at runtime as a warning and skipped persistence for restored attachments. Added `mode=aligned.mode` at the callsite and strengthened the existing restore test to monkeypatch `_record_attachment` with a strict keyword-only signature and assert mode is recorded for the secondary restored folder.
+
+Reflection/state of mind: this is exactly the kind of bug that can hide under broad exception handling and only show up as operational warning noise. Tightening the test seam to enforce function signature use is the right defense.
+
+Uncertainties/risks: low risk; change is localized and aligns call arguments with declared signature. Existing behavior should only improve (restored attachments now persist correctly instead of warning).
+
+Tradeoffs and what might break: none expected beyond exposing similar latent issues if other tests adopt stricter monkeypatch signatures.
+
+What I am confident about: targeted tests and full suite are green (`136 passed, 3 skipped`). I also checked local static type-check command availability; `ty` is not installed in this environment, so no type-check pass ran here.
+## 2026-03-12 20:40:52 +0000
+
+Completed the remaining `ty check aivm` cleanup after enabling local `ty`. Fixed two categories: (1) function signature alignment where `_restore_saved_vm_attachments` accepted `None` callsite for `primary_attachment` by updating annotation to `ResolvedAttachment | None`, and (2) dict key lookup typing issues in config lint by adding explicit `cast(dict[str, object], item)` after runtime `isinstance(item, dict)` guards in the `networks` and `vms` loops.
+
+Reflection/state of mind: this is a good reminder that dynamic-style data validation code benefits from small explicit casts so static checkers can follow control flow. The runtime behavior was already correct; the typing intent just needed to be made explicit.
+
+Uncertainties/risks: low; changes are type-surface only and preserve runtime logic.
+
+Tradeoffs and what might break: introducing `typing.cast` adds minor verbosity but improves static confidence and future refactor safety.
+
+What I am confident about: `ty check aivm` now reports `All checks passed!`, and full tests remain green (`136 passed, 3 skipped`).
+## 2026-03-12 21:14:26 +0000
+
+Documented virtiofs device-slot exhaustion as a major current limitation and added a dedicated future-design note for scalable host/guest folder sharing alternatives. I added explicit user-facing language in README and workflows docs that shared-mode folder count is constrained by VM device topology (PCI/PCIe slots), including concrete failure phrasing (`No more available PCI slots`) and current operational mitigations (use git mode, detach unused shares, split across VMs). I also updated the design contract to capture this limitation and linked a new future design note under `dev/design/future/flexible-folder-sharing.md` for potential backend directions (sshfs/network-backed/sync-based/multiplexed workspace).
+
+Reflection/state of mind: this is the right place to make the limitation explicit now rather than treating it as an incidental runtime error. Users need an upfront model of why folder attach scaling fails, and maintainers need a stable design placeholder for alternative approaches.
+
+Uncertainties/risks: the future design note is intentionally exploratory and not a committed roadmap; if we pick one backend direction later, some candidate options may be dropped.
+
+Tradeoffs and what might break: none runtime; docs-only change. The only tradeoff is acknowledging a hard limitation more prominently, which can feel heavier but improves expectation setting.
+
+What I am confident about: the limitation is now documented in both user workflow docs and design-level contract notes, and future work has a concrete file/location to accumulate backend design ideas.
+## 2026-03-12 21:48:08 +0000
+
+Added a VM status line for virtiofs slot pressure visibility. `render_status(...)` now reports `VM virtiofs slots` alongside existing `VM shared folders`, with current usage count and an explicit `available unknown (VM PCI/PCIe topology dependent)` qualifier. This gives operators immediate signal about share-device growth without implying a fake precise capacity number.
+
+Reflection/state of mind: this is a pragmatic transparency improvement. Exact remaining capacity is topology-dependent and non-trivial to compute robustly from generic libvirt XML, so reporting used-count plus clear uncertainty is better than either silence or brittle pseudo-precision.
+
+Uncertainties/risks: users may still ask for exact remaining capacity; we should treat that as future enhancement requiring deeper domain-XML/controller occupancy modeling.
+
+Tradeoffs and what might break: one extra status line in normal output; low risk. Any tests depending on exact status text ordering may need updates.
+
+What I am confident about: added regression coverage for the new status line and full suite remains green (`137 passed, 3 skipped`).
+## 2026-03-12 21:53:26 +0000
+
+Removed the recently added `VM virtiofs slots` status line after product feedback that usage-only without remaining-capacity estimation is not useful enough in default status output. Reverted the corresponding status test additions. Status output now remains focused on existing share mapping presence/count messaging without a separate slots line.
+
+Reflection/state of mind: this is a reasonable UX rollback. Even though the line was technically accurate, it added noise without giving users the actionable "how many left" value they want.
+
+Uncertainties/risks: none runtime; output-only change.
+
+Tradeoffs and what might break: users lose immediate visibility of raw used-count in a dedicated line, but that information is still available via shared-folder status/detail outputs.
+
+What I am confident about: status-focused tests and full suite are green (`136 passed, 3 skipped`).
+## 2026-03-12 22:04:10 +0000
+
+Expanded `dev/design/future/flexible-folder-sharing.md` with a concrete bind-mount-based single-export strategy. The new section describes why host symlinks are insufficient for arbitrary external paths, how a per-VM shared-root plus one persistent virtiofs mapping could work, rough attach/detach steps, and operational/safety concerns (reboot recovery, stale mounts, partial failure cleanup, and sudo-mutation boundaries).
+
+Reflection/state of mind: this is the most actionable follow-up to the virtiofs-slot limitation because it preserves a single virtiofs device while still enabling many host sources. Documenting it concretely now should reduce design drift later.
+
+Uncertainties/risks: guest destination mapping policy (guest symlink vs guest bind mount) remains open and should be decided with permission/safety ergonomics in mind.
+
+Tradeoffs and what might break: none runtime; design-doc only.
+
+What I am confident about: the future-design doc now includes a technically viable path that directly addresses the device-slot bottleneck.
+## 2026-03-12 22:22:52 +0000
+
+Implemented the `shared-root` attachment mode end-to-end and switched default new-attachment mode selection to `shared-root` when `--mode` is omitted. Core changes are in `aivm/cli/vm.py`: completed detach/session support for `shared-root`, added shared-root restore path coverage for saved attachments, introduced `_ensure_attachment_available_in_guest(...)` to localize mode-specific guest activation logic, and tightened `_restore_saved_vm_attachments(...)` so shared-only mapping probes are skipped when irrelevant. I also updated mode/help/docs text in `README.rst` and `docs/source/workflows.rst` to explicitly document mode behavior, including `aivm code --mode git .` semantics and required detach+reattach on mode mismatch.
+
+Reflection/state of mind: I considered a broader attachment-backend abstraction layer, but chose a bounded refactor (single guest-activation helper + targeted branch cleanup) because it reduces duplication in the highest-churn call paths without introducing framework overhead or touching unrelated lifecycle modules. This keeps momentum while still improving extensibility for future backends.
+
+Uncertainties/risks: `shared-root` still relies on host/guest bind-mount operations and therefore inherits mount lifecycle edge cases (stale mounts, missing source paths at restore time, partial cleanup after interrupted operations). Another risk is mixed historical attachment records with missing tags; detach now warns and continues best-effort cleanup rather than failing hard.
+
+Tradeoffs and what might break: default mode behavior for *new* attachments changed from `shared` to `shared-root`, which is intentional but user-visible. Existing attachment mode records are preserved and reused, so behavioral drift should be limited to first-time folder attaches. The small helper abstraction avoids broad churn but leaves some mode branching still explicit in orchestration paths by design.
+
+What I am confident about: added/updated regression coverage in `tests/test_cli_vm_attach.py`, `tests/test_cli_vm_detach.py`, and `tests/test_cli_vm_update.py`; targeted suites pass and full test suite is green (`141 passed, 3 skipped`). Static check also passes (`ty check aivm`: `All checks passed!`).
+## 2026-03-12 23:16:08 +0000
+
+Extended opt-in end-to-end coverage so the newly introduced attachment-mode behavior is exercised in real CLI workflows. In `tests/test_e2e_full.py`, after VM bring-up I now assert that default attach (no mode) persists `shared-root`, verify explicit mode mismatch (`--mode git` on an existing non-git attachment) fails with the expected error text, then run detach + explicit shared-root reattach and assert store state across each step. In `tests/test_e2e_bootstrap_context.py`, I updated the guest-side bootstrap script to run the same operational sequence (`attach` default, mismatched attach expected-fail, `detach`, explicit `attach --mode shared-root`) so nested host-context exercises cover those branches too.
+
+Reflection/state of mind: this is the right place to validate behavior contracts because unit tests already prove internal branching, while e2e now confirms user-facing command sequencing and failure semantics across real subprocess boundaries.
+
+Uncertainties/risks: these tests remain environment-gated (`AIVM_E2E*`) and are skipped by default, so they protect behavior when run in capable environments but do not run in every local fast cycle. Also, mismatch assertion currently checks error substring in merged CLI output, which is robust enough today but still text-dependent.
+
+Tradeoffs and what might break: added a few CLI calls to the full/bootstrap e2e flows, increasing runtime slightly when e2e is enabled. The additional assertions are intentional to catch regressions in mode-default and detach/reattach requirements.
+
+What I am confident about: parse/skip behavior remains clean (`pytest -q tests/test_e2e_full.py tests/test_e2e_bootstrap_context.py tests/test_e2e_nested.py` -> skipped as expected without e2e env), and full suite is still green (`141 passed, 3 skipped`).
+## 2026-03-13 00:29:33 +0000
+
+Focused on stabilizing the new `shared-root` attach flow under real e2e conditions (`run_e2e_tests.sh`). The initial rerun exposed a remaining bind-source comparison bug in `_ensure_shared_root_host_bind(...)`: `findmnt -o SOURCE` can return device-backed bind source strings like `/dev/vda1[/abs/source]`, and our previous normalization only handled `/src[/sub]` forms. I added `_mount_source_compare_candidates(...)` in `aivm/cli/vm.py` to compare all relevant candidates (raw, prefix, bracket suffix), then added a regression test in `tests/test_cli_vm_attach.py` for the `/dev/...[/path]` case.
+
+Reflection/state of mind: this felt like a classic “unit tests were close but not complete” issue. The earlier fix was directionally right, but e2e revealed the real-world `findmnt` shape we missed. I’m satisfied the comparison logic now models the kernel/util-linux output variants we actually see on host systems.
+
+Uncertainties/risks: detach still logs a warning when host-side bind unmount is busy in the e2e flow; behavior is currently best-effort and non-fatal by design, but mount lifecycle cleanup remains an area to watch if we tighten semantics later.
+
+Tradeoffs and what might break: normalization is now more permissive in what it accepts as “same source”, which avoids false remount churn. The risk is low, but if `findmnt` emits an unexpected bracket format that is not a bind path, we could match more broadly than intended; current candidate handling still requires canonical path equality with the resolved source.
+
+What I am confident about: targeted regression tests pass (`pytest -q tests/test_cli_vm_attach.py -k "shared_root_host_bind"` -> `3 passed`), and full end-to-end script is green (`./run_e2e_tests.sh` -> `2 passed`).
+## 2026-03-13 18:37:22 +0000
+
+Adjusted `_upsert_host_git_remote(...)` in `aivm/cli/vm.py` so confirmation purpose text is action-specific: it now says `Register` when adding a missing remote and `Update` when changing an existing remote URL. I also added assertions in `tests/test_cli_vm_attach.py` to verify both paths and the exact purpose wording.
+
+Reflection/state of mind: this was a small but worthwhile UX precision fix. The previous prompt was technically correct but vague at decision time; tightening the action wording makes privileged/external-file confirmation clearer without altering behavior.
+
+Uncertainties/risks: low risk, primarily around test brittleness from exact purpose-string assertions if prompt wording changes again intentionally.
+
+Tradeoffs and what might break: prompts are now more explicit and include previous URL during update; this increases clarity but couples tests to message text. Runtime behavior for git remote management is unchanged.
+
+What I am confident about: local coverage for both register/update flows is in place and the full attach test module passes (`pytest -q tests/test_cli_vm_attach.py` -> `16 passed`).
+## 2026-03-13 18:40:05 +0000
+
+Refactored `run_cmd(...)` logging in `aivm/util.py` to bind `local_log = log.opt(depth=1)` once and reuse it for all log calls within the function, replacing repeated `log.opt(depth=1)` invocations. This is a readability/maintainability cleanup with no behavior change intended.
+
+Reflection/state of mind: this is a small consistency improvement that reduces repeated boilerplate and makes the function easier to scan. I avoided broader logging changes because depth handling is subtle and this adjustment preserves the existing depth option as-is.
+
+Uncertainties/risks: low risk; main risk would be unintended callsite-depth differences, but using the same configured logger object should preserve emitted caller context.
+
+Tradeoffs and what might break: no functional command-execution behavior changed; only logging call sites were rewritten to use a local alias. If downstream tooling depends on exact logger-object internals rather than emitted output, that tooling could be sensitive, but that scenario is unlikely.
+
+What I am confident about: syntax check passes (`python -m py_compile aivm/util.py`), and the refactor is localized to `run_cmd(...)`.
+## 2026-03-13 18:41:36 +0000
+
+Extended the same logging-localization cleanup to `_ensure_sudo_ready(...)` in `aivm/util.py`, introducing `local_log = log.opt(depth=2)` and reusing it for repeated info logs. This follows the same pattern as the prior `run_cmd(...)` update and leaves callsite depth explicit per function.
+
+Reflection/state of mind: this was a straightforward follow-through on consistency. Keeping both utility functions aligned makes the logging style easier to maintain and reduces repeated option-object construction noise.
+
+Uncertainties/risks: very low; primary concern remains preserving callsite depth semantics, which should be unchanged because the same opt depth is used.
+
+Tradeoffs and what might break: no command behavior changes; only internal logging expression style changed. If anyone relied on exact source formatting (unlikely), that would differ, but emitted log meaning should remain the same.
+
+What I am confident about: `aivm/util.py` compiles cleanly (`python -m py_compile aivm/util.py`) and there are now only two `log.opt(depth=...)` sites in-module, both centralized local aliases per function.
+## 2026-03-13 18:54:21 +0000
+
+Adjusted `_git_current_branch(...)` in `aivm/cli/vm.py` to use `run_cmd(..., check=False)` so branch discovery is treated as probe logging (debug-level `RUN:`) instead of imperative logging (info-level). Added explicit non-zero exit handling that raises a focused RuntimeError including repo path and git output. Also added unit tests in `tests/test_cli_vm_attach.py` for successful named-branch detection and failure-path error reporting.
+
+Reflection/state of mind: this aligns command logging with intent: branch lookup is introspection, not a state-changing step. I kept the change narrowly scoped to avoid broader behavioral shifts in other git flows.
+
+Uncertainties/risks: low risk; only message text changed for git command failures in this specific helper. Detached-HEAD semantics remain unchanged.
+
+Tradeoffs and what might break: we lose automatic `CmdError` wrapping from `check=True` in favor of manual RuntimeError shaping, which is intentional for better UX/context. Any tests that expected prior exception wording would need adjustment.
+
+What I am confident about: targeted and module tests pass (`pytest -q tests/test_cli_vm_attach.py -k "git_current_branch or upsert_host_git_remote"` -> `4 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `18 passed`).
+## 2026-03-13 18:56:28 +0000
+
+Updated `_upsert_host_git_remote(...)` in `aivm/cli/vm.py` to better match probe logging semantics and clarify intent. Specifically, I changed the git common-dir lookup (`rev-parse --git-common-dir`) to `check=False` with explicit error handling, so this introspection step logs at debug instead of info and returns a clearer contextual RuntimeError when the repo is invalid. I also added a docstring that explains what “upsert” means in plain language (update if present, register if missing) and what the tuple return value represents.
+
+Reflection/state of mind: this was the right follow-up to the earlier branch-probe adjustment; keeping probe-vs-imperative logging consistent across helper functions makes command logs less noisy and more semantically accurate.
+
+Uncertainties/risks: low risk; the main user-visible change is exception wording for invalid/non-git repo handling in this helper.
+
+Tradeoffs and what might break: replacing implicit `CmdError` from `check=True` with a shaped RuntimeError improves readability and context, but any tests or consumers expecting the prior raw exception text could need updates.
+
+What I am confident about: added regression coverage for invalid repo handling in `tests/test_cli_vm_attach.py`; targeted and full attach tests pass (`pytest -q tests/test_cli_vm_attach.py -k "upsert_host_git_remote or git_current_branch"` -> `5 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `19 passed`).
+## 2026-03-13 19:02:01 +0000
+
+Addressed a noisy/unnecessary store write in the `aivm code ... --mode git` attachment-prep flow. In `_record_attachment(...)` (`aivm/cli/vm.py`), I now snapshot the loaded store, apply network/vm/attachment upserts, and only call `save_store(...)` if the store actually changed. When no changes are detected, it logs a debug "already up to date" message and returns the existing config path without rewriting `config.toml`.
+
+Reflection/state of mind: this is an important ergonomics fix because repeated no-op runs should not look state-changing. The previous unconditional save blurred signal in verbose logs and caused needless disk writes.
+
+Uncertainties/risks: low risk; equality-based no-op detection depends on dataclass value equality, which is appropriate here but should be revisited if mutable/non-deterministic fields are introduced into store records.
+
+Tradeoffs and what might break: one fewer INFO log line (`Writing config store ...`) on no-op runs; workflows relying on file mtime bumps from repeated no-op commands will no longer get them.
+
+What I am confident about: added regression coverage in `tests/test_cli_vm_attach.py` to assert `save_store` is not called when record content is unchanged; targeted and full attach tests pass (`pytest -q tests/test_cli_vm_attach.py -k "record_attachment_skips_save_when_unchanged or upsert_host_git_remote or git_current_branch"` -> `6 passed`; `pytest -q tests/test_cli_vm_attach.py` -> `20 passed`).
+## 2026-03-13 19:14:37 +0000
+
+Implemented attachment access-mode plumbing with a new `--access` flag (`rw`/`ro`) across `aivm code`, `aivm ssh`, and `aivm attach`, and persisted the setting in store attachments (`access` field, default `rw`). The resolver now treats access similarly to mode for existing mappings (saved-value reuse when omitted, mismatch requires detach+reattach when explicitly changed). Per request, `ro` is currently implemented only for `shared` mode; requesting `ro` with `shared-root` or `git` now raises `NotImplementedError`.
+
+On mount behavior, `ensure_share_mounted(...)` now accepts `read_only` and mounts `virtiofs` with `-o ro` when requested, plus remounts existing mountpoints to match desired `ro/rw` state. Shared-mode guest mount calls now pass `read_only` from resolved attachment access. I also updated list output to show attachment access and config-lint allowed keys to include `attachments[].access`.
+
+Reflection/state of mind: this was a good scoped increment. I intentionally avoided broad RO semantics across shared-root and git until there is a clear policy for host bind/export enforcement and guest write semantics.
+
+Uncertainties/risks: `shared` RO currently enforces at guest mount/remount level; if stronger host-side enforcement is desired, further libvirt/device-level constraints may be needed.
+
+Tradeoffs and what might break: store serialization now writes `access = "..."` for attachments, which is backward-compatible on load but changes config file text output and diffs. Existing automation parsing attachment blocks should tolerate the added key.
+
+What I am confident about: focused regression coverage was added for access resolution/mismatch and RO mount command generation; affected suites pass (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py tests/test_vm_helpers.py tests/test_store.py tests/test_cli_config_lint.py` -> `61 passed`), and changed modules compile cleanly.
+## 2026-03-13 19:19:30 +0000
+
+Added a new `aivm help completion` subcommand (`aivm/cli/help.py`) to provide explicit shell-completion setup instructions for argcomplete/scriptconfig users. It supports `--shell {bash,zsh,fish}` (auto-detect defaults) and prints shell-specific commands for one-time activation and persistence, including the `python -m pip install argcomplete` prerequisite and `register-python-argcomplete` usage. I also wired this command into the help modal tree, updated docs references in `README.rst` and `docs/source/workflows.rst`, and added tests for output and invalid-shell validation.
+
+Reflection/state of mind: this is the right UX for this project. Installing shell hooks automatically during `pip install` is brittle and intrusive because package installers cannot safely mutate per-user shell rc files in a predictable way across shells/environments.
+
+Uncertainties/risks: minimal runtime risk; the main variability is user environment differences (missing `register-python-argcomplete`, shell startup nuances), which the help output now calls out directly.
+
+Tradeoffs and what might break: command tree output gained one new line (`aivm help completion ...`), so tests asserting exact help-tree entries needed updating. No VM/runtime behavior changed.
+
+What I am confident about: updated tests pass (`pytest -q tests/test_cli_helpers.py tests/test_cli_dryrun.py` -> `24 passed`) and touched CLI modules compile (`python -m py_compile aivm/cli/help.py aivm/cli/main.py`).
+## 2026-03-13 19:23:30 +0000
+
+Added the requested global argcomplete note to `aivm help completion`. The command output now includes an explicit optional system-wide setup line using `activate-global-python-argcomplete` (resolved from PATH when available), alongside the existing per-shell user-level setup steps.
+
+Reflection/state of mind: this small addition improves discoverability for users who want one-time global completion behavior across Python CLIs without changing default safety assumptions.
+
+Uncertainties/risks: global activation behavior can vary by distro/shell integration; the help text labels it as optional and keeps the local per-shell path as primary guidance.
+
+Tradeoffs and what might break: none functionally; output text is longer and tests that assert help text were updated accordingly.
+
+What I am confident about: targeted help-completion tests pass (`pytest -q tests/test_cli_helpers.py -k "help_completion"` -> `2 passed`).
+## 2026-03-13 19:33:41 +0000
+
+Extended read-only access support to `shared-root` mode (while keeping `git` as not implemented for RO). In `aivm/cli/vm.py`, `_resolve_attachment(...)` now allows `access=ro` for `shared-root` and only raises `NotImplementedError` for `mode=git`. I also updated `_ensure_shared_root_guest_bind(...)` to enforce desired bind mount access inside the guest via `mount -o remount,bind,ro|rw`, including initial bind + remount and reconciliation when already mounted.
+
+Reflection/state of mind: this is a pragmatic increment that aligns with the requested scope and avoids overreaching into full host-side RO export policy changes. It keeps the access-mode contract consistent with current architecture.
+
+Uncertainties/risks: `shared-root` still exposes the shared-root mount path inside guest, so access control is currently enforced at the requested guest destination bind mount rather than a stronger per-export host-side policy.
+
+Tradeoffs and what might break: behavior changed for `--access ro --mode shared-root` from hard failure to success; tests expecting the previous NotImplemented behavior were updated accordingly. `git` RO remains intentionally unsupported.
+
+What I am confident about: added regression coverage in `tests/test_cli_vm_attach.py` for (1) shared-root RO resolution accepted, (2) git RO still not implemented, and (3) shared-root guest bind script includes `remount,bind,ro`; attach and update suites pass (`pytest -q tests/test_cli_vm_attach.py` -> `25 passed`; `pytest -q tests/test_cli_vm_update.py` -> `11 passed`).
+## 2026-03-13 19:36:28 +0000
+
+Follow-up fix for a real user failure in `aivm attach ... --mode shared-root --access ro`: guest-side bind setup failed with `mkdir: ... Transport endpoint is not connected` when a stale/broken mountpoint already existed at the destination. I updated `_ensure_shared_root_guest_bind(...)` to recover from this condition by retrying `mkdir -p` with explicit error capture and, on transport-endpoint errors, performing `umount -l <guest_dst>` before a second `mkdir` attempt.
+
+Reflection/state of mind: this was a good real-world hardening pass. The prior flow assumed destination mkdir would always be safe before remount checks, which is false under disconnected mount edge cases.
+
+Uncertainties/risks: lazy unmount fallback is intentionally scoped to the known transport-endpoint error string; different localized/system-specific error text variants may still bypass the recovery path.
+
+Tradeoffs and what might break: the guest-side shell script is more complex and now conditionally uses `grep`/`printf` in the remote command path. This improves robustness but adds parsing/command dependencies that were not previously exercised in this branch.
+
+What I am confident about: regression tests remain green for attach/update suites (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `36 passed`), and updated modules compile.
+## 2026-03-13 19:42:00 +0000
+
+Addressed a second real-world shared-root attach failure: host-side bind reconciliation could fail with `umount: target is busy` in `_ensure_shared_root_host_bind(...)` when replacing an existing mountpoint. I changed this path to attempt normal `umount` first (non-fatal probe), then fall back to `umount -l` for known transient/busy cases (`target is busy` and `transport endpoint is not connected`) before rebinding the desired source.
+
+Reflection/state of mind: this complements the earlier guest-side stale-endpoint fix; both host and guest paths now handle common mount lifecycle hazards that show up in iterative attach workflows.
+
+Uncertainties/risks: lazy unmount can defer actual cleanup until references drain, so if another process continuously pins the old mount, behavior may still require manual operator intervention.
+
+Tradeoffs and what might break: recovery path is more permissive for busy mounts, prioritizing forward progress for attach operations over strict immediate unmount guarantees.
+
+What I am confident about: added regression coverage (`test_shared_root_host_bind_lazy_unmounts_busy_target`) and attach/update suites remain green (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `37 passed`), with compile checks passing.
+## 2026-03-13 21:07:47 +0000
+
+Investigated a user report that `aivm attach .` in `shared-root` mode appeared to skip guest-side reconciliation when the VM was already running. I traced the attach flow in `VMAttachCLI.main(...)` and confirmed `_ensure_attachment_available_in_guest(...)` is invoked under `if vm_running:`; there is already regression coverage (`test_vm_attach_shared_root_running_ensures_guest_ready`) that asserts this call path. The ambiguity came from default-verbosity output: the reconciliation path had no info-level marker unless retries/errors occurred.
+
+I added explicit `INFO` logs in two places in `aivm/cli/vm.py`: (1) right before the running-VM guest reconcile call in `VMAttachCLI.main(...)`, and (2) at entry to `_ensure_shared_root_guest_bind(...)` including token/destination/access. This makes the runtime behavior observable in normal logs and reduces false negatives when users diagnose attach behavior.
+
+Reflection/state of mind: this felt like a visibility/operability issue rather than a missing branch. The code path was present, but the absence of positive confirmation made it easy to infer it was skipped. I prioritized instrumentation over structural churn because the control flow already had targeted tests and recent hardening.
+
+Uncertainties/risks: low code risk, but info logs are now a bit more chatty for successful attaches on running VMs. If users find this noisy, we may revisit log level or wording.
+
+Tradeoffs and what might break: no behavior change in mount mechanics, only observability change. Any tests asserting exact CLI/log text could need updates if they start checking this path in the future.
+
+What I am confident about: attach/update regression suites pass after the edit (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `37 passed`).
+## 2026-03-13 21:27:23 +0000
+
+Investigated a live failure after adding shared-root verification: `findmnt -o SOURCE --target <guest_dst>` returned `none`, causing false-negative verification (`expected /mnt/aivm-shared/<token>, actual none`) even though this can be a valid representation for bind mounts on some stacks (notably when binding from virtiofs/fuse-backed paths). I updated `_ensure_shared_root_guest_bind(...)` to pair SOURCE with ROOT checks.
+
+Implementation details: the guest-side script now captures both SOURCE and ROOT for current/final mount state. A mount is accepted when either SOURCE exactly matches the expected source path, or SOURCE is `none` and ROOT matches the expected token root (`/<token>`). This logic is applied both before deciding whether to unmount an existing mount and during final verification. Verification error output now includes expected/actual ROOT for easier diagnosis.
+
+Reflection/state of mind: this was a useful correction to over-strict validation. The previous check prevented silent mismatch, but it assumed SOURCE formatting was stable across filesystems and mount helpers. The new check keeps correctness while acknowledging real kernel/userspace variability.
+
+Uncertainties/risks: ROOT formatting across environments may still vary in edge cases; if an environment reports an unexpected ROOT form, we may need a small normalization helper.
+
+Tradeoffs and what might break: verification is slightly more complex and now depends on `findmnt -o ROOT`, but this should be broadly available where existing `findmnt` usage already works.
+
+What I am confident about: targeted suites remain green (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `37 passed`), and I added an assertion to keep ROOT-check logic present in the generated guest script.
+## 2026-03-14 18:43:51 +0000
+
+Handled another shared-root guest verification edge case from real logs: `findmnt -o SOURCE` returned `none` and `findmnt -o ROOT` returned empty for the destination after bind, which made the previous check still fail despite an apparently valid path state. I updated `_ensure_shared_root_guest_bind(...)` to fall back to device+inode equivalence checks (`stat -Lc %d:%i`) when findmnt metadata is ambiguous.
+
+Behavioral change: both the pre-existing-mount reconciliation branch and final verification branch now accept the mount as correct if either SOURCE matches expected directly, SOURCE=none with expected ROOT, or SOURCE=none with matching source/destination stat signature. On failure, diagnostics now optionally print expected/actual stat signatures to make guest-level investigation easier.
+
+Reflection/state of mind: this was a pragmatic reliability fix under heterogeneous util-linux behavior. The intent remains strict correctness, but verification now uses multiple independent signals instead of a single metadata field that is not stable across systems.
+
+Uncertainties/risks: stat-based equivalence assumes destination mountpoint root inode should match source root inode for the bind case, which is true for normal bind mounts but could be surprising in unusual filesystem/proxy scenarios.
+
+Tradeoffs and what might break: remote script complexity increased again; however this is localized and test-covered. There is modest extra command overhead (`stat`) only in ambiguous SOURCE=none paths.
+
+What I am confident about: attach/update tests and compile checks pass after the change (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `37 passed`; `python -m py_compile aivm/cli/vm.py tests/test_cli_vm_attach.py` succeeds).
+## 2026-03-14 18:49:06 +0000
+
+Fixed a sudo-confirmation regression where choosing `[a]ll` only suppressed the next confirmation block, then prompts returned later in the same command. Root cause was in `_confirm_sudo_block(...)`: it always re-armed sudo intent with `sticky=False`, which erased prior sticky-all state whenever a new block armed intent.
+
+I changed `_confirm_sudo_block(...)` to snapshot current sticky state via `sudo_intent_auto_yes()` and preserve it when re-arming (`sticky=sticky_all`). Effective-yes computation still honors explicit `--yes`, `--yes-sudo`, sticky-all, and read-only auto-approve policy; the key change is that sticky-all now survives across multiple confirm blocks during one CLI run.
+
+Tests: updated existing sticky expectation and added a regression test for read-action blocks preserving sticky-all in `tests/test_cli_helpers.py`. Ran `pytest -q tests/test_cli_helpers.py tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` (`60 passed`) and compile check for touched files.
+
+Reflection/state of mind: this was a straightforward state-lifetime bug that matched user telemetry perfectly. The fix is intentionally minimal and localized to avoid changing confirmation semantics beyond preserving what the user explicitly asked for with `[a]ll`.
+
+Uncertainties/risks: low. Behavior when users never choose `[a]ll` is unchanged; behavior with `[a]ll` is now consistent across the full command execution.
+## 2026-03-16 14:48:09 +0000
+
+Addressed an e2e instability where shared-root attach reconciliation could appear to hang (20s+ silent stretches) and trigger outer harness timeouts. The logs showed long gaps around guest SSH mount commands after VM readiness checks. I hardened guest-side mount calls in both `ensure_share_mounted(...)` and `_ensure_shared_root_guest_bind(...)`.
+
+Changes made:
+- Switched guest-side privileged commands in these remote scripts from `sudo` to `sudo -n` so they fail fast instead of blocking on password prompts.
+- Added SSH non-interactive/connect controls (`batch_mode=True`, `connect_timeout=5`) to these remote calls.
+- Added `run_cmd(..., timeout=20)` for both calls to bound per-attempt latency and surface a concrete timeout error instead of hanging indefinitely.
+
+I added/updated assertions in unit tests to lock in the new behavior (presence of `sudo -n` and timeout kwargs), then ran focused suites: `tests/test_vm_helpers.py`, `tests/test_cli_vm_attach.py`, `tests/test_cli_vm_update.py`, and `tests/test_cli_helpers.py` (`81 passed`). A direct run of `tests/test_e2e_bootstrap_context.py` is skipped in this environment, so I could not locally reproduce that full e2e workflow end-to-end.
+
+Reflection/state of mind: this is a pragmatic hardening pass that trades potential single-attempt patience for deterministic failure semantics and clearer diagnostics, which is preferable in CI/e2e contexts where silent stalls are costly.
+
+Uncertainties/risks: if guest command execution legitimately needs more than 20 seconds in some environments, we may need a configurable timeout knob, but with retries in `ensure_share_mounted` this should still be robust for readiness races.
+## 2026-03-16 14:59:32 +0000
+
+Follow-up on probe wording: I initially introduced an implicit mapping of `sudo + check=False` to read-only mode in `run_cmd`, then reverted that assumption based on user feedback. The final approach is explicit intent marking only.
+
+Implementation details:
+- `run_cmd` now supports an explicit `sudo_action` override (`read`/`modify`) but does not infer from `check=False`.
+- I marked probe-heavy sudo calls with `sudo_action='read'` in key lifecycle paths (`_sudo_path_exists`, `_sudo_file_exists`, `_vm_defined`, `wait_for_ip` probes, `vm_status`), plus network/share probe calls where appropriate.
+- I kept destructive `check=False` calls explicitly marked `sudo_action='modify'` (destroy/undefine/rm/virt-install first-pass, detach-device, unmount/rmdir paths).
+- Added the requested e2e visibility line after the expected attachment-mode mismatch failure assertion in `tests/test_e2e_full.py`.
+
+Reflection/state of mind: explicitness is cleaner here. Probe-vs-modify semantics are domain-level intent, not something that should be guessed from `check` behavior. This preserves control and keeps logging trustworthy.
+
+Risk/tradeoff: requires callsite discipline; missing `sudo_action` at a new probe callsite can still inherit broader action context and produce noisy wording. However, this is preferable to a silent global assumption.
+
+Validation: `pytest -q tests/test_util.py tests/test_vm_helpers.py tests/test_cli_vm_attach.py tests/test_cli_vm_update.py tests/test_cli_helpers.py tests/test_e2e_full.py` -> `89 passed, 1 skipped`; compile checks for touched files pass.
+## 2026-03-16 15:05:44 +0000
+
+Reviewed and reduced sudo logging redundancy after a user report that privileged probe loops were too noisy. The duplicated pattern in loops was: `INFO Planned ...`, `DEBUG Running with sudo ...`, and `DEBUG RUN: sudo ...` for every probe. I kept the execution-visible `RUN:` line and adjusted verbosity so we still satisfy policy intent while reducing repetitive output.
+
+Implementation details:
+- In `aivm/util.py::_ensure_sudo_ready(...)`, I now log `Planned privileged ...` at `INFO` when confirmation is required or when action is state-changing.
+- For auto-approved read-only probes, I demoted that `Planned ...` line to `TRACE` to avoid flooding polling loops.
+- In `aivm/util.py::run_cmd(...)`, I demoted the extra `Running with sudo: ...` line to `TRACE`; `RUN: ...` remains the primary visible execution line.
+
+Reflection/state of mind: this felt like an observability calibration problem, not a correctness bug. The important part is preserving trust in what command actually ran while avoiding log spam that obscures meaningful events.
+
+Uncertainties/risks: callers that rely on `INFO` for every read-only sudo probe will now need `TRACE` if they want per-probe planning detail. I think this is acceptable because state-changing and approval-gated intent remains prominently visible.
+
+Tradeoffs and what might break: no command behavior changes, only log-level changes. Any tests asserting exact log levels/messages for read-only probe planning may need updates.
+
+What I am confident about: focused suites covering util + CLI helper/attach/update behavior remain green after the change (`pytest -q tests/test_util.py tests/test_cli_helpers.py tests/test_vm_helpers.py tests/test_cli_vm_attach.py tests/test_cli_vm_update.py` -> `89 passed`).
+## 2026-03-16 16:23:14 +0000
+
+Worked on a safety regression surfaced by user logs: running `aivm code .` in a new directory triggered automatic restore of saved shared-root attachments, and some restore paths used `umount` / `umount -l` on mismatched existing bind targets. That can disrupt unrelated active workflows inside a running VM.
+
+Implementation details:
+- Added a new guard in `aivm/cli/vm.py::_ensure_shared_root_host_bind(...)` via `allow_disruptive_rebind` (default `True` for explicit/user-invoked flows).
+- When `allow_disruptive_rebind=False` and target is already mounted to a different source, the function now raises a clear `RuntimeError` instead of unmounting/rebinding.
+- `_restore_saved_vm_attachments(...)` now calls `_ensure_shared_root_host_bind(..., allow_disruptive_rebind=False)` so background/automatic restore avoids forced/lazy unmounts.
+- Added a specific warning path in restore to explain it skipped the attachment to avoid disruption.
+- Updated `docs/source/design.rst` operational policy: automatic/background reconciliation must avoid disruptive mount operations and require explicit user action for risky repair.
+- Added regression test `test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled`.
+
+Reflection/state of mind: this was the right place to tighten safety boundaries. Auto-restore should be conservative because users may have long-running in-guest work that the host cannot reliably classify as safe to disrupt.
+
+Uncertainties/risks: with this guard, some stale shared-root host bind mismatches remain unrepaired during restore and will require explicit user reconcile (attach/detach). That is intentional, but may surprise users who expected fully self-healing behavior.
+
+Tradeoffs and what might break: no destructive auto-fix in restore means fewer accidental disruptions, but potentially more warnings and manual follow-up. Explicit attach flows still allow disruptive repair when the user directly requests it.
+
+What I am confident about: targeted suites pass after the change (`pytest -q tests/test_cli_vm_attach.py tests/test_cli_vm_update.py tests/test_cli_helpers.py tests/test_util.py` -> `69 passed`) and touched files compile.

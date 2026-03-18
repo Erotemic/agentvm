@@ -90,7 +90,11 @@ def _is_missing_command_error(ex: Exception) -> bool:
 def _sudo_path_exists(path: Path) -> bool:
     return (
         run_cmd(
-            ['test', '-e', str(path)], sudo=True, check=False, capture=True
+            ['test', '-e', str(path)],
+            sudo=True,
+            sudo_action='read',
+            check=False,
+            capture=True,
         ).code
         == 0
     )
@@ -99,7 +103,11 @@ def _sudo_path_exists(path: Path) -> bool:
 def _sudo_file_exists(path: Path) -> bool:
     return (
         run_cmd(
-            ['test', '-f', str(path)], sudo=True, check=False, capture=True
+            ['test', '-f', str(path)],
+            sudo=True,
+            sudo_action='read',
+            check=False,
+            capture=True,
         ).code
         == 0
     )
@@ -108,14 +116,24 @@ def _sudo_file_exists(path: Path) -> bool:
 def _vm_defined(name: str) -> bool:
     return (
         run_cmd(
-            ['virsh', 'dominfo', name], sudo=True, check=False, capture=True
+            ['virsh', 'dominfo', name],
+            sudo=True,
+            sudo_action='read',
+            check=False,
+            capture=True,
         ).code
         == 0
     )
 
 
 def _destroy_and_undefine_vm(name: str) -> None:
-    run_cmd(['virsh', 'destroy', name], sudo=True, check=False, capture=True)
+    run_cmd(
+        ['virsh', 'destroy', name],
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
     # Different libvirt states require different undefine flags.
     attempts = [
         [
@@ -142,7 +160,13 @@ def _destroy_and_undefine_vm(name: str) -> None:
     ]
     errs: list[str] = []
     for cmd in attempts:
-        res = run_cmd(cmd, sudo=True, check=False, capture=True)
+        res = run_cmd(
+            cmd,
+            sudo=True,
+            sudo_action='modify',
+            check=False,
+            capture=True,
+        )
         if res.code != 0:
             msg = (res.stderr or res.stdout or '').strip()
             if msg:
@@ -171,9 +195,7 @@ def _paths(cfg: AgentVMConfig, *, dry_run: bool = False) -> dict[str, Path]:
     }
 
 
-def _resolve_expected_image_sha256(
-    *, image_url: str
-) -> tuple[str | None, str]:
+def _resolve_expected_image_sha256(*, image_url: str) -> tuple[str | None, str]:
     digest = SUPPORTED_IMAGE_SHA256.get(image_url, '').strip().lower()
     if digest:
         return digest, 'built-in supported-image hash registry'
@@ -233,7 +255,11 @@ def _verify_image_sha256(
     actual = out.strip().split()[0].lower() if out.strip() else ''
     if actual != expected_sha256:
         run_cmd(
-            ['rm', '-f', str(image_path)], sudo=True, check=False, capture=True
+            ['rm', '-f', str(image_path)],
+            sudo=True,
+            sudo_action='modify',
+            check=False,
+            capture=True,
         )
         raise RuntimeError(
             'Downloaded base image checksum mismatch; removed invalid image.\n'
@@ -257,7 +283,9 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
     )
     parsed = urlparse(url)
     local_file_src = (
-        Path(unquote(parsed.path)).expanduser() if parsed.scheme == 'file' else None
+        Path(unquote(parsed.path)).expanduser()
+        if parsed.scheme == 'file'
+        else None
     )
     if _sudo_file_exists(base_img) and not cfg.image.redownload:
         if dry_run:
@@ -300,9 +328,17 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
     run_cmd(
         ['mkdir', '-p', str(p['img_dir'])], sudo=True, check=True, capture=True
     )
-    run_cmd(['rm', '-f', str(tmp_img)], sudo=True, check=False, capture=True)
+    run_cmd(
+        ['rm', '-f', str(tmp_img)],
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
     if local_file_src is not None:
-        log.info('Copying local base image to {} via atomic temp file', base_img)
+        log.info(
+            'Copying local base image to {} via atomic temp file', base_img
+        )
     else:
         log.info('Downloading base image to {} (showing progress)', base_img)
     try:
@@ -315,7 +351,15 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
             )
         else:
             run_cmd(
-                ['curl', '-L', '--fail', '--progress-bar', '-o', str(tmp_img), url],
+                [
+                    'curl',
+                    '-L',
+                    '--fail',
+                    '--progress-bar',
+                    '-o',
+                    str(tmp_img),
+                    url,
+                ],
                 sudo=True,
                 check=True,
                 capture=False,
@@ -328,7 +372,11 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
         )
     except CmdError:
         run_cmd(
-            ['rm', '-f', str(tmp_img)], sudo=True, check=False, capture=True
+            ['rm', '-f', str(tmp_img)],
+            sudo=True,
+            sudo_action='modify',
+            check=False,
+            capture=True,
         )
         raise
     _verify_image_sha256(
@@ -641,6 +689,7 @@ def create_or_start_vm(
                 run_cmd(
                     ['virsh', 'domstate', cfg.vm.name],
                     sudo=True,
+                    sudo_action='read',
                     check=False,
                     capture=True,
                 )
@@ -741,7 +790,13 @@ def create_or_start_vm(
         log.info('DRYRUN: {}', ' '.join(cmd))
         return
     try:
-        first = run_cmd(cmd, sudo=True, check=False, capture=True)
+        first = run_cmd(
+            cmd,
+            sudo=True,
+            sudo_action='modify',
+            check=False,
+            capture=True,
+        )
     except CmdError as ex:
         # Some call sites/tests may still raise even when check=False.
         first = ex.result
@@ -782,6 +837,7 @@ def _mac_for_vm(cfg: AgentVMConfig) -> str:
     res = run_cmd(
         ['virsh', 'domiflist', cfg.vm.name],
         sudo=True,
+        sudo_action='read',
         check=False,
         capture=True,
     )
@@ -842,6 +898,7 @@ def wait_for_ip(
             lease_text = run_cmd(
                 ['virsh', 'net-dhcp-leases', cfg.network.name],
                 sudo=True,
+                sudo_action='read',
                 check=False,
                 capture=True,
             ).stdout
@@ -858,6 +915,7 @@ def wait_for_ip(
             domif_text = run_cmd(
                 ['virsh', 'domifaddr', cfg.vm.name],
                 sudo=True,
+                sudo_action='read',
                 check=False,
                 capture=True,
             ).stdout
@@ -906,6 +964,7 @@ def wait_for_ip(
             st = run_cmd(
                 ['virsh', 'domstate', cfg.vm.name],
                 sudo=True,
+                sudo_action='read',
                 check=False,
                 capture=True,
             ).stdout.strip()
@@ -966,12 +1025,20 @@ def destroy_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 def vm_status(cfg: AgentVMConfig) -> str:
     name = cfg.vm.name
     dom = run_cmd(
-        ['virsh', 'dominfo', name], sudo=True, check=False, capture=True
+        ['virsh', 'dominfo', name],
+        sudo=True,
+        sudo_action='read',
+        check=False,
+        capture=True,
     )
     if dom.code != 0:
         return f'VM not found: {name}\n'
     state = run_cmd(
-        ['virsh', 'domstate', name], sudo=True, check=False, capture=True
+        ['virsh', 'domstate', name],
+        sudo=True,
+        sudo_action='read',
+        check=False,
+        capture=True,
     ).stdout.strip()
     ip = get_ip_cached(cfg) or ''
     return (

@@ -47,6 +47,11 @@ Guidance for contributors (human or AI agents) working in this repository.
 - Source of truth is `pyproject.toml`.
 - Runtime dependencies must be declared in `[project].dependencies`.
 
+## Style
+
+* When using multiline strings use textwrap to keep indentation nice.
+* Comment code so the motivation and intent is readable for humans and agents.
+
 ## Developer journal
 Keep a running journal at `dev/journals/<agent_name>.md` (e.g.
 `dev/journals/codex.md`) to capture the story of the work (decisions, progress,

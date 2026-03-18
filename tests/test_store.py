@@ -14,6 +14,7 @@ from aivm.store import (
     find_attachments_for_vm,
     find_vm,
     load_store,
+    remove_attachment,
     save_store,
     upsert_attachment,
     upsert_vm,
@@ -25,6 +26,7 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     store.defaults = AgentVMConfig()
     store.defaults.vm.cpus = 2
     store.behavior.yes_sudo = True
+    store.behavior.auto_approve_readonly_sudo = False
     store.behavior.verbose = 4
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-b'
@@ -44,6 +46,7 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     assert loaded.defaults is not None
     assert loaded.defaults.vm.cpus == 2
     assert loaded.behavior.yes_sudo is True
+    assert loaded.behavior.auto_approve_readonly_sudo is False
     assert loaded.behavior.verbose == 4
     assert [v.name for v in loaded.vms] == ['vm-a', 'vm-b']
     assert [a.host_path for a in loaded.attachments] == ['/tmp/a', '/tmp/z']
@@ -88,3 +91,18 @@ def test_find_attachments_for_vm_returns_sorted_entries(tmp_path: Path) -> None:
         str(host_a.resolve()),
         str(host_b.resolve()),
     ]
+
+
+def test_remove_attachment_removes_single_vm_mapping(tmp_path: Path) -> None:
+    store = Store()
+    host = tmp_path / 'project'
+    host.mkdir()
+    upsert_attachment(store, host_path=host, vm_name='vm1')
+    upsert_attachment(store, host_path=host, vm_name='vm2')
+
+    changed = remove_attachment(store, host_path=host, vm_name='vm1')
+
+    assert changed is True
+    remaining = find_attachments(store, host)
+    assert len(remaining) == 1
+    assert remaining[0].vm_name == 'vm2'

@@ -178,6 +178,43 @@ def test_ensure_share_mounted_raises_after_retries(monkeypatch) -> None:
     assert len(sleeps) == 11
 
 
+def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+    cmds: list[list[str]] = []
+    run_kwargs: list[dict] = []
+
+    monkeypatch.setattr(
+        'aivm.vm.share.require_ssh_identity', lambda p: p or '/tmp/id_ed25519'
+    )
+    monkeypatch.setattr(
+        'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
+    )
+
+    def fake_run_cmd(cmd, **kwargs):
+        cmds.append([str(c) for c in cmd])
+        run_kwargs.append(dict(kwargs))
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
+
+    ensure_share_mounted(
+        cfg,
+        '10.0.0.2',
+        guest_dst='/workspace',
+        tag='hostcode-workspace',
+        read_only=True,
+        dry_run=False,
+    )
+
+    assert len(cmds) == 1
+    remote_script = cmds[0][-1]
+    assert run_kwargs[0]['timeout'] == 20
+    assert 'sudo -n mount -t virtiofs -o ro' in remote_script
+    assert 'mount -t virtiofs -o ro' in remote_script
+
+
 def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
     cfg = AgentVMConfig()
     monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: False)
@@ -223,7 +260,9 @@ def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
     assert '--boot' not in virt_calls[1]
 
 
-def test_create_vm_prefers_uefi_even_when_host_looks_nested(monkeypatch) -> None:
+def test_create_vm_prefers_uefi_even_when_host_looks_nested(
+    monkeypatch,
+) -> None:
     cfg = AgentVMConfig()
     monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: False)
     monkeypatch.setattr(
@@ -275,7 +314,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
 
     def fake_run_cmd(cmd, **kwargs):
         del kwargs
-        if cmd[:2] == ['bash', '-lc'] and "cat > " in cmd[2]:
+        if cmd[:2] == ['bash', '-lc'] and 'cat > ' in cmd[2]:
             script = cmd[2]
             if 'user-data' in script:
                 heredocs['user-data'] = script
@@ -397,7 +436,9 @@ def test_fetch_image_redownloads_when_cached_hash_is_stale(
     assert any(c[:2] == ['mv', '-f'] for c in calls)
 
 
-def test_fetch_image_validates_ubuntu_checksum(monkeypatch, tmp_path: Path) -> None:
+def test_fetch_image_validates_ubuntu_checksum(
+    monkeypatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path)
@@ -440,10 +481,7 @@ def test_fetch_image_raises_on_checksum_mismatch(
         'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
     )
     calls = []
-    actual = (
-        'abcdef0123456789abcdef0123456789'
-        'abcdef0123456789abcdef0123456789'
-    )
+    actual = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 
     def fake_run_cmd(cmd, **kwargs):
         del kwargs
@@ -469,7 +507,9 @@ def test_fetch_image_rejects_unsupported_url(
     cfg.image.cache_name = 'base.img'
     cfg.image.ubuntu_img_url = 'https://example.com/custom.img'
     monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: False)
-    with pytest.raises(RuntimeError, match='not in the built-in verified image registry'):
+    with pytest.raises(
+        RuntimeError, match='not in the built-in verified image registry'
+    ):
         fetch_image(cfg, dry_run=False)
 
 
@@ -520,7 +560,10 @@ def test_fetch_image_rejects_unsupported_file_url_digest(
     local_img.write_bytes(b'corrupt-partial')
     cfg.image.ubuntu_img_url = f'file://{local_img}'
     monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: False)
-    with pytest.raises(RuntimeError, match='digest is not in the built-in verified image registry'):
+    with pytest.raises(
+        RuntimeError,
+        match='digest is not in the built-in verified image registry',
+    ):
         fetch_image(cfg, dry_run=False)
 
 
@@ -532,10 +575,12 @@ def test_wait_for_ssh_uses_generous_probe_timeout(monkeypatch) -> None:
     calls = {'n': 0}
 
     monkeypatch.setattr(
-        'aivm.vm.lifecycle.require_ssh_identity', lambda p: p or '/tmp/id_ed25519'
+        'aivm.vm.lifecycle.require_ssh_identity',
+        lambda p: p or '/tmp/id_ed25519',
     )
     monkeypatch.setattr(
-        'aivm.vm.lifecycle.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
+        'aivm.vm.lifecycle.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id_ed25519'],
     )
     monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda s: None)
 

@@ -255,6 +255,12 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
         python -m aivm status {' '.join(cli_verbosity_args)}
         python -m aivm status {' '.join(cli_verbosity_args)} --sudo --yes
         python -m aivm attach {' '.join(cli_verbosity_args)} . --yes
+        if python -m aivm attach {' '.join(cli_verbosity_args)} . --mode git --yes; then
+          echo "ERROR: expected mode mismatch when changing existing attachment mode without detach"
+          exit 1
+        fi
+        python -m aivm detach {' '.join(cli_verbosity_args)} . --yes
+        python -m aivm attach {' '.join(cli_verbosity_args)} . --mode shared-root --yes
         python -m aivm list {' '.join(cli_verbosity_args)}
         python -m aivm vm ssh_config {' '.join(cli_verbosity_args)}
         python -m aivm vm update {' '.join(cli_verbosity_args)} --yes
@@ -279,7 +285,14 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
             env=env,
         )
         _run_cli(
-            ['vm', 'up', *cli_verbosity_args, '--yes', '--config', str(cfg_path)],
+            [
+                'vm',
+                'up',
+                *cli_verbosity_args,
+                '--yes',
+                '--config',
+                str(cfg_path),
+            ],
             cwd=repo_root,
             timeout_s=timeout_s,
             env=env,
