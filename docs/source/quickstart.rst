@@ -30,8 +30,8 @@ Path B: Explicit config-store setup
    aivm config init
    aivm vm create
 
-This path is explicit and reproducible. Here, ``aivm config init`` is required
-before ``aivm vm create``.
+This path is explicit and reproducible. ``aivm config init`` establishes VM
+defaults and SSH identity configuration; ``aivm vm create`` provisions the VM.
 
 After either path
 -----------------
@@ -46,6 +46,7 @@ Notes
 -----
 
 * ``status --sudo`` enables privileged checks (libvirt/network/firewall/image).
+* ``status --detail`` includes raw diagnostics (virsh/nft/ssh probe outputs).
 * Privileged operations prompt unless ``--yes`` or ``--yes-sudo`` is used.
 * Approvals normally happen once per grouped step, not once per command.
 * Step previews show both semantic summaries and the exact commands to be run.

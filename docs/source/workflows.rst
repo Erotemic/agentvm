@@ -9,7 +9,7 @@ Open project in VM
 .. code-block:: bash
 
    aivm code .
-   aivm vm code . --sync_settings
+   aivm vm code .
 
 These shortcut flows now report progress as grouped steps. Expect a current
 step title, a short explanation of why that step is happening, semantic command
@@ -95,6 +95,17 @@ Attachment mode rules:
    aivm detach .
    aivm attach . --mode git
 
+Attachment access modes:
+
+* ``rw`` (default): read-write access to the shared folder.
+* ``ro``: read-only access; currently supported only for ``shared`` mode.
+
+Specify access with ``--access``:
+
+.. code-block:: bash
+
+   aivm attach . --access ro
+
 Inspect and list resources
 --------------------------
 
@@ -164,4 +175,5 @@ Get command tree
 
    aivm help tree
    aivm help plan
+   aivm help raw
    aivm help completion
