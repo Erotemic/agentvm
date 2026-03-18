@@ -433,7 +433,7 @@ class CommandManager:
             )
             if item.spec.detail:
                 local_log.debug('     detail: {}', item.spec.detail)
-            local_log.debug(
+            local_log.trace(
                 '     raw: {}',
                 shell_join(item.spec.cmd),
             )

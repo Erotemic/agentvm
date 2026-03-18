@@ -16,6 +16,7 @@ from aivm.util import CmdError, CmdResult
 from aivm.vm import (
     _mac_for_vm,
     _write_cloud_init,
+    attach_vm_share,
     create_or_start_vm,
     ensure_share_mounted,
     fetch_image,
@@ -103,6 +104,42 @@ def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
         lambda *a, **k: CmdResult(0, xml_without_shared, ''),
     )
     assert vm_has_virtiofs_shared_memory(cfg, use_sudo=False) is False
+
+
+def test_attach_vm_share_treats_existing_mapping_as_satisfied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    source = tmp_path / 'src'
+    source.mkdir()
+    source_dir = str(source.resolve())
+    tag = 'hostcode-src'
+
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        calls.append(list(cmd))
+        if cmd[:2] == ['virsh', 'domstate']:
+            return CmdResult(0, 'running\n', '')
+        if cmd[:2] == ['virsh', 'attach-device']:
+            return CmdResult(
+                1,
+                '',
+                'error: Requested operation is not valid: Target already exists',
+            )
+        raise AssertionError(f'unexpected command: {cmd!r}')
+
+    monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
+    monkeypatch.setattr(
+        'aivm.vm.share.vm_share_mappings',
+        lambda *_a, **_k: [(source_dir, tag)],
+    )
+
+    attach_vm_share(cfg, source_dir, tag, dry_run=False)
+    assert calls[0][:2] == ['virsh', 'domstate']
+    assert calls[1][:2] == ['virsh', 'attach-device']
 
 
 def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:
@@ -321,14 +358,16 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
 
     def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        if cmd[:2] == ['bash', '-lc'] and 'cat > ' in cmd[2]:
-            script = cmd[2]
+        normalized = cmd[1:] if cmd and cmd[0] == 'sudo' else cmd
+        if normalized[:2] == ['bash', '-lc'] and 'cat > ' in normalized[2]:
+            script = normalized[2]
             if 'user-data' in script:
                 heredocs['user-data'] = script
         return P(0, '', '')
 
-    CommandManager.activate(CommandManager())
-    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 0)
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run', fake_subprocess_run
     )

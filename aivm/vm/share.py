@@ -162,7 +162,27 @@ def attach_vm_share(
         if is_running
         else ['virsh', 'attach-device', cfg.vm.name, tmp, '--config']
     )
-    run_cmd(attach_cmd, sudo=True, check=True, capture=True)
+    res = run_cmd(
+        attach_cmd,
+        sudo=True,
+        sudo_action='modify',
+        check=False,
+        capture=True,
+    )
+    if res.code == 0:
+        return
+    msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
+    if 'target already exists' in msg:
+        current = vm_share_mappings(cfg, use_sudo=True)
+        if any(src == source_dir and tgt == tag for src, tgt in current):
+            log.info(
+                'Virtiofs mapping already present for vm={} source={} tag={}; treating attach as satisfied.',
+                cfg.vm.name,
+                source_dir,
+                tag,
+            )
+            return
+    raise CmdError(attach_cmd, res)
 
 
 def detach_vm_share(
