@@ -863,6 +863,11 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     assert 'umount -l' in remote_script
     assert 'findmnt -n -o ROOT --target' in remote_script
     assert 'stat -Lc %d:%i' in remote_script
+    assert '[ "$cur" = \'aivm-shared-root[/token-source]\' ]' in remote_script
+    assert (
+        '[ "$final_src" = \'aivm-shared-root[/token-source]\' ]'
+        in remote_script
+    )
     assert 'shared-root bind verification failed: unexpected source' in remote_script
     assert 'shared-root bind verification failed: unexpected mount options' in remote_script
 

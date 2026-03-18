@@ -1874,6 +1874,7 @@ def _ensure_shared_root_guest_bind(
         / (attachment.tag or '').strip()
     )
     expected_root = str(PurePosixPath('/') / (attachment.tag or '').strip())
+    expected_virtiofs_source = f'{SHARED_ROOT_VIRTIOFS_TAG}[{expected_root}]'
     if not attachment.tag:
         raise RuntimeError('shared-root attachment token is empty.')
     remount_cmd = (
@@ -1896,6 +1897,8 @@ def _ensure_shared_root_guest_bind(
         f'cur="$(findmnt -n -o SOURCE --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
         f'cur_root="$(findmnt -n -o ROOT --target {shlex.quote(attachment.guest_dst)} 2>/dev/null || true)"; '
         f'if [ "$cur" = {shlex.quote(source_in_guest)} ]; then '
+        ':; '
+        f'elif [ "$cur" = {shlex.quote(expected_virtiofs_source)} ]; then '
         ':; '
         f'elif [ "$cur" = "none" ] && [ "$cur_root" = {shlex.quote(expected_root)} ]; then '
         ':; '
@@ -1931,6 +1934,8 @@ def _ensure_shared_root_guest_bind(
         'final_dst_stat=""; '
         'source_ok=0; '
         f'if [ "$final_src" = {shlex.quote(source_in_guest)} ]; then '
+        'source_ok=1; '
+        f'elif [ "$final_src" = {shlex.quote(expected_virtiofs_source)} ]; then '
         'source_ok=1; '
         f'elif [ "$final_src" = "none" ] && [ "$final_root" = {shlex.quote(expected_root)} ]; then '
         'source_ok=1; '
