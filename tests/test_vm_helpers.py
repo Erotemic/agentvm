@@ -28,6 +28,17 @@ from aivm.vm import (
 )
 
 
+def _activate_manager(*, yes_sudo: bool = True) -> None:
+    CommandManager.activate(CommandManager(yes_sudo=yes_sudo))
+
+
+class _Proc:
+    def __init__(self, returncode=0, stdout='', stderr=''):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
 def test_mac_for_vm_parsing(monkeypatch) -> None:
     stdout = """
  Interface   Type      Source     Model    MAC
@@ -73,8 +84,10 @@ def test_vm_share_helpers(monkeypatch, tmp_path: Path) -> None:
   </devices>
 </domain>
 """
+    _activate_manager()
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd', lambda *a, **k: CmdResult(0, xml, '')
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, xml, ''),
     )
     assert vm_has_share(cfg, source_dir, share_tag, use_sudo=False) is True
     assert vm_share_mappings(cfg, use_sudo=False) == [
@@ -84,6 +97,7 @@ def test_vm_share_helpers(monkeypatch, tmp_path: Path) -> None:
 
 def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
     cfg = AgentVMConfig()
+    _activate_manager()
     xml_with_shared = """
 <domain>
   <memoryBacking>
@@ -93,15 +107,15 @@ def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
 </domain>
 """
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd',
-        lambda *a, **k: CmdResult(0, xml_with_shared, ''),
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, xml_with_shared, ''),
     )
     assert vm_has_virtiofs_shared_memory(cfg, use_sudo=False) is True
 
     xml_without_shared = '<domain><memoryBacking/></domain>'
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd',
-        lambda *a, **k: CmdResult(0, xml_without_shared, ''),
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, xml_without_shared, ''),
     )
     assert vm_has_virtiofs_shared_memory(cfg, use_sudo=False) is False
 
@@ -118,28 +132,40 @@ def test_attach_vm_share_treats_existing_mapping_as_satisfied(
 
     calls: list[list[str]] = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    _activate_manager()
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
+
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        calls.append(list(cmd))
-        if cmd[:2] == ['virsh', 'domstate']:
-            return CmdResult(0, 'running\n', '')
-        if cmd[:2] == ['virsh', 'attach-device']:
-            return CmdResult(
+        parts = list(cmd)
+        calls.append(parts)
+        normalized = parts
+        if normalized[:2] == ['sudo', '-n']:
+            normalized = normalized[2:]
+        elif normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:2] == ['virsh', 'domstate']:
+            return _Proc(0, 'running\n', '')
+        if normalized[:2] == ['virsh', 'attach-device']:
+            return _Proc(
                 1,
                 '',
                 'error: Requested operation is not valid: Target already exists',
             )
         raise AssertionError(f'unexpected command: {cmd!r}')
 
-    monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     monkeypatch.setattr(
         'aivm.vm.share.vm_share_mappings',
         lambda *_a, **_k: [(source_dir, tag)],
     )
 
     attach_vm_share(cfg, source_dir, tag, dry_run=False)
-    assert calls[0][:2] == ['virsh', 'domstate']
-    assert calls[1][:2] == ['virsh', 'attach-device']
+    norm0 = calls[0][2:] if calls[0][:2] == ['sudo', '-n'] else calls[0]
+    norm1 = calls[1][2:] if calls[1][:2] == ['sudo', '-n'] else calls[1]
+    assert norm0[:2] == ['virsh', 'domstate']
+    assert norm1[:2] == ['virsh', 'attach-device']
 
 
 def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:

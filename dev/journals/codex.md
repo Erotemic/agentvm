@@ -1889,3 +1889,30 @@ I updated `aivm/cli/vm.py::_ensure_shared_root_guest_bind(...)` so both the pre-
 On the logging front, this latest log also helped confirm that the previous level adjustment was directionally right: probe `RUN:` lines remain visible at `DEBUG`, mutating commands remain visible at `INFO`, and plan-preview raw commands are no longer duplicated at `DEBUG`. The remaining verbosity awkwardness in the shortcut attach/rebind path is mostly because that part of the workflow is still using the compatibility sudo-intent seam rather than explicit plan scopes. That feels like follow-up migration work, not a log-level bug.
 
 Validation: reran the focused attach/update/helper suites after the bind-source fix (`tests/test_cli_vm_attach.py`, `tests/test_cli_vm_update.py`, `tests/test_vm_helpers.py`) and they passed. I also kept seeing the existing pytest tempdir cleanup warning around the mocked cloud-init test fixture; still non-fatal, still worth a separate cleanup.
+## 2026-03-18 20:10:34 +0000
+
+Finished the highest-priority shared-root migration from the legacy per-command sudo prompt path onto the new `CommandManager`/`IntentScope`/`PlanScope` model. I started from the fresh-start log again because it made the remaining UX debt painfully obvious: repeated compat-style `Continue?` prompts, host bind work split across multiple isolated commands, and guest-side ssh/bash blobs doing too much explanatory work. The key refactor was to make the shared-root path itself become the step-oriented narrative rather than relying on the compatibility seam to paper over it.
+
+Implementation details:
+- In `aivm/cli/vm.py`, shared-root orchestration is now explicitly grouped around plans:
+  - inspect shared-root host bind state
+  - prepare host bind targets
+  - inspect shared-root VM mapping
+  - ensure VM virtiofs mapping
+  - mount and verify inside guest
+- `_ensure_attachment_available_in_guest(...)` now wraps shared-root work in an `IntentScope("Attach and reconcile shared-root mapping", ...)`, so the breadcrumb/context stays stable across those steps.
+- `_ensure_shared_root_host_bind(...)` no longer uses `_confirm_sudo_block(...)`; it probes with a read plan and performs create/rebind work in a named modify plan. For stale bind replacement, I chose a summarized `bash -lc` repair action so the plan preview stays compact while raw shell remains available only at deeper verbosity.
+- `_ensure_shared_root_vm_mapping(...)` now uses explicit inspect and ensure-mapping plans, and `attach_vm_share(...)` in `aivm/vm/share.py` plugs into that cleanly with semantic summaries.
+- `_ensure_shared_root_guest_bind(...)` now submits two semantic guest-side actions inside one plan: mount shared-root inside guest, then bind/verify the requested guest destination. This keeps the giant guest script out of INFO-level narration.
+- `_restore_saved_vm_attachments(...)` now routes shared-root restore through the same orchestration entrypoint as the main path, while preserving the existing non-disruptive-rebind safety for automatic restore.
+- `_reconcile_attached_vm(...)` now uses the new shared-root helpers for running-VM live attach and uses a small step plan to create the shared-root parent dir before VM start/create. I added `ReconcileResult.shared_root_host_side_ready` so later guest reconciliation can avoid redoing host-side work when reconcile already completed it.
+
+Docs were updated to better match reality rather than overclaim: shared-root `aivm ssh .` / `aivm code .` is now explicitly described as the strongest example of grouped-step UX, while older compatibility-seam flows are called out as still in migration.
+
+Reflection/state of mind: this felt like the “make the architecture true in the product” phase. The command manager already existed, but until the shared-root attach/reconcile path actually used it, the flagship startup UX still felt old and noisy. I’m happier with the current shape because the steps now map much more directly to a human mental model of what `aivm` is doing.
+
+Uncertainties/risks: the biggest tradeoff is that some stale-host-bind repair now uses a compact `bash -lc` action to keep the preview coherent. I think that is the right UX choice here because the semantic step is what matters at INFO, but it does mean the low-level repair sequence is mostly a TRACE/debug concern. There are also still remaining `_confirm_sudo_block(...)` usages elsewhere in `aivm/cli/vm.py` (shared mode, detach paths, VM/network/firewall/create/recreate flows, etc.); those are now more clearly the remaining migration surface.
+
+What might break: tests that monkeypatch `run_cmd()`-level seams will continue to need migration as shared-root paths move onto the manager. I already had to rewrite several helper tests to patch `aivm.commands.subprocess.run` and to assert on step previews instead of raw command loops.
+
+What I am confident about: the shared-root happy path is substantially more step-oriented now, the focused and adjacent command-manager/CLI suites are green (`pytest -q tests/test_util.py tests/test_host.py tests/test_net.py tests/test_firewall.py tests/test_cli_helpers.py tests/test_vm_helpers.py tests/test_cli_vm_attach.py tests/test_cli_vm_update.py -q`), and touched Python files compile. The lingering pytest tempdir cleanup warning around the cloud-init test fixture is still present but remains non-fatal and unrelated to this migration.

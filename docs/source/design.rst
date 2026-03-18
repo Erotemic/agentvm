@@ -194,7 +194,9 @@ Consequences:
 Follow-ups:
   Older ``util.run_cmd`` call sites may continue to work through a compatibility
   shim during migration, but new code should prefer explicit plans/intents over
-  ambient sudo intent.
+  ambient sudo intent. The shared-root attach/reconcile path used by
+  ``aivm ssh .`` / ``aivm code .`` is now migrated; some older flows still use
+  the compatibility seam while migration continues.
 
 Intent stack semantics
 ~~~~~~~~~~~~~~~~~~~~~~

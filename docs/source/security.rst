@@ -436,6 +436,7 @@ Operational UX note:
 * The approved privilege boundary is still the exact set of commands shown in
   that step preview; grouped approval is intended to reduce prompt fatigue, not
   to hide additional commands.
+* Raw command lines remain available at higher verbosity for audit/debug use.
 
 Risks introduced:
 

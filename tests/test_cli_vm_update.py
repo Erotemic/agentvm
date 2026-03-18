@@ -824,10 +824,17 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     )
 
     assert session.cfg.vm.name == 'restore-shared-root-vm'
-    assert len(primary_ready_calls) == 1
-    assert len(shared_root_host_binds) == 1
-    assert len(shared_root_vm_mappings) == 1
-    assert len(shared_root_guest_binds) == 1
+    assert len(primary_ready_calls) == 2
+    primary_args, primary_kwargs = primary_ready_calls[0]
+    restored_args, restored_kwargs = primary_ready_calls[1]
+    assert primary_args[2].guest_dst == '/workspace/proj'
+    assert primary_kwargs['ensure_shared_root_host_side'] is True
+    assert restored_args[2].guest_dst == '/workspace/docs'
+    assert restored_kwargs['ensure_shared_root_host_side'] is True
+    assert restored_kwargs['allow_disruptive_shared_root_rebind'] is False
+    assert len(shared_root_host_binds) == 0
+    assert len(shared_root_vm_mappings) == 0
+    assert len(shared_root_guest_binds) == 0
     assert len(recorded) == 2
     assert recorded[1]['mode'] == ATTACHMENT_MODE_SHARED_ROOT
     assert recorded[1]['guest_dst'] == '/workspace/docs'

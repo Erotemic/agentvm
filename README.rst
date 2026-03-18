@@ -116,6 +116,11 @@ When running interactively, expect step previews such as:
 * summaries of the commands in that step
 * a single approval prompt for the whole step when required
 
+For example, the default ``shared-root`` path used by ``aivm ssh .`` /
+``aivm code .`` now groups attachment reconciliation into named steps such as
+inspecting host bind state, preparing host bind targets, ensuring the VM
+virtiofs mapping, and mounting/verifying the bind inside the guest.
+
 Config defaults:
 
 .. code-block:: toml

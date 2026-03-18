@@ -14,6 +14,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
 from ..util import CmdError, run_cmd
@@ -29,21 +30,42 @@ def _is_virtiofs_filesystem(fs: ET.Element) -> bool:
     return driver.attrib.get('type', '').strip().lower() == 'virtiofs'
 
 
+def _dumpxml_text(
+    cfg: AgentVMConfig,
+    *,
+    use_sudo: bool,
+    summary: str,
+    detail: str = '',
+) -> str | None:
+    mgr = CommandManager.current()
+    res = mgr.submit(
+        virsh_system_cmd('dumpxml', cfg.vm.name),
+        sudo=use_sudo,
+        role='read',
+        check=False,
+        capture=True,
+        summary=summary,
+        detail=detail,
+    ).result()
+    if res.code != 0 or not res.stdout.strip():
+        return None
+    return res.stdout
+
+
 def vm_has_virtiofs_shared_memory(
     cfg: AgentVMConfig, *, use_sudo: bool = True
 ) -> bool | None:
     """Check if domain XML includes shared memory backing required by virtiofs."""
-    xml = run_cmd(
-        virsh_system_cmd('dumpxml', cfg.vm.name),
-        sudo=use_sudo,
-        sudo_action='read',
-        check=False,
-        capture=True,
+    xml_text = _dumpxml_text(
+        cfg,
+        use_sudo=use_sudo,
+        summary=f'Inspect VM shared-memory backing for {cfg.vm.name}',
+        detail='Read domain XML to verify memfd/shared backing for virtiofs.',
     )
-    if xml.code != 0 or not xml.stdout.strip():
+    if not xml_text:
         return None
     try:
-        root = ET.fromstring(xml.stdout)
+        root = ET.fromstring(xml_text)
     except Exception:
         return None
     mb = root.find('.//memoryBacking')
@@ -62,17 +84,16 @@ def vm_has_share(
     cfg = cfg.expanded_paths()
     if not source_dir or not tag:
         return False
-    xml = run_cmd(
-        virsh_system_cmd('dumpxml', cfg.vm.name),
-        sudo=use_sudo,
-        sudo_action='read',
-        check=False,
-        capture=True,
+    xml_text = _dumpxml_text(
+        cfg,
+        use_sudo=use_sudo,
+        summary=f'Inspect VM filesystem mappings for {cfg.vm.name}',
+        detail='Read domain XML to look for the requested virtiofs source/tag pair.',
     )
-    if xml.code != 0 or not xml.stdout.strip():
+    if not xml_text:
         return False
     try:
-        root = ET.fromstring(xml.stdout)
+        root = ET.fromstring(xml_text)
     except Exception:
         return False
     want_src = str(Path(source_dir).resolve())
@@ -93,17 +114,16 @@ def vm_share_mappings(
     cfg: AgentVMConfig, *, use_sudo: bool = True
 ) -> list[tuple[str, str]]:
     """Return virtiofs filesystem mappings as (source_dir, target_tag)."""
-    xml = run_cmd(
-        virsh_system_cmd('dumpxml', cfg.vm.name),
-        sudo=use_sudo,
-        sudo_action='read',
-        check=False,
-        capture=True,
+    xml_text = _dumpxml_text(
+        cfg,
+        use_sudo=use_sudo,
+        summary=f'Inspect VM virtiofs mappings for {cfg.vm.name}',
+        detail='Read domain XML to enumerate current virtiofs source/tag mappings.',
     )
-    if xml.code != 0 or not xml.stdout.strip():
+    if not xml_text:
         return []
     try:
-        root = ET.fromstring(xml.stdout)
+        root = ET.fromstring(xml_text)
     except Exception:
         return []
     mappings: list[tuple[str, str]] = []
@@ -120,7 +140,12 @@ def vm_share_mappings(
 
 
 def attach_vm_share(
-    cfg: AgentVMConfig, source_dir: str, tag: str, *, dry_run: bool = False
+    cfg: AgentVMConfig,
+    source_dir: str,
+    tag: str,
+    *,
+    dry_run: bool = False,
+    vm_running: bool | None = None,
 ) -> None:
     """Attach a virtiofs share mapping to an existing VM definition."""
     cfg = cfg.expanded_paths()
@@ -145,30 +170,42 @@ def attach_vm_share(
     with tempfile.NamedTemporaryFile('w', delete=False) as f:
         f.write(xml)
         tmp = f.name
-    state = (
-        run_cmd(
-            ['virsh', 'domstate', cfg.vm.name],
-            sudo=True,
-            sudo_action='read',
-            check=False,
-            capture=True,
+    mgr = CommandManager.current()
+    if vm_running is None:
+        state = (
+            mgr.submit(
+                ['virsh', 'domstate', cfg.vm.name],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                summary=f'Check whether VM {cfg.vm.name} is running before live attach',
+            )
+            .stdout.strip()
+            .lower()
         )
-        .stdout.strip()
-        .lower()
-    )
-    is_running = 'running' in state
+        is_running = 'running' in state
+    else:
+        is_running = bool(vm_running)
     attach_cmd = (
         ['virsh', 'attach-device', cfg.vm.name, tmp, '--live', '--config']
         if is_running
         else ['virsh', 'attach-device', cfg.vm.name, tmp, '--config']
     )
-    res = run_cmd(
+    attach_summary = (
+        f'Attach virtiofs device to running VM {cfg.vm.name}'
+        if is_running
+        else f'Attach virtiofs device to VM config for {cfg.vm.name}'
+    )
+    res = mgr.submit(
         attach_cmd,
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
-    )
+        summary=attach_summary,
+        detail=f'source={source_dir} tag={tag}',
+    ).result()
     if res.code == 0:
         return
     msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()

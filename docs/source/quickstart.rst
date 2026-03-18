@@ -15,8 +15,10 @@ Behavior:
 * Uses global config store at ``~/.config/aivm/config.toml``.
 * If VM context is missing, ``aivm`` can bootstrap required config/VM steps.
 * Attaches current folder and opens VS Code.
-* Setup/reconcile logs are grouped into step previews so you can see what the
-  current step is doing before the commands run.
+* Major setup/reconcile logs are grouped into step previews so you can see what
+  the current step is doing before the commands run.
+* For default ``shared-root`` attachments, those steps usually include host
+  bind inspection/repair, VM mapping checks, and guest mount verification.
 
 Use this path when you want minimal setup friction.
 

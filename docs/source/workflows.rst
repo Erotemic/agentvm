@@ -15,6 +15,14 @@ These shortcut flows now report progress as grouped steps. Expect a current
 step title, a short explanation of why that step is happening, and one approval
 prompt for the whole step when privileged host changes are required.
 
+For the default ``shared-root`` attachment path, the current implementation
+usually breaks reconciliation into:
+
+* inspect shared-root host bind state
+* prepare host bind targets
+* inspect/ensure the VM virtiofs mapping
+* mount and verify the bind inside the guest
+
 SSH into mapped directory
 -------------------------
 
@@ -133,7 +141,9 @@ Workflow logging model
 * raw commands, which remain visible for deeper inspection at higher verbosity
 
 This is meant to make multi-command workflows easier to follow and safer to
-approve than a stream of isolated sudo command prompts.
+approve than a stream of isolated sudo command prompts. Shared-root
+attach/reconcile is the most complete example today; some older helper flows
+still rely on the compatibility shim while migration continues.
 
 Get command tree
 ----------------
