@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import ipaddress
 import tempfile
+import textwrap
 
 from loguru import logger
 
+from .commands import CommandManager, IntentScope, PlanScope
 from .config import AgentVMConfig
 from .util import run_cmd, which
 
@@ -64,71 +66,116 @@ def ensure_network(
             f'NET_SUBNET_CIDR {subnet} overlaps existing route {overlap}. Pick a different subnet.'
         )
 
-    if dry_run:
-        exists = False
-    else:
-        exists = (
-            run_cmd(
-                ['virsh', 'net-info', name],
-                check=False,
-                capture=True,
-                sudo=True,
-                sudo_action='read',
-            ).code
-            == 0
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        f'Ensure libvirt network {name}',
+        why=(
+            'Managed VMs rely on a known NAT bridge, gateway, and DHCP range '
+            'before VM definitions or firewall rules can work predictably.'
+        ),
+        role='modify',
+    ):
+        if dry_run:
+            exists = False
+        else:
+            with PlanScope(
+                mgr,
+                'Inspect managed network state',
+                why='Check whether the target libvirt network already exists.',
+                approval_scope=f'network-probe:{name}',
+            ):
+                exists_probe = mgr.submit(
+                    ['virsh', 'net-info', name],
+                    check=False,
+                    capture=True,
+                    sudo=True,
+                    role='read',
+                    summary=f'Check whether libvirt network {name} exists',
+                )
+            exists = exists_probe.code == 0
+        if exists and not recreate:
+            log.info('Network exists: {}', name)
+            return
+
+        xml = textwrap.dedent(
+            f"""\
+            <network>
+              <name>{name}</name>
+              <forward mode='nat'/>
+              <bridge name='{bridge}' stp='on' delay='0'/>
+              <ip address='{gw}' prefix='{prefix}'>
+                <dhcp>
+                  <range start='{dhcp_start}' end='{dhcp_end}'/>
+                </dhcp>
+              </ip>
+            </network>
+            """
         )
-    if exists and not recreate:
-        log.info('Network exists: {}', name)
-        return
-    if exists and recreate:
         if dry_run:
             log.info(
-                'DRYRUN: virsh net-destroy {}; virsh net-undefine {}',
+                'DRYRUN: define network {} on {} (bridge={})',
                 name,
-                name,
+                subnet,
+                bridge,
             )
-        else:
-            run_cmd(
-                ['virsh', 'net-destroy', name],
-                sudo=True,
-                sudo_action='modify',
-                check=False,
-                capture=True,
-            )
-            run_cmd(
-                ['virsh', 'net-undefine', name],
-                sudo=True,
-                sudo_action='modify',
-                check=False,
-                capture=True,
-            )
+            return
 
-    xml = f"""<network>
-  <name>{name}</name>
-  <forward mode='nat'/>
-  <bridge name='{bridge}' stp='on' delay='0'/>
-  <ip address='{gw}' prefix='{prefix}'>
-    <dhcp>
-      <range start='{dhcp_start}' end='{dhcp_end}'/>
-    </dhcp>
-  </ip>
-</network>
-"""
-    if dry_run:
-        log.info(
-            'DRYRUN: define network {} on {} (bridge={})', name, subnet, bridge
-        )
-        return
-
-    with tempfile.NamedTemporaryFile('w', delete=False) as f:
-        f.write(xml)
-        tmp = f.name
-    run_cmd(['virsh', 'net-define', tmp], sudo=True, check=True, capture=True)
-    run_cmd(
-        ['virsh', 'net-autostart', name], sudo=True, check=True, capture=True
-    )
-    run_cmd(['virsh', 'net-start', name], sudo=True, check=True, capture=True)
-    log.info('Network ready: {} (bridge={})', name, bridge)
+        with tempfile.NamedTemporaryFile('w', delete=False) as f:
+            f.write(xml)
+            tmp = f.name
+        with PlanScope(
+            mgr,
+            'Define and start managed libvirt network',
+            why=(
+                'Create the configured NAT network definition, enable autostart, '
+                'and bring it online for VM use.'
+            ),
+            approval_scope=f'network-ensure:{name}',
+        ):
+            if exists and recreate:
+                mgr.submit(
+                    ['virsh', 'net-destroy', name],
+                    sudo=True,
+                    role='modify',
+                    check=False,
+                    capture=True,
+                    summary=f'Stop existing libvirt network {name}',
+                )
+                mgr.submit(
+                    ['virsh', 'net-undefine', name],
+                    sudo=True,
+                    role='modify',
+                    check=False,
+                    capture=True,
+                    summary=f'Remove existing libvirt network definition {name}',
+                )
+            mgr.submit(
+                ['virsh', 'net-define', tmp],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary=f'Define libvirt network {name} from generated XML',
+                detail=f'bridge={bridge} subnet={subnet} gateway={gw}',
+            )
+            mgr.submit(
+                ['virsh', 'net-autostart', name],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary=f'Enable autostart for libvirt network {name}',
+            )
+            mgr.submit(
+                ['virsh', 'net-start', name],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary=f'Start libvirt network {name}',
+            )
+        log.info('Network ready: {} (bridge={})', name, bridge)
 
 
 def network_status(cfg: AgentVMConfig) -> str:

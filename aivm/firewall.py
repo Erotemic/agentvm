@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from loguru import logger
 
+from .commands import CommandManager, IntentScope, PlanScope
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
 from .util import run_cmd
@@ -152,19 +153,42 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     if dry_run:
         log.info('DRYRUN: nft -f - <<EOF\\n{}\\nEOF', script.rstrip())
         return
-    run_cmd(
-        ['nft', 'delete', 'table', 'inet', table],
-        sudo=True,
-        check=False,
-        capture=True,
-    )
-    run_cmd(
-        ['nft', '-f', '-'],
-        sudo=True,
-        check=True,
-        capture=True,
-        input_text=script,
-    )
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        f'Apply firewall table {table}',
+        why=(
+            'The VM bridge firewall step enforces the configured host/guest '
+            'isolation policy before workloads run inside the VM.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Replace nftables rules for managed VM bridge',
+            why=(
+                'Clear the previous managed nftables table if present, then '
+                'load the freshly rendered ruleset.'
+            ),
+            approval_scope=f'firewall:{table}',
+        ):
+            mgr.submit(
+                ['nft', 'delete', 'table', 'inet', table],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary=f'Remove previous nftables table inet {table} if present',
+            )
+            mgr.submit(
+                ['nft', '-f', '-'],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                input_text=script,
+                summary=f'Load rendered nftables rules into inet {table}',
+            )
     log.info('Firewall rules applied (table=inet {}).', table)
 
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import scriptconfig as scfg
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..detect import detect_ssh_identity
 from ..store import (
@@ -26,7 +27,7 @@ from ..store import (
 from ..util import arm_sudo_intent, clear_sudo_intent, sudo_intent_auto_yes
 
 log = logger
-_LAST_LOGGING_STATE: tuple[str, bool] | None = None
+_LAST_LOGGING_STATE: tuple[str, bool, int] | None = None
 _CURRENT_YES_SUDO: ContextVar[bool] = ContextVar(
     'aivm_current_yes_sudo', default=False
 )
@@ -81,6 +82,15 @@ class _BaseCommand(scfg.DataConfig):
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
         _CURRENT_AUTO_APPROVE_READONLY_SUDO.set(
             bool(cfg_auto_approve_readonly_sudo)
+        )
+        CommandManager.activate(
+            CommandManager(
+                yes=bool(getattr(parsed, 'yes', False)),
+                yes_sudo=bool(effective_yes_sudo),
+                auto_approve_readonly_sudo=bool(
+                    cfg_auto_approve_readonly_sudo
+                ),
+            )
         )
         args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
         _setup_logging(args_verbose, cfg_verbosity)
@@ -157,7 +167,7 @@ def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
     elif effective_verbosity >= 3:
         level = 'TRACE'
     colorize = sys.stderr.isatty() and os.getenv('NO_COLOR') is None
-    state = (level, colorize)
+    state = (level, colorize, id(sys.stderr))
     if _LAST_LOGGING_STATE == state:
         return
     logger.remove()

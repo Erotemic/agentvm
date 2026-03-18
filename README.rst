@@ -72,6 +72,11 @@ Currently ``aivm config init``  is required, but we will make that implicit in a
 (``~/.config/aivm/config.toml``), attaches the current folder if needed, and
 opens VS Code.
 
+During setup and reconcile flows, subprocess logging is now organized around
+user-meaningful steps instead of isolated commands. ``aivm`` shows the current
+step, why it exists, and the planned command summaries for that step before it
+runs them. Raw commands still appear at higher verbosity.
+
 If you prefer an explicit flow, ``aivm config init`` is required before
 ``aivm vm create``.
 
@@ -87,15 +92,29 @@ Status and sudo behavior
 By default, ``aivm status`` avoids privileged probes. Use ``--sudo`` for
 network/firewall/libvirt/image checks.
 
-Sudo policy defaults:
+Command manager defaults:
 
-* read-only sudo probes (inspect/query/status) are auto-approved
-* state-changing sudo actions still prompt unless ``--yes``/``--yes-sudo`` is set
+* subprocess execution is centralized through a command manager
+* logs are grouped into step/plan previews with nested context
+* read-only sudo probes (inspect/query/status) are auto-approved by default
+* state-changing sudo steps still prompt unless ``--yes``/``--yes-sudo`` is set
+* approval usually happens once per grouped step, not once per command
+
+Grouped approval does **not** widen privilege beyond the commands shown in the
+step preview. The preview is the approval boundary.
 
 Use:
 
 * ``--yes`` to auto-approve all prompts
 * ``--yes-sudo`` to auto-approve only sudo prompts
+
+When running interactively, expect step previews such as:
+
+* current context / breadcrumb
+* current step title
+* why the step exists
+* summaries of the commands in that step
+* a single approval prompt for the whole step when required
 
 Config defaults:
 

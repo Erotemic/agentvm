@@ -11,6 +11,10 @@ Open project in VM
    aivm code .
    aivm vm code . --sync_settings
 
+These shortcut flows now report progress as grouped steps. Expect a current
+step title, a short explanation of why that step is happening, and one approval
+prompt for the whole step when privileged host changes are required.
+
 SSH into mapped directory
 -------------------------
 
@@ -117,6 +121,19 @@ Reconcile VM drift
 .. code-block:: bash
 
    aivm vm update
+
+Workflow logging model
+----------------------
+
+``aivm`` command execution is organized around:
+
+* nested intent context, which keeps the larger goal visible
+* step/plan previews, which describe what the current sequence of commands is
+  about to do
+* raw commands, which remain visible for deeper inspection at higher verbosity
+
+This is meant to make multi-command workflows easier to follow and safer to
+approve than a stream of isolated sudo command prompts.
 
 Get command tree
 ----------------

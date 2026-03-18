@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
+from ..commands import CommandManager, IntentScope, PlanScope
 from ..config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     SUPPORTED_IMAGE_SHA256,
@@ -123,6 +124,40 @@ def _vm_defined(name: str) -> bool:
             capture=True,
         ).code
         == 0
+    )
+
+
+def _submit_qemu_dir_prepare(
+    mgr: CommandManager,
+    path: Path,
+    *,
+    group: str,
+    mode: str,
+    summary_prefix: str,
+) -> None:
+    mgr.submit(
+        ['mkdir', '-p', str(path)],
+        sudo=True,
+        role='modify',
+        check=True,
+        capture=True,
+        summary=f'Create {summary_prefix}',
+    )
+    mgr.submit(
+        ['chown', '-R', f'root:{group}', str(path)],
+        sudo=True,
+        role='modify',
+        check=True,
+        capture=True,
+        summary=f'Set libvirt ownership for {summary_prefix}',
+    )
+    mgr.submit(
+        ['chmod', mode, str(path)],
+        sudo=True,
+        role='modify',
+        check=True,
+        capture=True,
+        summary=f'Set permissions for {summary_prefix}',
     )
 
 
@@ -404,28 +439,46 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
             'DRYRUN: chown/chmod {} for qemu access (group={})', base_root, grp
         )
         return
-    run_cmd(
-        ['mkdir', '-p', str(base_root)], sudo=True, check=True, capture=True
-    )
-    run_cmd(
-        ['chown', '-R', f'root:{grp}', str(base_root)],
-        sudo=True,
-        check=True,
-        capture=True,
-    )
-    run_cmd(
-        ['chmod', '0751', str(base_root)], sudo=True, check=True, capture=True
-    )
-    for sub in ('images', 'cloud-init'):
-        d = base_root / sub
-        run_cmd(['mkdir', '-p', str(d)], sudo=True, check=True, capture=True)
-        run_cmd(
-            ['chown', '-R', f'root:{grp}', str(d)],
-            sudo=True,
-            check=True,
-            capture=True,
-        )
-        run_cmd(['chmod', '0750', str(d)], sudo=True, check=True, capture=True)
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        'Prepare VM storage',
+        why=(
+            'libvirt/qemu need host directories with predictable ownership and '
+            'permissions before images and cloud-init artifacts are written.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Prepare qemu-accessible VM directories',
+            why=(
+                'Create the VM root plus image and cloud-init directories with '
+                'libvirt-readable ownership and permissions.'
+            ),
+            approval_scope=f'vm-storage:{base_root}',
+        ):
+            _submit_qemu_dir_prepare(
+                mgr,
+                base_root,
+                group=grp,
+                mode='0751',
+                summary_prefix='VM root directory',
+            )
+            _submit_qemu_dir_prepare(
+                mgr,
+                base_root / 'images',
+                group=grp,
+                mode='0750',
+                summary_prefix='VM image directory',
+            )
+            _submit_qemu_dir_prepare(
+                mgr,
+                base_root / 'cloud-init',
+                group=grp,
+                mode='0750',
+                summary_prefix='cloud-init directory',
+            )
 
 
 def _write_cloud_init(
@@ -561,40 +614,78 @@ def _write_cloud_init(
             'seed_iso': seed_iso,
         }
 
-    run_cmd(['mkdir', '-p', str(ci_dir)], sudo=True, check=True, capture=True)
     _ensure_qemu_access(cfg, dry_run=False)
-    run_cmd(
-        ['bash', '-lc', f"cat > {user_data} <<'EOF'\n{cloud}\nEOF"],
-        sudo=True,
-        check=True,
-        capture=True,
-    )
-    run_cmd(
-        ['bash', '-lc', f"cat > {meta_data} <<'EOF'\n{meta}\nEOF"],
-        sudo=True,
-        check=True,
-        capture=True,
-    )
-    run_cmd(
-        ['bash', '-lc', f"cat > {network_config} <<'EOF'\n{netcfg}\nEOF"],
-        sudo=True,
-        check=True,
-        capture=True,
-    )
-    run_cmd(
-        [
-            'cloud-localds',
-            '-v',
-            '-N',
-            str(network_config),
-            str(seed_iso),
-            str(user_data),
-            str(meta_data),
-        ],
-        sudo=True,
-        check=True,
-        capture=True,
-    )
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        'Generate cloud-init artifacts',
+        why=(
+            'VM creation needs cloud-init user-data, metadata, network config, '
+            'and a seed ISO before virt-install can define the guest.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Write cloud-init files and build seed ISO',
+            why=(
+                'Materialize the rendered cloud-init files on the host and pack '
+                'them into a NoCloud seed image for the VM.'
+            ),
+            approval_scope=f'cloud-init:{cfg.vm.name}',
+        ):
+            mgr.submit(
+                ['mkdir', '-p', str(ci_dir)],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary='Create cloud-init artifact directory',
+            )
+            mgr.submit(
+                ['bash', '-lc', f"cat > {user_data} <<'EOF'\n{cloud}\nEOF"],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary='Write cloud-init user-data',
+            )
+            mgr.submit(
+                ['bash', '-lc', f"cat > {meta_data} <<'EOF'\n{meta}\nEOF"],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary='Write cloud-init meta-data',
+            )
+            mgr.submit(
+                [
+                    'bash',
+                    '-lc',
+                    f"cat > {network_config} <<'EOF'\n{netcfg}\nEOF",
+                ],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary='Write cloud-init network config',
+            )
+            mgr.submit(
+                [
+                    'cloud-localds',
+                    '-v',
+                    '-N',
+                    str(network_config),
+                    str(seed_iso),
+                    str(user_data),
+                    str(meta_data),
+                ],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                summary='Build NoCloud seed ISO from cloud-init files',
+            )
     return {
         'user_data': user_data,
         'meta_data': meta_data,

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from aivm.commands import CommandManager
 from aivm.config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     AgentVMConfig,
@@ -312,15 +313,25 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
         'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
         if cmd[:2] == ['bash', '-lc'] and 'cat > ' in cmd[2]:
             script = cmd[2]
             if 'user-data' in script:
                 heredocs['user-data'] = script
-        return CmdResult(0, '', '')
+        return P(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    CommandManager.activate(CommandManager())
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 0)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run', fake_subprocess_run
+    )
     _write_cloud_init(cfg, dry_run=False)
     user_data_script = heredocs['user-data']
     assert '#cloud-config' in user_data_script

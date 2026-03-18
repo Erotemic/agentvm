@@ -12,6 +12,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from .commands import CommandManager, IntentScope, PlanScope
 from .util import run_cmd, which
 
 log = logger
@@ -103,35 +104,65 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
         'iproute2',
         'nftables',
     ]
-    run_cmd(
-        _debian_noninteractive_cmd('apt-get', 'update', '-y'),
-        sudo=True,
-        check=True,
-        capture=False,
-    )
-    run_cmd(
-        _debian_noninteractive_cmd('apt-get', 'install', '-y', *pkgs),
-        sudo=True,
-        check=True,
-        capture=False,
-    )
-    # Some distros split virtiofsd into a separate package; install best-effort.
-    # TODO: on 22.04 you can get virtiofsd with qemu-system-common, add
-    # alternative to use that if virtiofsd is not available.
-    virtiofsd_install = run_cmd(
-        _debian_noninteractive_cmd('apt-get', 'install', '-y', 'virtiofsd'),
-        sudo=True,
-        check=False,
-        capture=False,
-    )
+    del assume_yes
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        'Prepare host libvirt dependencies',
+        why=(
+            'Fresh-machine VM workflows need libvirt, qemu, cloud-init tools, '
+            'and libvirtd available before network or VM setup can succeed.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Install Debian/Ubuntu host dependencies',
+            why=(
+                'Refresh apt metadata, install required VM host packages, '
+                'attempt optional virtiofsd installation, and enable libvirtd.'
+            ),
+            approval_scope='host-install-deps',
+        ):
+            mgr.submit(
+                _debian_noninteractive_cmd('apt-get', 'update', '-y'),
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=False,
+                summary='Refresh apt package metadata',
+            )
+            mgr.submit(
+                _debian_noninteractive_cmd('apt-get', 'install', '-y', *pkgs),
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=False,
+                summary='Install required qemu/libvirt/cloud-init host packages',
+            )
+            # Some distros split virtiofsd into a separate package; install
+            # best-effort so folder sharing can work when available.
+            virtiofsd_install = mgr.submit(
+                _debian_noninteractive_cmd(
+                    'apt-get', 'install', '-y', 'virtiofsd'
+                ),
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=False,
+                summary='Try installing optional virtiofsd package',
+                detail='Folder sharing can rely on virtiofsd on some hosts.',
+            )
+            mgr.submit(
+                ['systemctl', 'enable', '--now', 'libvirtd'],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=False,
+                summary='Enable and start libvirtd service',
+            )
     if virtiofsd_install.code != 0:
         log.warning(
             'Optional package `virtiofsd` was not installed. '
             'Folder sharing may fail if virtiofsd is unavailable on this host.'
         )
-    run_cmd(
-        ['systemctl', 'enable', '--now', 'libvirtd'],
-        sudo=True,
-        check=False,
-        capture=False,
-    )

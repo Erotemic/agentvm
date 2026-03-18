@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from aivm.commands import CommandManager
 from aivm.host import (
     check_commands,
     check_commands_with_sudo,
@@ -74,38 +75,49 @@ def test_install_deps_debian_behaviors(monkeypatch) -> None:
 
     calls = []
     monkeypatch.setattr('aivm.host.host_is_debian_like', lambda: True)
+    CommandManager.activate(CommandManager(yes_sudo=True))
 
-    def fake_run_cmd(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        return CmdResult(0, '', '')
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
 
     monkeypatch.setattr(
-        'aivm.host.run_cmd',
-        fake_run_cmd,
+        'aivm.commands.os.geteuid',
+        lambda: 1000,
+    )
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
     )
     install_deps_debian()
     assert calls[0][0][:5] == [
+        'sudo',
         'env',
         'DEBIAN_FRONTEND=noninteractive',
         'NEEDRESTART_MODE=a',
         'apt-get',
-        'update',
     ]
+    assert calls[0][0][5] == 'update'
     assert calls[1][0][:5] == [
+        'sudo',
         'env',
         'DEBIAN_FRONTEND=noninteractive',
         'NEEDRESTART_MODE=a',
         'apt-get',
-        'install',
     ]
+    assert calls[1][0][5] == 'install'
     assert calls[2][0][:5] == [
+        'sudo',
         'env',
         'DEBIAN_FRONTEND=noninteractive',
         'NEEDRESTART_MODE=a',
         'apt-get',
-        'install',
     ]
+    assert calls[2][0][5] == 'install'
     assert calls[2][0][-1] == 'virtiofsd'
-    assert calls[3][0][:3] == ['systemctl', 'enable', '--now']
-    assert calls[0][1]['capture'] is False
-    assert calls[1][1]['capture'] is False
+    assert calls[3][0][:4] == ['sudo', 'systemctl', 'enable', '--now']
+    assert calls[0][1]['capture_output'] is False
+    assert calls[1][1]['capture_output'] is False

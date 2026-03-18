@@ -428,6 +428,15 @@ Host package installation and supply chain
 ``aivm host install_deps`` may install host packages (e.g. libvirt, qemu, nftables,
 SSH client tools).
 
+Operational UX note:
+
+* ``aivm`` now previews grouped host-operation plans before execution.
+* Approval is typically granted once per step/plan, not once per individual
+  command.
+* The approved privilege boundary is still the exact set of commands shown in
+  that step preview; grouped approval is intended to reduce prompt fatigue, not
+  to hide additional commands.
+
 Risks introduced:
 
 * Expanded host attack surface from additional privileged services/binaries.
