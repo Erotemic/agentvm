@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from aivm.commands import CommandManager
+from aivm.cli.vm import ResolvedAttachment, _ensure_shared_root_host_bind
 from aivm.config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     AgentVMConfig,
@@ -15,6 +16,7 @@ from aivm.config import (
 from aivm.util import CmdError, CmdResult
 from aivm.vm import (
     _mac_for_vm,
+    _ensure_qemu_access,
     _write_cloud_init,
     attach_vm_share,
     create_or_start_vm,
@@ -719,6 +721,60 @@ def test_fetch_image_preview_uses_grouped_block_summaries(
     assert '  3. Download base image into staging file' in messages
     assert '  4. Move staged base image into cache' in messages
     assert '  5. Compute base image checksum' in messages
+
+
+def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _activate_manager()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-bind-safe'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    source_dir = tmp_path / 'source'
+    source_dir.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode='shared-root',
+        access='rw',
+        source_dir=str(source_dir.resolve()),
+        guest_dst='/workspace/source',
+        tag='hostcode-source',
+    )
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        calls.append([str(part) for part in cmd])
+        if cmd[:2] == ['getent', 'group']:
+            return CmdResult(0, 'libvirt-qemu:x:1:\n', '')
+        return CmdResult(0, '', '')
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        normalized = [str(part) for part in cmd]
+        if normalized[:2] == ['sudo', '-n']:
+            normalized = normalized[2:]
+        calls.append(normalized)
+        if normalized[:2] == ['findmnt', '-n']:
+            return _Proc(1, '', '')
+        return _Proc(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    _ensure_shared_root_host_bind(
+        cfg,
+        attachment,
+        yes=True,
+        dry_run=False,
+    )
+    _ensure_qemu_access(cfg, dry_run=False)
+
+    command_text = [' '.join(c) for c in calls]
+    base_root = str(Path(cfg.paths.base_dir) / cfg.vm.name)
+    assert any(line.startswith(f'mount --bind {source_dir}') for line in command_text)
+    assert f'chown -R root:libvirt-qemu {base_root}' not in command_text
+    assert f'chown -R root:kvm {base_root}' not in command_text
 
 
 def test_fetch_image_rejects_unsupported_file_url_digest(

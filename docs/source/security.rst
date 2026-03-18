@@ -436,9 +436,14 @@ Operational UX note:
 * The approved privilege boundary is still the exact set of commands shown in
   that step preview; grouped approval is intended to reduce prompt fatigue, not
   to hide additional commands.
-* Interactive approval uses ``y`` for the current step only and ``a`` for the
-  current plus later steps.
-* Raw command lines remain available at higher verbosity for audit/debug use.
+* Interactive approval uses ``y`` for the current step only, ``a`` for the
+  current plus later steps, and ``s`` to reveal the full exact commands for the
+  current step before deciding.
+* Full executed command lines are always logged for audit/debug use, and raw
+  command previews remain available at higher verbosity.
+* Shared-root host setup is intended to preserve the ownership and permissions
+  of the user's original source tree rather than recursively rewriting
+  bind-mounted project paths.
 
 Risks introduced:
 

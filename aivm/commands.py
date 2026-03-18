@@ -11,6 +11,7 @@ import os
 import shlex
 import subprocess
 import sys
+import inspect
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Literal, Optional, Sequence
@@ -63,6 +64,7 @@ class CommandSpec:
     timeout: float | None = None
     summary: str = ''
     detail: str = ''
+    submitted_by: str = ''
 
 
 @dataclass
@@ -114,6 +116,7 @@ class CommandPlan:
     title: str
     why: str = ''
     approval_scope: str = ''
+    submitted_by: str = ''
     commands: list[PlannedCommand] = field(default_factory=list)
     approved: bool = False
     executed_upto: int = -1
@@ -170,7 +173,10 @@ class PlanScope:
     ):
         self.manager = manager
         self.plan = CommandPlan(
-            title=title, why=why, approval_scope=approval_scope
+            title=title,
+            why=why,
+            approval_scope=approval_scope,
+            submitted_by=manager.capture_submitter(),
         )
 
     def __enter__(self) -> CommandPlan:
@@ -289,6 +295,25 @@ class CommandManager:
     def compat_auto_yes(self) -> bool:
         return bool(self._approve_all_remaining)
 
+    def capture_submitter(self) -> str:
+        frame = inspect.currentframe()
+        if frame is None:
+            return ''
+        try:
+            cur = frame.f_back
+            while cur is not None:
+                mod = inspect.getmodule(cur)
+                mod_name = mod.__name__ if mod is not None else ''
+                if mod_name not in {'aivm.commands', 'aivm.util'}:
+                    return (
+                        f'{mod_name or "(unknown)"}:'
+                        f'{cur.f_code.co_name}:{cur.f_lineno}'
+                    )
+                cur = cur.f_back
+        finally:
+            del frame
+        return ''
+
     def submit(
         self,
         cmd: Sequence[str],
@@ -317,6 +342,7 @@ class CommandManager:
             timeout=timeout,
             summary=summary.strip(),
             detail=detail.strip(),
+            submitted_by=self.capture_submitter(),
         )
         handle = CommandHandle(manager=self, command_id=self._next_command_id)
         planned = PlannedCommand(
@@ -401,14 +427,21 @@ class CommandManager:
                 'Privileged host operations require confirmation, but stdin is not interactive. '
                 'Re-run with --yes or --yes-sudo.'
             )
-        ans = input('Approve this step? [y]es/[a]ll/[N]o: ').strip().lower()
-        if ans in {'a', 'all'}:
-            self._approve_all_remaining = True
-            plan.approved = True
-            return
-        if ans not in {'y', 'yes'}:
+        while True:
+            ans = input(
+                'Approve this step? [y]es/[a]ll/[s]how/[N]o: '
+            ).strip().lower()
+            if ans in {'s', 'show'}:
+                self._render_plan_full_commands(plan)
+                continue
+            if ans in {'a', 'all'}:
+                self._approve_all_remaining = True
+                plan.approved = True
+                return
+            if ans in {'y', 'yes'}:
+                plan.approved = True
+                return
             raise RuntimeError('Aborted by user.')
-        plan.approved = True
 
     def _render_plan_preview(self, plan: CommandPlan) -> None:
         if plan.rendered_preview:
@@ -416,6 +449,8 @@ class CommandManager:
         breadcrumb = self.render_breadcrumb()
         local_log = log.opt(depth=2)
         local_log.info('Step: {}', plan.title)
+        if plan.submitted_by:
+            local_log.info('Submitted by: {}', plan.submitted_by)
         if breadcrumb:
             local_log.info('Context: {}', breadcrumb)
         if plan.why:
@@ -434,6 +469,12 @@ class CommandManager:
                 local_log.debug('     raw command: {}', raw_cmd)
             local_log.trace('     role={} capture={}', role, item.spec.capture)
         plan.rendered_preview = True
+
+    def _render_plan_full_commands(self, plan: CommandPlan) -> None:
+        local_log = log.opt(depth=2)
+        local_log.info('Full commands for step: {}', plan.title)
+        for idx, item in enumerate(plan.commands, start=1):
+            local_log.info('  {}. {}', idx, self._raw_command(item.spec))
 
     def _flush_plan(
         self,
@@ -562,11 +603,34 @@ class CommandManager:
 
         if within_plan and ordinal is not None:
             current, total = ordinal
-            logger('RUN [{}/{}]: {}', current, total, run_line)
+            if spec.submitted_by:
+                logger(
+                    'RUN [{}/{}]: {} (submitted_by={})',
+                    current,
+                    total,
+                    run_line,
+                    spec.submitted_by,
+                )
+            else:
+                logger('RUN [{}/{}]: {}', current, total, run_line)
         elif spec.check:
-            local_log.info('RUN: {}', run_line)
+            if spec.submitted_by:
+                local_log.info(
+                    'RUN: {} (submitted_by={})',
+                    run_line,
+                    spec.submitted_by,
+                )
+            else:
+                local_log.info('RUN: {}', run_line)
         else:
-            logger('RUN: {}', run_line)
+            if spec.submitted_by:
+                logger(
+                    'RUN: {} (submitted_by={})',
+                    run_line,
+                    spec.submitted_by,
+                )
+            else:
+                logger('RUN: {}', run_line)
 
         try:
             proc = subprocess.run(

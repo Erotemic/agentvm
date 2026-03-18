@@ -150,6 +150,12 @@ Interactive approval semantics:
 
 * ``y`` approves the current block only
 * ``a`` approves the current block and all later blocks
+* ``s`` shows the full exact commands for the current block, then reprompts
+
+Normal previews are intentionally readable and may abbreviate long shell blobs,
+but the full exact commands can be shown before approval and are always logged
+when they execute. For ``shared-root`` attachments, host-side preparation is
+designed to avoid mutating ownership or permissions in the user's source tree.
 
 Get command tree
 ----------------

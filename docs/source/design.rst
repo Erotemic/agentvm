@@ -186,7 +186,8 @@ Decision:
   The manager should show the current step title, breadcrumb/context, why the
   step exists, and both the semantic meaning and exact command for each planned
   action in the step preview. Full raw command lines remain available in
-  debug/trace output.
+  debug/trace output, and the full executed command is always logged for
+  auditability.
 Consequences:
   Sudo approval now normally happens at the plan/step boundary rather than for
   each command in a multi-command workflow. This reduces prompt fatigue while
@@ -223,6 +224,8 @@ Plan and approval semantics
 
   * ``y`` approves the current plan/block only
   * ``a`` approves the current plan/block and all later plans/blocks too
+  * ``s`` shows the full exact commands for the current plan/block, then
+    reprompts
 * Once a plan is approved, legacy per-command sudo prompting must not fire for
   commands inside that approved plan.
 
@@ -234,6 +237,10 @@ Migration expectations
   ``CommandManager`` and use explicit ``IntentScope`` / ``PlanScope`` blocks.
 * Legacy ambient sudo-intent helpers may exist temporarily, but they are not
   the target API shape.
+* Shared-root host preparation must preserve the ownership and permissions of
+  the user's source tree; qemu/libvirt-access preparation should be limited to
+  aivm-managed internal directories rather than applied recursively through
+  bind-mounted exports.
 
 State management
 ~~~~~~~~~~~~~~~~

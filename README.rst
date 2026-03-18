@@ -121,11 +121,16 @@ Interactive approval semantics:
 
 * ``y`` approves the current step only
 * ``a`` approves the current step and all later steps
+* ``s`` shows the full exact commands for the current step, then reprompts
 
 For example, the default ``shared-root`` path used by ``aivm ssh .`` /
 ``aivm code .`` now groups attachment reconciliation into named steps such as
 inspecting host bind state, preparing host bind targets, ensuring the VM
 virtiofs mapping, and mounting/verifying the bind inside the guest.
+
+Readable previews may abbreviate long shell payloads, but the full exact
+commands are still available on demand in the approval prompt and are always
+logged when they actually run.
 
 Config defaults:
 
@@ -188,6 +193,9 @@ PCI/PCIe capacity), which surfaces from libvirt as errors like
 
 ``shared-root`` is designed to reduce this pressure by using one persistent
 virtiofs mapping per VM and per-attachment host/guest bind mounts.
+Its host-side preparation is also designed to avoid mutating the ownership or
+permissions of the user's source tree; ``aivm`` prepares only its own internal
+directories and does not recursively rewrite a bind-mounted project path.
 
 Workarounds today:
 

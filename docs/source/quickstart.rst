@@ -49,6 +49,10 @@ Notes
 * Privileged operations prompt unless ``--yes`` or ``--yes-sudo`` is used.
 * Approvals normally happen once per grouped step, not once per command.
 * Step previews show both semantic summaries and the exact commands to be run.
+* ``s`` shows the full exact commands for the current step, then reprompts.
 * ``y`` approves the current step only; ``a`` approves the current and all
   later steps.
-* Raw commands are still visible at higher verbosity levels.
+* Full executed commands are always logged; raw commands are also still visible
+  at higher verbosity levels.
+* Shared-root setup is designed to avoid changing ownership/perms of your host
+  source tree.

@@ -134,6 +134,7 @@ def _submit_qemu_dir_prepare(
     group: str,
     mode: str,
     summary_prefix: str,
+    recursive: bool,
 ) -> None:
     mgr.submit(
         ['mkdir', '-p', str(path)],
@@ -144,7 +145,7 @@ def _submit_qemu_dir_prepare(
         summary=f'Create {summary_prefix}',
     )
     mgr.submit(
-        ['chown', '-R', f'root:{group}', str(path)],
+        ['chown', *( ['-R'] if recursive else [] ), f'root:{group}', str(path)],
         sudo=True,
         role='modify',
         check=True,
@@ -563,6 +564,7 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                 group=grp,
                 mode='0751',
                 summary_prefix='VM root directory',
+                recursive=False,
             )
             _submit_qemu_dir_prepare(
                 mgr,
@@ -570,6 +572,7 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                 group=grp,
                 mode='0750',
                 summary_prefix='VM image directory',
+                recursive=True,
             )
             _submit_qemu_dir_prepare(
                 mgr,
@@ -577,6 +580,7 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                 group=grp,
                 mode='0750',
                 summary_prefix='cloud-init directory',
+                recursive=True,
             )
 
 

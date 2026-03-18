@@ -187,8 +187,8 @@ def test_plan_yes_approves_current_block_only(monkeypatch) -> None:
         mgr.submit(['true'], sudo=True, role='modify', summary='step two')
 
     assert prompts == [
-        'Approve this step? [y]es/[a]ll/[N]o: ',
-        'Approve this step? [y]es/[a]ll/[N]o: ',
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
     ]
 
 
@@ -219,7 +219,59 @@ def test_plan_all_approves_current_and_future_blocks(monkeypatch) -> None:
     with PlanScope(mgr, 'Step two'):
         mgr.submit(['true'], sudo=True, role='modify', summary='step two')
 
-    assert prompts == ['Approve this step? [y]es/[a]ll/[N]o: ']
+    assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
+
+
+def test_plan_show_full_commands_then_reprompts(monkeypatch) -> None:
+    _activate_manager()
+    prompts = []
+    messages = []
+
+    class P:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    class _FakeLog:
+        def info(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def debug(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def trace(self, fmt: str, *args) -> None:
+            return None
+
+    answers = iter(['s', 'y'])
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        builtins,
+        'input',
+        lambda prompt: (prompts.append(prompt) or next(answers)),
+    )
+    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: P(),
+    )
+
+    mgr = CommandManager.current()
+    with PlanScope(mgr, 'Write cloud-init'):
+        mgr.submit(
+            ['bash', '-lc', "cat > /tmp/user-data <<'EOF'\nhello\nEOF"],
+            sudo=True,
+            role='modify',
+            summary='Write cloud-init user-data',
+        )
+
+    assert prompts == [
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+    ]
+    joined = '\n'.join(messages)
+    assert 'Full commands for step: Write cloud-init' in joined
+    assert "sudo bash -lc 'cat > /tmp/user-data <<'\"'\"'EOF'" in joined
 
 
 def test_run_cmd_compatibility_shim_uses_manager(monkeypatch) -> None:
@@ -282,6 +334,47 @@ def test_plan_preview_includes_summary_and_command(monkeypatch) -> None:
     joined = '\n'.join(messages)
     assert '  1. Enable and start libvirtd service' in joined
     assert 'command: sudo systemctl enable --now libvirtd' in joined
+
+
+def test_run_logs_include_submitter_attribution(monkeypatch) -> None:
+    _activate_manager(yes_sudo=True)
+    messages = []
+
+    class P:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    class _FakeLog:
+        def info(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def debug(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def trace(self, fmt: str, *args) -> None:
+            return None
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: P(),
+    )
+
+    mgr = CommandManager.current()
+    with PlanScope(mgr, 'Enable service'):
+        mgr.submit(
+            ['systemctl', 'enable', '--now', 'libvirtd'],
+            sudo=True,
+            role='modify',
+            summary='Enable and start libvirtd service',
+        )
+
+    joined = '\n'.join(messages)
+    assert 'Submitted by: test_util:test_run_logs_include_submitter_attribution' in joined
+    assert 'submitted_by=test_util:test_run_logs_include_submitter_attribution' in joined
 
 
 def test_read_only_command_stays_read_inside_modify_intent(
