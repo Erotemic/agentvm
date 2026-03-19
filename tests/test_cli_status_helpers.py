@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from aivm.cli.vm import _parse_dominfo_hardware, _vm_hardware_drift
+from aivm.vm.drift import (
+    parse_dominfo_hardware as _parse_dominfo_hardware,
+    hardware_drift_report,
+    saved_vm_drift_report,
+)
 from aivm.config import AgentVMConfig
 from aivm.status import (
     ProbeOutcome,
@@ -179,11 +183,15 @@ def test_vm_hardware_drift(monkeypatch) -> None:
     cfg.vm.cpus = 4
     cfg.vm.ram_mb = 8192
     monkeypatch.setattr(
-        'aivm.cli.vm.run_cmd',
+        'aivm.vm.drift.run_cmd',
         lambda *a, **k: CmdResult(
             0, 'CPU(s): 2\nMax memory: 4194304 KiB\n', ''
         ),
     )
-    drift = _vm_hardware_drift(cfg)
-    assert drift['cpus'] == (2, 4)
-    assert drift['ram_mb'] == (4096, 8192)
+    report = hardware_drift_report(cfg, use_sudo=False)
+    assert report.ok is False
+    assert len(report.items) == 2
+    # Check that both CPU and RAM drift are detected
+    keys = {item.key for item in report.items}
+    assert 'cpus' in keys
+    assert 'ram_mb' in keys

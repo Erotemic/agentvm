@@ -17,6 +17,7 @@ from .runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
 from .store import load_store, store_path
 from .util import run_cmd, which
 from .vm import get_ip_cached, vm_share_mappings
+from .vm.drift import saved_vm_drift_report
 
 
 @dataclass(frozen=True)
@@ -422,6 +423,37 @@ def render_status(
         )
     else:
         lines.append(status_line(None, 'VM shared folders', 'VM not defined'))
+
+    # Config drift check: compare saved VM config against actual libvirt state
+    if vm_defined is True:
+        reg = load_store(path)
+        drift = saved_vm_drift_report(cfg, reg, use_sudo=use_sudo)
+        if drift.available:
+            if drift.ok is True:
+                lines.append(status_line(True, 'Config drift', 'in sync'))
+            else:
+                # drift.ok is False here (drift detected)
+                lines.append(
+                    status_line(
+                        False,
+                        'Config drift',
+                        f'{len(drift.items)} mismatch(es) detected',
+                    )
+                )
+                if detail:
+                    lines.append('Config Drift Details:')
+                    for item in drift.items:
+                        lines.append(f'  - {item.key}: expected={item.expected}, actual={item.actual}')
+            # Count this check
+            total += 1
+            done += int(drift.ok)
+        else:
+            # drift.available is False here (unavailable)
+            lines.append(
+                status_line(None, 'Config drift', drift.diag or 'unavailable')
+            )
+    else:
+        lines.append(status_line(None, 'Config drift', 'VM not defined'))
 
     ip_ok = bool(ip) and (vm_defined_effective is not False)
     if vm_display.ok is not None:

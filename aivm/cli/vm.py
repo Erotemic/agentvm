@@ -61,6 +61,19 @@ from ..vm import (
     wait_for_ip,
     wait_for_ssh,
 )
+from ..vm.drift import (
+    hardware_drift_report,
+    attachment_has_mapping as drift_attachment_has_mapping,
+    parse_dominfo_hardware as _parse_dominfo_hardware,
+    saved_vm_drift_report,
+)
+from ..vm.share import (
+    ATTACHMENT_MODE_SHARED,
+    ATTACHMENT_MODE_SHARED_ROOT,
+    ATTACHMENT_ACCESS_RW,
+    ResolvedAttachment,
+    align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
+)
 from ..vm import (
     ssh_config as mk_ssh_config,
 )
@@ -78,15 +91,12 @@ from ._common import (
     log,
 )
 
-ATTACHMENT_MODE_SHARED = 'shared'
-ATTACHMENT_MODE_SHARED_ROOT = 'shared-root'
 ATTACHMENT_MODE_GIT = 'git'
 ATTACHMENT_MODES = {
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     ATTACHMENT_MODE_GIT,
 }
-ATTACHMENT_ACCESS_RW = 'rw'
 ATTACHMENT_ACCESS_RO = 'ro'
 ATTACHMENT_ACCESS_MODES = {
     ATTACHMENT_ACCESS_RW,
@@ -858,10 +868,10 @@ class VMAttachCLI(_BaseCommand):
                     )
                     sudo_confirmed = True
                 mappings = vm_share_mappings(cfg)
-                attachment = _align_attachment_tag_with_mappings(
+                attachment = drift_align_attachment_tag_with_mappings(
                     attachment, host_src, mappings
                 )
-                if not _attachment_has_mapping(attachment, mappings):
+                if not drift_attachment_has_mapping(cfg, attachment, mappings):
                     _confirm_sudo_block(
                         yes=bool(args.yes),
                         purpose=f"Attach this folder to existing VM '{cfg.vm.name}'.",
@@ -1223,14 +1233,6 @@ class VMModalCLI(scfg.ModalCLI):
     code = VMCodeCLI
 
 
-@dataclass(frozen=True)
-class ResolvedAttachment:
-    vm_name: str
-    mode: str = ATTACHMENT_MODE_SHARED
-    access: str = ATTACHMENT_ACCESS_RW
-    source_dir: str = ''
-    guest_dst: str = ''
-    tag: str = ''
 
 
 @dataclass(frozen=True)
@@ -2272,43 +2274,6 @@ def _ensure_attachment_available_in_guest(
     )
 
 
-def _auto_share_tag_for_path(host_src: Path, existing_tags: set[str]) -> str:
-    max_len = 36
-    raw = re.sub(r'[^A-Za-z0-9_.-]+', '-', host_src.name or 'hostcode').strip(
-        '-'
-    )
-    base = f'hostcode-{raw}' if raw else 'hostcode'
-    base = base[:max_len]
-    if base not in existing_tags:
-        return base
-    suffix = hashlib.sha1(str(host_src).encode('utf-8')).hexdigest()[:8]
-    tag = f'{base[: max_len - 1 - len(suffix)]}-{suffix}'
-    if tag not in existing_tags:
-        return tag
-    idx = 2
-    while True:
-        tail = f'-{suffix[:5]}-{idx}'
-        cand = f'{base[: max_len - len(tail)]}{tail}'
-        if cand not in existing_tags:
-            return cand
-        idx += 1
-
-
-def _ensure_share_tag_len(
-    tag: str, host_src: Path, existing_tags: set[str]
-) -> str:
-    tag = (tag or '').strip()
-    if tag and len(tag) <= 36:
-        return tag
-    return _auto_share_tag_for_path(host_src, existing_tags)
-
-
-def _probe_vm_running_nonsudo(vm_name: str) -> bool | None:
-    res = run_cmd(
-        virsh_system_cmd('domstate', vm_name),
-        sudo=False,
-        check=False,
-        capture=True,
     )
     if res.code != 0:
         return None
@@ -2375,66 +2340,29 @@ def _missing_virtiofs_dir_from_error(ex: Exception) -> str | None:
     return m.group(1) if m else None
 
 
-def _parse_dominfo_hardware(dominfo_text: str) -> tuple[int | None, int | None]:
-    cpus = None
-    max_mem_mib = None
-    for line in (dominfo_text or '').splitlines():
-        if ':' not in line:
-            continue
-        key, val = [x.strip() for x in line.split(':', 1)]
-        low = key.lower()
-        if low in {'cpu(s)', 'cpus'}:
-            m = re.search(r'(\d+)', val)
-            if m:
-                cpus = int(m.group(1))
-        elif low.startswith('max memory'):
-            m = re.search(r'(\d+)', val)
-            if m:
-                max_mem_mib = int(m.group(1)) // 1024
-    return cpus, max_mem_mib
-
-
-def _vm_hardware_drift(cfg: AgentVMConfig) -> dict[str, tuple[int, int]]:
-    res = run_cmd(
-        virsh_system_cmd('dominfo', cfg.vm.name),
-        sudo=True,
-        check=False,
-        capture=True,
-    )
-    if res.code != 0:
-        return {}
-    cur_cpus, cur_mem_mib = _parse_dominfo_hardware(res.stdout)
-    drift: dict[str, tuple[int, int]] = {}
-    if cur_cpus is not None and cur_cpus != int(cfg.vm.cpus):
-        drift['cpus'] = (cur_cpus, int(cfg.vm.cpus))
-    if cur_mem_mib is not None and cur_mem_mib != int(cfg.vm.ram_mb):
-        drift['ram_mb'] = (cur_mem_mib, int(cfg.vm.ram_mb))
-    return drift
-
-
 def _maybe_warn_hardware_drift(cfg: AgentVMConfig) -> None:
-    drift = _vm_hardware_drift(cfg)
-    if not drift:
+    """Warn about hardware drift using the shared drift report."""
+    report = hardware_drift_report(cfg, use_sudo=True)
+    if not report.available or report.ok is True:
         return
+
     print(
         f'⚠️ VM {cfg.vm.name} is already defined and differs from config for hardware settings.'
     )
-    if 'cpus' in drift:
-        cur, want = drift['cpus']
-        print(f'  - cpus: current={cur} desired={want}')
-    if 'ram_mb' in drift:
-        cur, want = drift['ram_mb']
-        print(f'  - ram_mb: current={cur} desired={want}')
+    for item in report.items:
+        if item.key == 'cpus':
+            print(f'  - cpus: current={item.actual} desired={item.expected}')
+        elif item.key == 'ram_mb':
+            print(f'  - ram_mb: current={item.actual} desired={item.expected}')
     print('Suggested non-destructive apply commands:')
     print(f'  sudo virsh shutdown {cfg.vm.name}   # if VM is running')
-    if 'cpus' in drift:
-        _, want = drift['cpus']
-        print(f'  sudo virsh setvcpus {cfg.vm.name} {want} --config')
-    if 'ram_mb' in drift:
-        _, want = drift['ram_mb']
-        kib = int(want) * 1024
-        print(f'  sudo virsh setmaxmem {cfg.vm.name} {kib} --config')
-        print(f'  sudo virsh setmem {cfg.vm.name} {kib} --config')
+    for item in report.items:
+        if item.key == 'cpus':
+            print(f'  sudo virsh setvcpus {cfg.vm.name} {item.expected} --config')
+        elif item.key == 'ram_mb':
+            kib = int(item.expected) * 1024
+            print(f'  sudo virsh setmaxmem {cfg.vm.name} {kib} --config')
+            print(f'  sudo virsh setmem {cfg.vm.name} {kib} --config')
     print(
         'These updates preserve VM disk/state. Recreate is only needed for definition-level changes that cannot be edited in place.'
     )
@@ -2656,10 +2584,10 @@ def _restore_saved_vm_attachments(
         mappings = vm_share_mappings(cfg, use_sudo=False)
         needs_privileged_probe = False
         for att in shared_secondary:
-            aligned = _align_attachment_tag_with_mappings(
+            aligned = drift_align_attachment_tag_with_mappings(
                 att, Path(att.source_dir), mappings
             )
-            if not _attachment_has_mapping(aligned, mappings):
+            if not drift_attachment_has_mapping(cfg, aligned, mappings):
                 needs_privileged_probe = True
                 break
 
@@ -2721,10 +2649,10 @@ def _restore_saved_vm_attachments(
                 )
             continue
 
-        aligned = _align_attachment_tag_with_mappings(
+        aligned = drift_align_attachment_tag_with_mappings(
             att, Path(att.source_dir), mappings
         )
-        if not _attachment_has_mapping(aligned, mappings):
+        if not drift_attachment_has_mapping(cfg, aligned, mappings):
             _confirm_sudo_block(
                 yes=bool(yes),
                 purpose=f"Restore saved shared folder attachment on VM '{cfg.vm.name}'.",
@@ -2747,10 +2675,10 @@ def _restore_saved_vm_attachments(
                 )
                 continue
             mappings = vm_share_mappings(cfg, use_sudo=True)
-            aligned = _align_attachment_tag_with_mappings(
+            aligned = drift_align_attachment_tag_with_mappings(
                 aligned, Path(aligned.source_dir), mappings
             )
-            if not _attachment_has_mapping(aligned, mappings):
+            if not drift_attachment_has_mapping(cfg, aligned, mappings):
                 log.warning(
                     'Saved attachment still missing after restore attempt for VM {}: source={} guest_dst={} tag={}',
                     cfg.vm.name,
@@ -2796,30 +2724,9 @@ def _restore_saved_vm_attachments(
         )
 
 
-def _attachment_has_mapping(
-    att: ResolvedAttachment, mappings: list[tuple[str, str]]
-) -> bool:
-    return any(
-        src == att.source_dir and tag == att.tag for src, tag in mappings
-    )
-
-
-def _align_attachment_tag_with_mappings(
-    att: ResolvedAttachment, host_src: Path, mappings: list[tuple[str, str]]
-) -> ResolvedAttachment:
-    existing_tags = {tag for _, tag in mappings if tag}
-    tag = _ensure_share_tag_len(att.tag, host_src, existing_tags)
-    for src, existing_tag in mappings:
-        if src == att.source_dir and existing_tag:
-            tag = existing_tag
-            break
-    has_share = any(src == att.source_dir and t == tag for src, t in mappings)
-    if not has_share:
-        for src, existing_tag in mappings:
-            if existing_tag == tag and src != att.source_dir:
-                tag = _auto_share_tag_for_path(host_src, existing_tags)
-                break
-    return replace(att, tag=tag)
+# _attachment_has_mapping removed - use drift_attachment_has_mapping from drift.py
+# which takes cfg as first argument for proper shared-root handling
+# _align_attachment_tag_with_mappings removed - use drift_align_attachment_tag_with_mappings from drift.py
 
 
 def _virtiofs_mapping_for_attachment(
@@ -2899,7 +2806,7 @@ def _reconcile_attached_vm(
     ):
         mappings = vm_share_mappings(cfg, use_sudo=False)
         if attachment.mode == ATTACHMENT_MODE_SHARED:
-            attachment = _align_attachment_tag_with_mappings(
+            attachment = drift_align_attachment_tag_with_mappings(
                 attachment, host_src, mappings
             )
             virtiofs_mapping = _virtiofs_mapping_for_attachment(cfg, attachment)
@@ -2964,7 +2871,7 @@ def _reconcile_attached_vm(
         ):
             mappings = vm_share_mappings(cfg, use_sudo=False)
             if attachment.mode == ATTACHMENT_MODE_SHARED:
-                attachment = _align_attachment_tag_with_mappings(
+                attachment = drift_align_attachment_tag_with_mappings(
                     attachment, host_src, mappings
                 )
                 virtiofs_mapping = _virtiofs_mapping_for_attachment(

@@ -6,10 +6,13 @@ folders are shared into VMs.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shlex
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from loguru import logger
@@ -20,6 +23,100 @@ from ..runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
 from ..util import CmdError, run_cmd
 
 log = logger
+
+# Attachment mode constants
+ATTACHMENT_MODE_SHARED = 'shared'
+ATTACHMENT_MODE_SHARED_ROOT = 'shared-root'
+ATTACHMENT_ACCESS_RW = 'rw'
+
+# Shared-root tag constant
+SHARED_ROOT_VIRTIOFS_TAG = 'aivm-shared-root'
+
+
+@dataclass(frozen=True)
+class ResolvedAttachment:
+    """A resolved attachment with all fields computed for VM access.
+    
+    This is used throughout the drift detection and attachment reconcile flows.
+    """
+    vm_name: str
+    mode: str = ATTACHMENT_MODE_SHARED
+    access: str = ATTACHMENT_ACCESS_RW
+    source_dir: str = ''
+    guest_dst: str = ''
+    tag: str = ''
+
+
+def _auto_share_tag_for_path(host_src: Path, existing_tags: set[str]) -> str:
+    """Generate a unique tag for a host path that doesn't conflict with existing tags.
+    
+    This is used for tag alignment when attaching shares to avoid virtiofs conflicts.
+    """
+    max_len = 36
+    raw = re.sub(r'[^A-Za-z0-9_.-]+', '-', host_src.name or 'hostcode').strip('-')
+    base = f'hostcode-{raw}' if raw else 'hostcode'
+    base = base[:max_len]
+    if base not in existing_tags:
+        return base
+    suffix = hashlib.sha1(str(host_src).encode('utf-8')).hexdigest()[:8]
+    tag = f'{base[: max_len - 1 - len(suffix)]}-{suffix}'
+    if tag not in existing_tags:
+        return tag
+    idx = 2
+    while True:
+        tail = f'-{suffix[:5]}-{idx}'
+        cand = f'{base[: max_len - len(tail)]}{tail}'
+        if cand not in existing_tags:
+            return cand
+        idx += 1
+
+
+def _ensure_share_tag_len(tag: str, host_src: Path, existing_tags: set[str]) -> str:
+    """Ensure a tag is within the 36-character limit, generating a new one if needed.
+    
+    Args:
+        tag: The proposed tag.
+        host_src: The host source path (used for tag generation if needed).
+        existing_tags: Set of tags already in use.
+    
+    Returns:
+        A tag that is at most 36 characters and doesn't conflict with existing tags.
+    """
+    tag = (tag or '').strip()
+    if tag and len(tag) <= 36:
+        return tag
+    return _auto_share_tag_for_path(host_src, existing_tags)
+
+
+def align_attachment_tag_with_mappings(
+    att: 'ResolvedAttachment', host_src: Path, mappings: list[tuple[str, str]]
+) -> 'ResolvedAttachment':
+    """Align an attachment's tag with existing mappings to avoid conflicts.
+    
+    This ensures consistent tagging across multiple attachments and avoids
+    tag collisions that could cause virtiofs issues.
+    
+    Args:
+        att: The attachment to align.
+        host_src: The host source path (used for tag generation if needed).
+        mappings: Current VM mappings.
+    
+    Returns:
+        A new ResolvedAttachment with an aligned tag.
+    """
+    existing_tags = {tag for _, tag in mappings if tag}
+    tag = _ensure_share_tag_len(att.tag, host_src, existing_tags)
+    for src, existing_tag in mappings:
+        if src == att.source_dir and existing_tag:
+            tag = existing_tag
+            break
+    has_share = any(src == att.source_dir and t == tag for src, t in mappings)
+    if not has_share:
+        for src, existing_tag in mappings:
+            if existing_tag == tag and src != att.source_dir:
+                tag = _auto_share_tag_for_path(host_src, existing_tags)
+                break
+    return replace(att, tag=tag)
 
 
 def _is_virtiofs_filesystem(fs: ET.Element) -> bool:
