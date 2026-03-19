@@ -72,6 +72,7 @@ from ..vm.share import (
     ATTACHMENT_MODE_SHARED_ROOT,
     ATTACHMENT_ACCESS_RW,
     ResolvedAttachment,
+    SHARED_ROOT_VIRTIOFS_TAG,
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
 )
 from ..vm import (
@@ -102,7 +103,6 @@ ATTACHMENT_ACCESS_MODES = {
     ATTACHMENT_ACCESS_RW,
     ATTACHMENT_ACCESS_RO,
 }
-SHARED_ROOT_VIRTIOFS_TAG = 'aivm-shared-root'
 SHARED_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-shared'
 
 
@@ -2274,7 +2274,6 @@ def _ensure_attachment_available_in_guest(
     )
 
 
-    )
     if res.code != 0:
         return None
     state = (res.stdout or '').strip().lower()
