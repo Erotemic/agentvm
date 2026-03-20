@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aivm.cli.vm import (
-    ATTACHMENT_MODE_SHARED_ROOT,
+    AttachmentMode.SHARED_ROOT,
     ReconcileResult,
     ResolvedAttachment,
     VMUpdateCLI,
@@ -698,7 +698,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         store,
         host_path=host_src,
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         guest_dst='/workspace/proj',
         tag='token-proj',
     )
@@ -706,7 +706,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         store,
         host_path=other_src,
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         guest_dst='/workspace/docs',
         tag='token-docs',
     )
@@ -714,7 +714,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
 
     current_attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/proj',
         tag='token-proj',
@@ -732,7 +732,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         if host_path == other_src.resolve():
             return ResolvedAttachment(
                 vm_name=cfg.vm.name,
-                mode=ATTACHMENT_MODE_SHARED_ROOT,
+                mode=AttachmentMode.SHARED_ROOT,
                 source_dir=str(other_src.resolve()),
                 guest_dst='/workspace/docs',
                 tag='token-docs',
@@ -836,5 +836,5 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     assert len(shared_root_vm_mappings) == 0
     assert len(shared_root_guest_binds) == 0
     assert len(recorded) == 2
-    assert recorded[1]['mode'] == ATTACHMENT_MODE_SHARED_ROOT
+    assert recorded[1]['mode'] == AttachmentMode.SHARED_ROOT
     assert recorded[1]['guest_dst'] == '/workspace/docs'

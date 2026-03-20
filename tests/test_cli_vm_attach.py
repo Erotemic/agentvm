@@ -10,11 +10,11 @@ import pytest
 
 from aivm.commands import CommandManager
 from aivm.cli.vm import (
-    ATTACHMENT_ACCESS_RO,
-    ATTACHMENT_ACCESS_RW,
-    ATTACHMENT_MODE_GIT,
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
+    AttachmentAccess.RO,
+    AttachmentAccess.RW,
+    AttachmentMode.GIT,
+    AttachmentMode.SHARED,
+    AttachmentMode.SHARED_ROOT,
     ResolvedAttachment,
     VMAttachCLI,
     _ensure_shared_root_host_bind,
@@ -84,7 +84,7 @@ def test_vm_attach_mounts_share_when_vm_running(
     host_src.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED,
+        mode=AttachmentMode.SHARED,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/proj',
         tag='hostcode-proj',
@@ -155,7 +155,7 @@ def test_vm_attach_skips_guest_mount_when_vm_not_running(
     host_src.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED,
+        mode=AttachmentMode.SHARED,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/proj',
         tag='hostcode-proj',
@@ -217,7 +217,7 @@ def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(
     host_src.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED,
+        mode=AttachmentMode.SHARED,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/proj',
         tag='hostcode-proj',
@@ -293,7 +293,7 @@ def test_resolve_attachment_uses_saved_git_mode(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_GIT,
+            mode=AttachmentMode.GIT,
             guest_dst='/workspace/repo',
             tag='ignored-for-git',
         )
@@ -302,7 +302,7 @@ def test_resolve_attachment_uses_saved_git_mode(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
-    assert resolved.mode == ATTACHMENT_MODE_GIT
+    assert resolved.mode == AttachmentMode.GIT
     assert resolved.guest_dst == '/workspace/repo'
     assert resolved.tag == ''
 
@@ -319,7 +319,7 @@ def test_resolve_attachment_defaults_to_shared_root_for_new_folder(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
-    assert resolved.mode == ATTACHMENT_MODE_SHARED_ROOT
+    assert resolved.mode == AttachmentMode.SHARED_ROOT
     assert resolved.tag
 
 
@@ -337,7 +337,7 @@ def test_resolve_attachment_reuses_saved_shared_mode_when_mode_omitted(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -346,7 +346,7 @@ def test_resolve_attachment_reuses_saved_shared_mode_when_mode_omitted(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
-    assert resolved.mode == ATTACHMENT_MODE_SHARED
+    assert resolved.mode == AttachmentMode.SHARED
     assert resolved.guest_dst == '/workspace/proj'
     assert resolved.tag == 'hostcode-proj'
 
@@ -365,8 +365,8 @@ def test_resolve_attachment_reuses_saved_access_when_access_omitted(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED,
-            access=ATTACHMENT_ACCESS_RO,
+            mode=AttachmentMode.SHARED,
+            access=AttachmentAccess.RO,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -375,8 +375,8 @@ def test_resolve_attachment_reuses_saved_access_when_access_omitted(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
-    assert resolved.mode == ATTACHMENT_MODE_SHARED
-    assert resolved.access == ATTACHMENT_ACCESS_RO
+    assert resolved.mode == AttachmentMode.SHARED
+    assert resolved.access == AttachmentAccess.RO
 
 
 def test_resolve_attachment_rejects_mode_change_for_existing_attachment(
@@ -393,7 +393,7 @@ def test_resolve_attachment_rejects_mode_change_for_existing_attachment(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -425,8 +425,8 @@ def test_resolve_attachment_rejects_access_change_for_existing_attachment(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED,
-            access=ATTACHMENT_ACCESS_RW,
+            mode=AttachmentMode.SHARED,
+            access=AttachmentAccess.RW,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -440,7 +440,7 @@ def test_resolve_attachment_rejects_access_change_for_existing_attachment(
             host_src,
             '',
             '',
-            ATTACHMENT_ACCESS_RO,
+            AttachmentAccess.RO,
         )
 
 
@@ -459,11 +459,11 @@ def test_resolve_attachment_accepts_ro_for_shared_root_mode(
         cfg_path,
         host_src,
         '',
-        ATTACHMENT_MODE_SHARED_ROOT,
-        ATTACHMENT_ACCESS_RO,
+        AttachmentMode.SHARED_ROOT,
+        AttachmentAccess.RO,
     )
-    assert resolved.mode == ATTACHMENT_MODE_SHARED_ROOT
-    assert resolved.access == ATTACHMENT_ACCESS_RO
+    assert resolved.mode == AttachmentMode.SHARED_ROOT
+    assert resolved.access == AttachmentAccess.RO
 
 
 def test_resolve_attachment_ro_not_implemented_for_git_mode(
@@ -485,8 +485,8 @@ def test_resolve_attachment_ro_not_implemented_for_git_mode(
             cfg_path,
             host_src,
             '',
-            ATTACHMENT_MODE_GIT,
-            ATTACHMENT_ACCESS_RO,
+            AttachmentMode.GIT,
+            AttachmentAccess.RO,
         )
 
 
@@ -500,7 +500,7 @@ def test_vm_attach_shared_root_running_ensures_guest_ready(
     host_src.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/proj',
         tag='hostcode-proj',
@@ -575,7 +575,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',
@@ -624,7 +624,7 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',
@@ -676,7 +676,7 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',
@@ -728,7 +728,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',
@@ -784,7 +784,7 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',
@@ -835,8 +835,8 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
-        access=ATTACHMENT_ACCESS_RO,
+        mode=AttachmentMode.SHARED_ROOT,
+        access=AttachmentAccess.RO,
         source_dir=str((tmp_path / 'source').resolve()),
         guest_dst='/workspace/source',
         tag='token-source',
@@ -897,7 +897,7 @@ def test_shared_root_host_bind_prompts_once_per_prepare_step(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',
@@ -1004,8 +1004,8 @@ def test_shared_root_guest_bind_preview_uses_semantic_summaries(
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
-        access=ATTACHMENT_ACCESS_RW,
+        mode=AttachmentMode.SHARED_ROOT,
+        access=AttachmentAccess.RW,
         source_dir=str((tmp_path / 'source').resolve()),
         guest_dst='/workspace/source',
         tag='token-source',
@@ -1059,7 +1059,7 @@ def test_resolve_attachment_git_defaults_to_guest_home_path(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', 'git')
 
-    assert resolved.mode == ATTACHMENT_MODE_GIT
+    assert resolved.mode == AttachmentMode.GIT
     assert resolved.guest_dst.startswith('/home/agent/')
     assert resolved.guest_dst.endswith('/repo')
 
@@ -1080,7 +1080,7 @@ def test_resolve_attachment_git_migrates_legacy_host_mirror_guest_dst(
         AttachmentEntry(
             host_path=source_abs,
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_GIT,
+            mode=AttachmentMode.GIT,
             guest_dst=source_abs,
             tag='',
         )
@@ -1089,7 +1089,7 @@ def test_resolve_attachment_git_migrates_legacy_host_mirror_guest_dst(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
-    assert resolved.mode == ATTACHMENT_MODE_GIT
+    assert resolved.mode == AttachmentMode.GIT
     assert resolved.guest_dst != source_abs
     assert resolved.guest_dst.startswith('/home/agent/')
 
@@ -1104,7 +1104,7 @@ def test_vm_attach_git_mode_syncs_guest_repo_when_running(
     host_src.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_GIT,
+        mode=AttachmentMode.GIT,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/repo',
         tag='',
@@ -1374,7 +1374,7 @@ def test_record_attachment_skips_save_when_unchanged(
         cfg_path,
         host_src=host_src,
         mode='git',
-        access=ATTACHMENT_ACCESS_RW,
+        access=AttachmentAccess.RW,
         guest_dst=guest_dst,
         tag='',
     )

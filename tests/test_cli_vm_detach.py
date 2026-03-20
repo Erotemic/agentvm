@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from aivm.cli.vm import (
-    ATTACHMENT_MODE_GIT,
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
+    AttachmentMode.GIT,
+    AttachmentMode.SHARED,
+    AttachmentMode.SHARED_ROOT,
     VMDetachCLI,
 )
 from aivm.config import AgentVMConfig
@@ -29,7 +29,7 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -82,7 +82,7 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_GIT,
+            mode=AttachmentMode.GIT,
             guest_dst='/workspace/repo',
             tag='',
         )
@@ -137,7 +137,7 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED_ROOT,
+            mode=AttachmentMode.SHARED_ROOT,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )

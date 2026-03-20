@@ -25,7 +25,7 @@ from aivm.vm.drift import (
     saved_attachment_drift_report,
 )
 from aivm.config import AgentVMConfig, VMConfig, NetworkConfig, FirewallConfig, PathsConfig
-from aivm.vm.share import ResolvedAttachment, ATTACHMENT_MODE_SHARED, ATTACHMENT_MODE_SHARED_ROOT
+from aivm.vm.share import AttachmentMode, ResolvedAttachment
 
 
 class TestDriftItem:
@@ -162,7 +162,7 @@ class TestExpectedMappingForAttachment:
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path'
@@ -179,7 +179,7 @@ class TestExpectedMappingForAttachment:
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode=ATTACHMENT_MODE_SHARED_ROOT,
+            mode=AttachmentMode.SHARED_ROOT,
             source_dir='/home/user/project',
             tag='shared-root',
             guest_dst='/guest/path'
@@ -353,7 +353,7 @@ class TestAttachmentDriftReport:
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path'
@@ -371,7 +371,7 @@ class TestAttachmentDriftReport:
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path'
@@ -391,7 +391,7 @@ class TestAttachmentDriftReport:
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path'

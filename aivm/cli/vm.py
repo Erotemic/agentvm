@@ -68,11 +68,12 @@ from ..vm.drift import (
     saved_vm_drift_report,
 )
 from ..vm.share import (
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
-    ATTACHMENT_ACCESS_RW,
+    AttachmentAccess,
+    AttachmentMode,
     ResolvedAttachment,
     SHARED_ROOT_VIRTIOFS_TAG,
+    _auto_share_tag_for_path,
+    _ensure_share_tag_len,
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
 )
 from ..vm import (
@@ -92,18 +93,27 @@ from ._common import (
     log,
 )
 
-ATTACHMENT_MODE_GIT = 'git'
+SHARED_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-shared'
+
+# Attachment mode constants (string aliases for mode values)
+ATTACHMENT_MODE_SHARED = AttachmentMode.SHARED.value
+ATTACHMENT_MODE_SHARED_ROOT = AttachmentMode.SHARED_ROOT.value
+ATTACHMENT_MODE_GIT = AttachmentMode.GIT.value
+
+# Attachment access constants (string aliases for access values)
+ATTACHMENT_ACCESS_RW = AttachmentAccess.RW.value
+ATTACHMENT_ACCESS_RO = AttachmentAccess.RO.value
+
+# Attachment mode and access sets for validation
 ATTACHMENT_MODES = {
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     ATTACHMENT_MODE_GIT,
 }
-ATTACHMENT_ACCESS_RO = 'ro'
 ATTACHMENT_ACCESS_MODES = {
     ATTACHMENT_ACCESS_RW,
     ATTACHMENT_ACCESS_RO,
 }
-SHARED_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-shared'
 
 
 class VMUpCLI(_BaseCommand):
@@ -2271,11 +2281,6 @@ def _ensure_attachment_available_in_guest(
         dry_run=dry_run,
     )
 
-    if res.code != 0:
-        return None
-    state = (res.stdout or '').strip().lower()
-    return 'running' in state
-
 
 def _upsert_ssh_config_entry(
     cfg: AgentVMConfig, *, dry_run: bool = False, yes: bool = False
@@ -2733,6 +2738,31 @@ def _virtiofs_mapping_for_attachment(
     if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
     return None
+
+
+def _probe_vm_running_nonsudo(vm_name: str) -> bool | None:
+    """Probe whether a VM is running without requiring sudo.
+
+    Returns:
+        True if the VM is running, False if not defined/running,
+        None if the probe is inconclusive (e.g., permission denied).
+    """
+    from ..runtime import virsh_system_cmd
+    from ..util import run_cmd
+
+    res = run_cmd(
+        virsh_system_cmd('domstate', vm_name),
+        sudo=False,
+        check=False,
+        capture=True,
+    )
+    if res.code != 0:
+        raw_detail = (res.stderr or res.stdout or '').strip().lower()
+        if 'permission denied' in raw_detail or 'authentication failed' in raw_detail:
+            return None
+        return False
+    state = res.stdout.strip().lower()
+    return 'running' in state
 
 
 def _reconcile_attached_vm(

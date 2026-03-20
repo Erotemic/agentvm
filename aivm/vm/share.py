@@ -13,6 +13,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 
 from loguru import logger
@@ -24,10 +25,32 @@ from ..util import CmdError, run_cmd
 
 log = logger
 
-# Attachment mode constants
-ATTACHMENT_MODE_SHARED = 'shared'
-ATTACHMENT_MODE_SHARED_ROOT = 'shared-root'
-ATTACHMENT_ACCESS_RW = 'rw'
+
+class AttachmentMode(StrEnum):
+    """Attachment mode for VM shared folders.
+
+    These modes determine how host directories are shared with the VM:
+    - SHARED: Direct virtiofs mount of the host directory
+    - SHARED_ROOT: VM-specific bind mount via shared-root directory
+    - GIT: Git clone of the host repo into the guest
+    """
+
+    SHARED = 'shared'
+    SHARED_ROOT = 'shared-root'
+    GIT = 'git'
+
+
+class AttachmentAccess(StrEnum):
+    """Attachment access mode for VM shared folders.
+
+    These modes determine the access permissions for shared folders:
+    - RW: Read-write access (default)
+    - RO: Read-only access
+    """
+
+    RW = 'rw'
+    RO = 'ro'
+
 
 # Shared-root tag constant
 SHARED_ROOT_VIRTIOFS_TAG = 'aivm-shared-root'
@@ -41,8 +64,8 @@ class ResolvedAttachment:
     """
 
     vm_name: str
-    mode: str = ATTACHMENT_MODE_SHARED
-    access: str = ATTACHMENT_ACCESS_RW
+    mode: AttachmentMode = AttachmentMode.SHARED
+    access: AttachmentAccess = AttachmentAccess.RW
     source_dir: str = ''
     guest_dst: str = ''
     tag: str = ''

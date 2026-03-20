@@ -24,10 +24,10 @@ from ..runtime import virsh_system_cmd
 from ..store import find_attachments_for_vm
 from ..util import run_cmd
 from .share import (
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
-    SHARED_ROOT_VIRTIOFS_TAG,
+    AttachmentAccess,
+    AttachmentMode,
     ResolvedAttachment,
+    SHARED_ROOT_VIRTIOFS_TAG,
     align_attachment_tag_with_mappings,
     vm_share_mappings,
 )
@@ -169,9 +169,9 @@ def expected_mapping_for_attachment(
     Returns:
         A tuple of (host_source, tag) or None if attachment mode doesn't use virtiofs.
     """
-    if attachment.mode == ATTACHMENT_MODE_SHARED:
+    if attachment.mode == AttachmentMode.SHARED:
         return attachment.source_dir, attachment.tag
-    if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+    if attachment.mode == AttachmentMode.SHARED_ROOT:
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
     return None
 
@@ -194,7 +194,7 @@ def attachment_has_mapping(
     Returns:
         True if a matching mapping exists, False otherwise.
     """
-    if att.mode == ATTACHMENT_MODE_SHARED_ROOT:
+    if att.mode == AttachmentMode.SHARED_ROOT:
         expected_src = str(_shared_root_host_dir(cfg))
         expected_tag = SHARED_ROOT_VIRTIOFS_TAG
         return any(
