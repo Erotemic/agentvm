@@ -25,6 +25,32 @@ from loguru import logger
 
 log = logger
 
+# TODO: The current command role model is too coarse.
+# don't execute on this, this needs more thought. Current ideas written here.
+#
+# Right now roles mostly collapse into "read" vs "modify", but in practice
+# there are at least two separate axes we care about:
+#
+# 1. privilege boundary
+#    - unprivileged
+#    - privileged / sudo
+#
+# 2. effect boundary
+#    - read / inspect
+#    - system write
+#    - user-file write
+#
+# These should not be conflated. Some operations are unprivileged but still
+# deserve explicit approval because they modify user-owned files (for example
+# SSH config or other dotfiles). Other operations are privileged but read-only
+# and may be safe to auto-approve in some contexts.
+#
+# Future design:
+# - replace the coarse role model with a richer action / approval model
+# - allow step-level approval policy to be explicit instead of only inferred
+# - distinguish "touches user files" from "touches system state"
+# - distinguish "requires sudo" from "is a write"
+
 CommandRole = Literal['read', 'modify']
 
 
@@ -358,7 +384,144 @@ class CommandManager:
         yes_sudo: If True, auto-approve privileged sudo operations.
         auto_approve_readonly_sudo: If True, allow read-only sudo commands
             to proceed without prompting when possible.
+
+    Example:
+        >>> # Submit one loose command outside of any step.
+        >>> from aivm.commands import *  # NOQA
+        >>> py = sys.executable
+        >>> mgr = CommandManager(yes=True)
+        >>> h = mgr.submit(
+        ...     [py, '-c', 'print("virsh dominfo demo-vm")'],
+        ...     summary='Run one ad hoc inspection command',
+        ... )
+        >>> print(h.stdout.strip())
+        virsh dominfo demo-vm
+
+    Example:
+        >>> # Group several "privileged" actions into one readable step.
+        >>> from aivm.commands import *  # NOQA
+        >>> py = sys.executable
+        >>> mgr = CommandManager(yes=True)
+        >>> with mgr.intent(title='User specified intent title (e.g. prepare host)', role='modify'):
+        ...     with mgr.step(
+        ...         title='User specified step title. e.g. install host dependencies',
+        ...         why='User specified why. e.g. prepare the machine for VM lifecycle operations',
+        ...     ):
+        ...         h1 = mgr.submit(
+        ...             [py, '-c', 'print("sudo apt-get update -y")'],
+        ...             summary='User summary, e.g. Refresh apt metadata',
+        ...         )
+        ...         h2 = mgr.submit(
+        ...             [py, '-c', 'print("sudo apt-get install -y qemu-system libvirt-daemon-system")'],
+        ...             summary='User summary, e.g. Install virtualization packages',
+        ...         )
+        ...         h3 = mgr.submit(
+        ...             [py, '-c', 'print("sudo systemctl enable --now libvirtd")'],
+        ...             summary='User summary, e.g. Enable libvirtd service',
+        ...         )
+
+    Example:
+        >>> # Discover something in one step, then use it in a later step.
+        >>> from aivm.commands import *  # NOQA
+        >>> py = sys.executable
+        >>> mgr = CommandManager(yes=True)
+        >>> with mgr.intent('configure guest access', role='modify'):
+        ...     with mgr.step(
+        ...         'discover VM address',
+        ...         why='later commands need the current guest IP',
+        ...     ):
+        ...         ip = mgr.submit(
+        ...             [py, '-c', 'print("10.0.0.42")'],
+        ...             summary='Read cached VM IP',
+        ...         )
+        >>> addr = ip.stdout.strip()
+        >>> with mgr.intent('configure guest access', role='modify'):
+        ...     with mgr.step(
+        ...         'test SSH command composition',
+        ...         why='show how later commands can consume earlier output',
+        ...     ):
+        ...         cmd = mgr.submit(
+        ...             [py, '-c', f'print("ssh agent@{addr} sudo systemctl status ssh")'],
+        ...             summary='Show the SSH command that would be run',
+        ...         )
+
+    Example:
+        >>> # Use output from an earlier command inside the same step when the
+        >>> # later command depends on it.
+        >>> from aivm.commands import *  # NOQA
+        >>> py = sys.executable
+        >>> mgr = CommandManager(yes=True)
+        >>> with mgr.intent('reconcile attachment', role='modify'):
+        ...     with mgr.step(
+        ...         'inspect then repair bind target',
+        ...         why='the repair command depends on the detected source',
+        ...     ):
+        ...         current = mgr.submit(
+        ...             [py, '-c', 'print("/old/source")'],
+        ...             summary='Inspect current bind source',
+        ...         )
+        ...         found = current.stdout.strip()
+        ...         repair = mgr.submit(
+        ...             [py, '-c', f'print("sudo mount --bind /new/source /srv/target  # replacing {found}")'],
+        ...             summary='Replace stale bind source',
+        ...         )
+
+    Example:
+        >>> # xdoctest: +IGNORE_WANT
+        >>> from aivm.commands import *  # NOQA
+        >>> import sys
+        >>> mgr = CommandManager(yes=True)
+        >>> with mgr.intent(title='inspect runtime', role='read'):
+        ...     h3 = mgr.submit(
+        ...         [sys.executable, '-c', 'print("alpha")'],
+        ...         summary='emit alpha',
+        ...     )
+        ...     with mgr.step(title='collect facts', why='demonstrate the command lifecycle') as plan:
+        ...         h1 = mgr.submit(
+        ...             [sys.executable, '-c', 'print("alpha")'],
+        ...             summary='emit alpha',
+        ...         )
+        ...         h2 = mgr.submit(
+        ...             [sys.executable, '-c', 'print("beta")'],
+        ...             summary='emit beta',
+        ...         )
+        ...         # The plan is executed after the context ends.
     """
+
+    def intent(
+        self,
+        title: str,
+        *,
+        why: str = '',
+        role: CommandRole = 'modify',
+        visible: bool = True,
+    ) -> IntentScope:
+        """
+        Context manager that temporarily pushes an intent frame.
+
+        Use this to mark some high level intent.
+        """
+        return IntentScope(self, title, why=why, role=role, visible=visible)
+
+    def step(
+        self,
+        title: str,
+        *,
+        why: str = '',
+        approval_scope: str = '',
+    ) -> PlanScope:
+        """
+        Context manager that groups submitted commands into one plan
+
+        Use this to group related commands.
+        """
+        # TODO: might want to rename this to StepScope
+        return PlanScope(
+            self,
+            title,
+            why=why,
+            approval_scope=approval_scope,
+        )
 
     @classmethod
     def current(cls) -> 'CommandManager':
@@ -398,6 +561,7 @@ class CommandManager:
 
     def push_intent(self, frame: IntentFrame) -> None:
         """Push one intent frame onto the active intent stack."""
+        # TODO: probably a good public method, let the underlying scope handle it.
         self.intent_stack.append(frame)
 
     def pop_intent(self, frame: IntentFrame) -> None:
@@ -406,6 +570,7 @@ class CommandManager:
         The most recently pushed matching frame is removed. This tolerates
         mildly out-of-order cleanup to avoid leaking stale context.
         """
+        # TODO: probably a good public method, let the underlying scope handle it.
         if self.intent_stack and self.intent_stack[-1] is frame:
             self.intent_stack.pop()
             return
@@ -416,10 +581,12 @@ class CommandManager:
 
     def begin_plan(self, plan: CommandPlan) -> None:
         """Push an in-progress plan onto the plan stack."""
+        # TODO: probably a good public method, let the underlying scope handle it.
         self.plan_stack.append(plan)
 
     def end_plan(self, plan: CommandPlan) -> None:
         """Remove ``plan`` from the active plan stack."""
+        # TODO: probably a good public method, let the underlying scope handle it.
         if self.plan_stack and self.plan_stack[-1] is plan:
             self.plan_stack.pop()
             return
@@ -430,6 +597,7 @@ class CommandManager:
 
     def abort_plan(self, plan: CommandPlan) -> None:
         """Mark ``plan`` as closed without executing its commands."""
+        # TODO: probably a good public method, let the underlying scope handle it.
         plan.closed = True
 
     def finish_plan(self, plan: CommandPlan) -> None:
@@ -438,6 +606,7 @@ class CommandManager:
         Empty plans are simply marked closed. Non-empty plans are previewed,
         approved if needed, then flushed in order.
         """
+        # TODO: probably a good public method, let the underlying scope handle it.
         if plan.is_empty():
             plan.closed = True
             return
@@ -462,6 +631,8 @@ class CommandManager:
         This compatibility layer is useful when old call sites still rely
         on loose command execution instead of explicit plan previews.
         """
+        # TODO: remove backwards compatability here by upgrading usage to the
+        # modern one.
         role = self._normalize_role(action)
         self._compat_sudo_intent = CompatSudoIntent(
             yes=bool(yes),
@@ -474,11 +645,15 @@ class CommandManager:
 
     def compat_clear_sudo_intent(self) -> None:
         """Clear any active compatibility sudo intent and sticky approval."""
+        # TODO: remove backwards compatability here by upgrading usage to the
+        # modern one.
         self._compat_sudo_intent = None
         self._approve_all_remaining = False
 
     def compat_auto_yes(self) -> bool:
         """Return True if compatibility approval is currently sticky."""
+        # TODO: remove backwards compatability here by upgrading usage to the
+        # modern one.
         return bool(self._approve_all_remaining)
 
     def capture_submitter(self) -> str:
@@ -488,6 +663,8 @@ class CommandManager:
         intended for debugging and log output. Frames within selected
         internal modules are skipped so the provenance points at the caller.
         """
+        # TODO: We probably want the logger to just take care of this.  This is
+        # too heavy handed.
         frame = inspect.currentframe()
         if frame is None:
             return ''
@@ -545,6 +722,9 @@ class CommandManager:
         Returns:
             A handle that can be used to inspect the eventual result.
         """
+        # TODO: ergonomic ubelt style string acceptence? Might be better to
+        # keep it type strict though. Don't do this one yet. Need to think
+        # about it more.
         spec = CommandSpec(
             cmd=tuple(str(c) for c in cmd),
             sudo=bool(sudo),
@@ -579,6 +759,7 @@ class CommandManager:
 
     def flush(self) -> None:
         """Flush pending execution for the current plan or loose queue."""
+        # TODO: does this need to be public?
         if self.plan_stack:
             self._flush_plan(self.plan_stack[-1])
             return
@@ -595,6 +776,7 @@ class CommandManager:
         Args:
             command_id: Identifier of the last command that must be run.
         """
+        # TODO: does this need to be public?
         for plan in reversed(self.plan_stack):
             if any(item.command_id == command_id for item in plan.commands):
                 self._approve_plan_if_needed(plan)
