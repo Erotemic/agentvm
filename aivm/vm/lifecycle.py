@@ -20,6 +20,7 @@ from ..config import (
     SUPPORTED_IMAGE_SHA256,
     AgentVMConfig,
 )
+from ..pci import normalize_bdf
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdError, ensure_dir, run_cmd
 
@@ -943,6 +944,9 @@ def create_or_start_vm(
             '--filesystem',
             f'source={source_dir},target={tag},driver.type=virtiofs',
         ]
+    for bdf in sorted(set(cfg.passthrough.pci_devices)):
+        # Let libvirt assign the guest address; we only declare the host source.
+        extra += ['--hostdev', normalize_bdf(bdf)]
 
     # These VMs are for agent development workflows, not secure-boot or TPM
     # validation. Keep UEFI for modern Ubuntu boot, but make the firmware

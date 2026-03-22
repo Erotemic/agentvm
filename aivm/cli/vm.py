@@ -19,6 +19,12 @@ from ..config import AgentVMConfig
 from ..firewall import apply_firewall
 from ..host import check_commands, host_is_debian_like, install_deps_debian
 from ..net import ensure_network
+from ..pci import (
+    assess_device_readiness,
+    normalize_bdf,
+    render_readiness_report,
+    resolve_passthrough_set_for_gpu,
+)
 from ..resource_checks import (
     vm_resource_impossible_lines,
     vm_resource_warning_lines,
@@ -60,6 +66,14 @@ from ..vm import (
     vm_status,
     wait_for_ip,
     wait_for_ssh,
+)
+from ..vm.hostdev import (
+    compute_hostdev_drift,
+    detach_hostdev_persistent,
+    domain_hostdevs_live,
+    domain_hostdevs_persistent,
+    ensure_hostdev_persistent,
+    vm_is_running,
 )
 from ..vm.drift import (
     hardware_drift_report,
@@ -1224,6 +1238,134 @@ class SSHCLI(VMSSHCLI):
     """Top-level shortcut for `aivm vm ssh`."""
 
 
+class GPUAttachCLI(_BaseCommand):
+    """Declare and reconcile persistent GPU passthrough for a VM."""
+
+    vm = scfg.Value('', help='Optional VM name override.')
+    bdf = scfg.Value(
+        '',
+        position=1,
+        help='Primary GPU PCI BDF (for example 0000:65:00.0).',
+    )
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
+        primary_bdf = normalize_bdf(args.bdf)
+        report = assess_device_readiness(primary_bdf)
+        print(render_readiness_report(report))
+        if report.status == 'manual_steps_required':
+            return 1
+        companions, unexpected = resolve_passthrough_set_for_gpu(primary_bdf)
+        if unexpected:
+            raise RuntimeError(
+                'Refusing to attach GPU because the IOMMU group contains '
+                'unexpected devices: '
+                + ', '.join(device.bdf for device in unexpected)
+            )
+        bdfs = [device.bdf for device in companions]
+        desired = sorted(set(cfg.passthrough.pci_devices) | set(bdfs))
+        _update_declared_passthrough(cfg, cfg_path, desired)
+        changed = _reconcile_persistent_gpu_hostdevs(
+            cfg.vm.name,
+            bdfs,
+            action='attach',
+        )
+        print(f'Updated config store: {cfg_path}')
+        if changed:
+            print('Persistent PCI hostdevs attached: ' + ', '.join(changed))
+        else:
+            print('Persistent PCI hostdevs already matched declared config.')
+        if vm_is_running(cfg.vm.name):
+            print(
+                _restart_recommendation_text(
+                    vm_name=cfg.vm.name,
+                    changed=bool(changed),
+                    action='attach',
+                )
+            )
+        return 0
+
+
+class GPUDetachCLI(_BaseCommand):
+    """Remove declared and persistent GPU passthrough from a VM."""
+
+    vm = scfg.Value('', help='Optional VM name override.')
+    bdf = scfg.Value(
+        '',
+        position=1,
+        help='Primary GPU PCI BDF (for example 0000:65:00.0).',
+    )
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
+        primary_bdf = normalize_bdf(args.bdf)
+        companions, unexpected = resolve_passthrough_set_for_gpu(primary_bdf)
+        if unexpected:
+            raise RuntimeError(
+                'Refusing to detach GPU because the IOMMU group contains '
+                'unexpected devices: '
+                + ', '.join(device.bdf for device in unexpected)
+            )
+        bdfs = [device.bdf for device in companions]
+        desired = sorted(set(cfg.passthrough.pci_devices) - set(bdfs))
+        _update_declared_passthrough(cfg, cfg_path, desired)
+        changed = _reconcile_persistent_gpu_hostdevs(
+            cfg.vm.name,
+            bdfs,
+            action='detach',
+        )
+        print(f'Updated config store: {cfg_path}')
+        if changed:
+            print('Persistent PCI hostdevs detached: ' + ', '.join(changed))
+        else:
+            print('Persistent PCI hostdevs already absent from VM config.')
+        if vm_is_running(cfg.vm.name):
+            print(
+                _restart_recommendation_text(
+                    vm_name=cfg.vm.name,
+                    changed=bool(changed),
+                    action='detach',
+                )
+            )
+            print(
+                'This first pass does not attempt live PCI detach; a running '
+                'guest may still retain the device until shutdown/restart.'
+            )
+        return 0
+
+
+class GPUListCLI(_BaseCommand):
+    """Report declared vs persistent vs live GPU/PCI passthrough state."""
+
+    vm = scfg.Value('', help='Optional VM name override.')
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, _ = _load_cfg_with_path(args.config, vm_opt=args.vm)
+        persistent = domain_hostdevs_persistent(cfg.vm.name)
+        live = domain_hostdevs_live(cfg.vm.name) if vm_is_running(cfg.vm.name) else []
+        drift = compute_hostdev_drift(
+            declared=list(cfg.passthrough.pci_devices),
+            persistent=persistent,
+            live=live,
+        )
+        print(_render_gpu_drift_report(cfg.vm.name, drift))
+        return 0
+
+
+class VMGPUModalCLI(scfg.ModalCLI):
+    """Persistent GPU passthrough commands."""
+
+    attach = GPUAttachCLI
+    detach = GPUDetachCLI
+    list = GPUListCLI
+
+
 class VMModalCLI(scfg.ModalCLI):
     """VM lifecycle subcommands."""
 
@@ -1241,6 +1383,7 @@ class VMModalCLI(scfg.ModalCLI):
     attach = VMAttachCLI
     detach = VMDetachCLI
     code = VMCodeCLI
+    gpu = VMGPUModalCLI
 
 
 @dataclass(frozen=True)
@@ -1261,6 +1404,87 @@ class ReconcileResult:
 
 def _bytes_to_gib(size_bytes: int) -> float:
     return float(size_bytes) / float(1024**3)
+
+
+def _update_declared_passthrough(
+    cfg: AgentVMConfig,
+    cfg_path: Path,
+    pci_devices: list[str],
+) -> None:
+    cfg.passthrough.pci_devices = sorted(set(pci_devices))
+    store = load_store(cfg_path)
+    upsert_vm_with_network(store, cfg, network_name=cfg.network.name)
+    save_store(store, cfg_path)
+
+
+def _reconcile_persistent_gpu_hostdevs(
+    vm_name: str,
+    bdfs: list[str],
+    *,
+    action: str,
+) -> list[str]:
+    mgr = CommandManager.current()
+    helper = ensure_hostdev_persistent
+    title = 'Attach persistent GPU hostdevs'
+    why = 'Reconcile libvirt persistent PCI hostdev state to match declared passthrough intent.'
+    if action == 'detach':
+        helper = detach_hostdev_persistent
+        title = 'Detach persistent GPU hostdevs'
+    with IntentScope(
+        mgr,
+        'Reconcile VM GPU passthrough',
+        why=why,
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            title,
+            why=why,
+            approval_scope=f'vm-gpu-{action}:{vm_name}',
+        ):
+            return helper(vm_name, bdfs)
+
+
+def _restart_recommendation_text(
+    *,
+    vm_name: str,
+    changed: bool,
+    action: str,
+) -> str:
+    reason = 'persistent PCI changes were written to the VM definition'
+    if not changed:
+        reason = 'the running guest state may still differ from persistent hostdev config'
+    return (
+        f'Restart recommended for VM {vm_name}: {reason}. '
+        f'This command only updated persistent {action} state.'
+    )
+
+
+def _render_gpu_drift_report(vm_name: str, drift) -> str:
+    lines = [
+        f'VM: {vm_name}',
+        'Declared passthrough devices:',
+    ]
+    lines.extend(
+        [f'  - {item}' for item in drift.declared] or ['  - (none)']
+    )
+    lines.append('Persistent libvirt hostdevs:')
+    lines.extend(
+        [f'  - {item}' for item in drift.persistent] or ['  - (none)']
+    )
+    lines.append('Live libvirt hostdevs:')
+    lines.extend([f'  - {item}' for item in drift.live] or ['  - (none)'])
+    if drift.only_declared:
+        lines.append(
+            'Declared but missing from persistent: ' + ', '.join(drift.only_declared)
+        )
+    if drift.only_persistent:
+        lines.append(
+            'Persistent but not declared: ' + ', '.join(drift.only_persistent)
+        )
+    if drift.only_live:
+        lines.append('Live-only hostdevs: ' + ', '.join(drift.only_live))
+    return '\n'.join(lines)
 
 
 def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:

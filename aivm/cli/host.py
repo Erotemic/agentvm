@@ -16,6 +16,7 @@ from ..host import (
     host_is_debian_like,
     install_deps_debian,
 )
+from ..pci import assess_device_readiness, render_readiness_report
 from ..vm import fetch_image
 from ._common import (
     _BaseCommand,
@@ -104,11 +105,40 @@ class ImageFetchCLI(_BaseCommand):
         return 0
 
 
+class HostPCICheckCLI(_BaseCommand):
+    """Inspect one PCI device for conservative passthrough readiness."""
+
+    bdf = scfg.Value(
+        '',
+        position=1,
+        help='PCI BDF to inspect (for example 0000:65:00.0).',
+    )
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        args = cls.cli(argv=argv, data=kwargs)
+        _confirm_sudo_block(
+            yes=bool(args.yes),
+            purpose='Inspect PCI and libvirt node-device state for passthrough readiness.',
+            action='read',
+        )
+        report = assess_device_readiness(args.bdf)
+        print(render_readiness_report(report))
+        return 1 if report.status == 'manual_steps_required' else 0
+
+
+class HostPCIModalCLI(scfg.ModalCLI):
+    """Host PCI passthrough inspection commands."""
+
+    check = HostPCICheckCLI
+
+
 class HostModalCLI(scfg.ModalCLI):
     """Host preparation and host-level operations."""
 
     doctor = DoctorCLI
     install_deps = HostInstallDepsCLI
     image_fetch = ImageFetchCLI
+    pci = HostPCIModalCLI
     net = NetModalCLI
     fw = FirewallModalCLI
