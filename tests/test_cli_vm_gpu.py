@@ -26,6 +26,7 @@ from aivm.pci import (
     PCIDevice,
     _is_companion_device,
     assess_device_readiness,
+    build_effective_passthrough_set,
     classify_iommu_group_members,
     render_readiness_report,
     resolve_gpu_selector,
@@ -382,7 +383,7 @@ def test_vm_start_can_apply_declared_passthrough_after_host_prep(monkeypatch) ->
     )
     monkeypatch.setattr(
         'aivm.vm.lifecycle.assess_device_readiness',
-        lambda bdf, declared_passthrough_devices=None: type(
+        lambda bdf, declared_passthrough_devices=None, desired_persistent_hostdevs=None: type(
             'Report',
             (),
             {
@@ -421,7 +422,7 @@ def test_vm_start_blocks_when_declared_gpu_readiness_is_bad(monkeypatch) -> None
     )
     monkeypatch.setattr(
         'aivm.vm.lifecycle.assess_device_readiness',
-        lambda bdf, declared_passthrough_devices=None: type(
+        lambda bdf, declared_passthrough_devices=None, desired_persistent_hostdevs=None: type(
             'Report',
             (),
             {
@@ -457,7 +458,7 @@ def test_companion_detection_is_conservative() -> None:
         vendor_name='NVIDIA',
         product_name='RTX',
     )
-    arbitrary_audio = PCIDevice(
+    same_slot_audio = PCIDevice(
         bdf='0000:65:00.1',
         nodedev_name='n1',
         class_code='0x040300',
@@ -465,16 +466,16 @@ def test_companion_detection_is_conservative() -> None:
         vendor_name='NVIDIA',
         product_name='Audio endpoint',
     )
-    hdmi_audio = PCIDevice(
-        bdf='0000:65:00.1',
-        nodedev_name='n1',
-        class_code='0x040300',
+    unrelated_same_slot = PCIDevice(
+        bdf='0000:65:00.2',
+        nodedev_name='n2',
+        class_code='0x0c0330',
         vendor_id='0x10de',
         vendor_name='NVIDIA',
-        product_name='High Definition Audio Controller',
+        product_name='USB Controller',
     )
-    assert _is_companion_device(gpu, arbitrary_audio) is False
-    assert _is_companion_device(gpu, hdmi_audio) is True
+    assert _is_companion_device(gpu, same_slot_audio) is True
+    assert _is_companion_device(gpu, unrelated_same_slot) is False
 
 
 def test_iommu_group_classification_recognizes_same_slot_audio_companion() -> None:
@@ -501,11 +502,64 @@ def test_iommu_group_classification_recognizes_same_slot_audio_companion() -> No
     classification = classify_iommu_group_members(gpu, [gpu, audio], ['0000:03:00.0'])
     assert [d.bdf for d in classification.unrelated_members] == []
     assert [d.bdf for d in classification.companion_members] == ['0000:03:00.1']
-    assert [d.bdf for d in classification.missing_required_companions] == ['0000:03:00.1']
+    assert [d.bdf for d in classification.missing_required_companions] == []
     assert [d.bdf for d in classification.effective_passthrough_members] == [
         '0000:03:00.0',
         '0000:03:00.1',
     ]
+
+
+def test_effective_passthrough_set_auto_expands_same_slot_audio_companion() -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='',
+        driver='vfio-pci',
+    )
+    effective = build_effective_passthrough_set(
+        ['0000:03:00.0'],
+        [gpu, audio],
+    )
+    assert effective == ('0000:03:00.0', '0000:03:00.1')
+
+
+def test_effective_passthrough_set_can_include_desired_persistent_hostdevs() -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='',
+        driver='vfio-pci',
+    )
+    effective = build_effective_passthrough_set(
+        ['0000:03:00.0'],
+        [gpu, audio],
+        desired_persistent_hostdevs=['0000:03:00.0', '0000:03:00.1'],
+    )
+    assert effective == ('0000:03:00.0', '0000:03:00.1')
 
 
 def test_readiness_reports_missing_companion_not_unrelated_member(monkeypatch) -> None:
@@ -525,7 +579,7 @@ def test_readiness_reports_missing_companion_not_unrelated_member(monkeypatch) -
         class_code='0x040300',
         vendor_id='0x10de',
         vendor_name='NVIDIA',
-        product_name='High Definition Audio Controller',
+        product_name='',
         driver='vfio-pci',
         iommu_group=('0000:03:00.0', '0000:03:00.1'),
     )
@@ -536,9 +590,9 @@ def test_readiness_reports_missing_companion_not_unrelated_member(monkeypatch) -
         '0000:03:00.0', declared_passthrough_devices=['0000:03:00.0']
     )
     text = render_readiness_report(report)
-    assert report.status == 'manual_steps_required'
+    assert report.status == 'ready_persistent_restart'
     assert 'Unexpected IOMMU-group members:' not in text
-    assert 'Missing required companions:' in text
+    assert 'Effective passthrough set:' in text
     assert '0000:03:00.1' in text
 
 
@@ -559,7 +613,7 @@ def test_readiness_passes_for_gpu_plus_audio_pair_when_both_declared(monkeypatch
         class_code='0x040300',
         vendor_id='0x10de',
         vendor_name='NVIDIA',
-        product_name='High Definition Audio Controller',
+        product_name='',
         driver='vfio-pci',
         iommu_group=('0000:03:00.0', '0000:03:00.1'),
     )
@@ -623,6 +677,44 @@ def test_readiness_fails_for_gpu_audio_plus_unrelated_group_member(monkeypatch) 
     assert [d.bdf for d in report.unexpected] == ['0000:03:00.2']
     assert 'Unexpected IOMMU-group members:' in text
     assert '0000:03:00.2' in text
+    assert '0000:03:00.1' not in text.split('Unexpected IOMMU-group members:')[-1]
+
+
+def test_readiness_uses_desired_persistent_hostdevs_for_effective_set(monkeypatch) -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    monkeypatch.setattr('aivm.pci.inspect_pci_device', lambda bdf: gpu if bdf.endswith('.0') else audio)
+    monkeypatch.setattr('aivm.pci._check_iommu_enabled', lambda: True)
+    _activate_manager()
+    report = assess_device_readiness(
+        '0000:03:00.0',
+        declared_passthrough_devices=['0000:03:00.0'],
+        desired_persistent_hostdevs=['0000:03:00.0', '0000:03:00.1'],
+    )
+    assert tuple(d.bdf for d in report.declared_members) == ('0000:03:00.0',)
+    assert tuple(d.bdf for d in report.effective_members) == (
+        '0000:03:00.0',
+        '0000:03:00.1',
+    )
+    assert report.unexpected == ()
 
 
 def test_drift_reporting_distinguishes_declared_persistent_and_live() -> None:

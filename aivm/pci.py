@@ -77,6 +77,13 @@ class IOMMUGroupClassification:
     effective_passthrough_members: tuple[PCIDevice, ...]
 
 
+def _pci_function_number(device: PCIDevice) -> int | None:
+    try:
+        return int(device.bdf.rsplit('.', 1)[1], 16)
+    except Exception:
+        return None
+
+
 def normalize_bdf(bdf: str) -> str:
     text = str(bdf or '').strip().lower()
     if not text:
@@ -208,6 +215,12 @@ def _is_companion_device(primary: PCIDevice, candidate: PCIDevice) -> bool:
         return False
     if candidate.class_code not in {'0x040300', '0x040380'}:
         return False
+    function = _pci_function_number(candidate)
+    # Treat same-slot audio functions as expected GPU companions even when the
+    # product text is generic or missing; this is the common VGA + HDMI/DP
+    # audio package layout for NVIDIA/AMD GPUs.
+    if function is not None and function > 0:
+        return True
     text = f'{candidate.vendor_name} {candidate.product_name}'.lower()
     # Keep this conservative: a likely HDMI/DP audio function on the same GPU
     # package is okay, but generic audio devices should still block.
@@ -216,14 +229,52 @@ def _is_companion_device(primary: PCIDevice, candidate: PCIDevice) -> bool:
     )
 
 
+def build_effective_passthrough_set(
+    declared_devices: Sequence[str],
+    probed_group_members: Sequence[PCIDevice],
+    desired_persistent_hostdevs: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    if not probed_group_members:
+        normalized = {normalize_bdf(item) for item in declared_devices}
+        return tuple(sorted(normalized))
+    primary = next(
+        (device for device in probed_group_members if _is_display_device(device)),
+        probed_group_members[0],
+    )
+    effective_bdfs = {
+        normalize_bdf(item) for item in (declared_devices or [primary.bdf])
+    }
+    effective_bdfs.add(primary.bdf)
+    desired_bdfs = {
+        normalize_bdf(item) for item in (desired_persistent_hostdevs or ())
+    }
+    for device in probed_group_members:
+        if _is_companion_device(primary, device):
+            effective_bdfs.add(device.bdf)
+        elif device.bdf in desired_bdfs and (
+            device.bdf == primary.bdf or device.slot_key == primary.slot_key
+        ):
+            effective_bdfs.add(device.bdf)
+    return tuple(sorted(effective_bdfs))
+
+
 def classify_iommu_group_members(
     primary_device: PCIDevice,
     group_members: Sequence[PCIDevice],
     declared_passthrough_devices: Sequence[str] | None = None,
+    desired_persistent_hostdevs: Sequence[str] | None = None,
 ) -> IOMMUGroupClassification:
     declared_bdfs = {
-        normalize_bdf(item) for item in (declared_passthrough_devices or [primary_device.bdf])
+        normalize_bdf(item)
+        for item in (declared_passthrough_devices or [primary_device.bdf])
     }
+    effective_bdfs = set(
+        build_effective_passthrough_set(
+            tuple(sorted(declared_bdfs)),
+            group_members,
+            desired_persistent_hostdevs=desired_persistent_hostdevs,
+        )
+    )
     expected_members: list[PCIDevice] = []
     companion_members: list[PCIDevice] = []
     unrelated_members: list[PCIDevice] = []
@@ -233,10 +284,7 @@ def classify_iommu_group_members(
     seen_declared: set[str] = set()
 
     for device in group_members:
-        is_expected = (
-            device.bdf == primary_device.bdf
-            or _is_companion_device(primary_device, device)
-        )
+        is_expected = device.bdf in effective_bdfs
         if is_expected:
             if device.bdf not in seen_expected:
                 expected_members.append(device)
@@ -249,7 +297,11 @@ def classify_iommu_group_members(
             if device.bdf in declared_bdfs and device.bdf not in seen_declared:
                 declared_members.append(device)
                 seen_declared.add(device.bdf)
-            if device.bdf != primary_device.bdf and device.bdf not in declared_bdfs:
+            if (
+                device.bdf != primary_device.bdf
+                and _is_companion_device(primary_device, device)
+                and device.bdf not in effective_bdfs
+            ):
                 missing_required_companions.append(device)
         else:
             unrelated_members.append(device)
@@ -296,6 +348,7 @@ def _check_iommu_enabled() -> bool:
 def assess_device_readiness(
     bdf: str,
     declared_passthrough_devices: Sequence[str] | None = None,
+    desired_persistent_hostdevs: Sequence[str] | None = None,
 ) -> PCIReadiness:
     normalized = normalize_bdf(bdf)
     mgr = CommandManager.current()
@@ -327,6 +380,7 @@ def assess_device_readiness(
                 primary,
                 members,
                 declared_passthrough_devices,
+                desired_persistent_hostdevs,
             )
             iommu_enabled = _check_iommu_enabled()
     if not _is_display_device(primary):

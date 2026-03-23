@@ -23,7 +23,12 @@ from ..config import (
 from ..pci import assess_device_readiness, normalize_bdf, render_readiness_report
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdError, ensure_dir, run_cmd
-from .hostdev import ensure_hostdev_persistent, vm_domstate, vm_is_active
+from .hostdev import (
+    domain_hostdevs_persistent,
+    ensure_hostdev_persistent,
+    vm_domstate,
+    vm_is_active,
+)
 
 log = logger
 
@@ -112,10 +117,13 @@ def _display_class_code(class_code: str) -> bool:
 def _ensure_declared_gpu_start_readiness(cfg: AgentVMConfig) -> None:
     if not cfg.passthrough.pci_devices:
         return
+    desired_persistent = domain_hostdevs_persistent(cfg.vm.name)
     reports = []
     for bdf in sorted(set(cfg.passthrough.pci_devices)):
         report = assess_device_readiness(
-            bdf, declared_passthrough_devices=cfg.passthrough.pci_devices
+            bdf,
+            declared_passthrough_devices=cfg.passthrough.pci_devices,
+            desired_persistent_hostdevs=desired_persistent,
         )
         primary = report.primary
         if primary is not None and not _display_class_code(primary.class_code):
@@ -126,6 +134,7 @@ def _ensure_declared_gpu_start_readiness(cfg: AgentVMConfig) -> None:
             assess_device_readiness(
                 sorted(set(cfg.passthrough.pci_devices))[0],
                 declared_passthrough_devices=cfg.passthrough.pci_devices,
+                desired_persistent_hostdevs=desired_persistent,
             )
         )
     blocking = [report for report in reports if report.status != 'ready_persistent_restart']
