@@ -10,11 +10,8 @@ import pytest
 
 from aivm.commands import CommandManager
 from aivm.cli.vm import (
-    AttachmentAccess.RO,
-    AttachmentAccess.RW,
-    AttachmentMode.GIT,
-    AttachmentMode.SHARED,
-    AttachmentMode.SHARED_ROOT,
+    AttachmentAccess,
+    AttachmentMode,
     ResolvedAttachment,
     VMAttachCLI,
     _ensure_shared_root_host_bind,
