@@ -14,6 +14,7 @@ from .commands import (
     CommandManager,
     shell_join,
 )
+from .commands import CommandError as CmdError  # used for backwards compat. TODO: remove # NOQA
 from .commands import (
     CommandResult as CmdResult,
 )
