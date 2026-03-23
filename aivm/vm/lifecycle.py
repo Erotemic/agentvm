@@ -114,13 +114,20 @@ def _ensure_declared_gpu_start_readiness(cfg: AgentVMConfig) -> None:
         return
     reports = []
     for bdf in sorted(set(cfg.passthrough.pci_devices)):
-        report = assess_device_readiness(bdf)
+        report = assess_device_readiness(
+            bdf, declared_passthrough_devices=cfg.passthrough.pci_devices
+        )
         primary = report.primary
         if primary is not None and not _display_class_code(primary.class_code):
             continue
         reports.append(report)
     if not reports and cfg.passthrough.pci_devices:
-        reports.append(assess_device_readiness(sorted(set(cfg.passthrough.pci_devices))[0]))
+        reports.append(
+            assess_device_readiness(
+                sorted(set(cfg.passthrough.pci_devices))[0],
+                declared_passthrough_devices=cfg.passthrough.pci_devices,
+            )
+        )
     blocking = [report for report in reports if report.status != 'ready_persistent_restart']
     if not blocking:
         return

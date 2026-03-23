@@ -1287,7 +1287,9 @@ class GPUAttachCLI(_BaseCommand):
             print(str(ex))
             return 1
         primary_bdf = candidate.primary_bdf
-        report = assess_device_readiness(primary_bdf)
+        report = assess_device_readiness(
+            primary_bdf, declared_passthrough_devices=[primary_bdf]
+        )
         print(render_readiness_report(report))
         companions, unexpected = resolve_passthrough_set_for_gpu(primary_bdf)
         if unexpected:

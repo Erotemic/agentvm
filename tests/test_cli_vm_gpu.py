@@ -21,7 +21,15 @@ from aivm.host_pci import (
     render_initramfs_bind_script,
     render_modules_load_conf,
 )
-from aivm.pci import GPUCandidate, PCIDevice, _is_companion_device, resolve_gpu_selector
+from aivm.pci import (
+    GPUCandidate,
+    PCIDevice,
+    _is_companion_device,
+    assess_device_readiness,
+    classify_iommu_group_members,
+    render_readiness_report,
+    resolve_gpu_selector,
+)
 from aivm.store import Store, load_store, save_store, upsert_vm
 from aivm.vm.hostdev import compute_hostdev_drift, render_hostdev_xml
 from aivm.vm.lifecycle import create_or_start_vm
@@ -176,7 +184,7 @@ def test_hotplug_path_raises_not_implemented(monkeypatch, tmp_path: Path) -> Non
     )
     monkeypatch.setattr(
         'aivm.cli.vm.assess_device_readiness',
-        lambda bdf: type('Report', (), {'issues': ('One or more passthrough devices are not bound to vfio-pci: 0000:65:00.0',), 'status': 'manual_steps_required'})(),
+        lambda bdf, declared_passthrough_devices=None: type('Report', (), {'issues': ('One or more passthrough devices are not bound to vfio-pci: 0000:65:00.0',), 'status': 'manual_steps_required'})(),
     )
     monkeypatch.setattr('aivm.cli.vm.render_readiness_report', lambda report: '')
     monkeypatch.setattr(
@@ -211,7 +219,7 @@ def test_stable_path_with_non_vfio_gpu_records_intent_and_can_prepare_host(
     )
     monkeypatch.setattr(
         'aivm.cli.vm.assess_device_readiness',
-        lambda bdf: type(
+        lambda bdf, declared_passthrough_devices=None: type(
             'Report',
             (),
             {
@@ -260,7 +268,7 @@ def test_record_only_strategy_makes_no_host_changes(monkeypatch, tmp_path: Path)
     )
     monkeypatch.setattr(
         'aivm.cli.vm.assess_device_readiness',
-        lambda bdf: type('Report', (), {'issues': (), 'status': 'ready_persistent_restart'})(),
+        lambda bdf, declared_passthrough_devices=None: type('Report', (), {'issues': (), 'status': 'ready_persistent_restart'})(),
     )
     monkeypatch.setattr('aivm.cli.vm.render_readiness_report', lambda report: '')
     monkeypatch.setattr(
@@ -374,7 +382,7 @@ def test_vm_start_can_apply_declared_passthrough_after_host_prep(monkeypatch) ->
     )
     monkeypatch.setattr(
         'aivm.vm.lifecycle.assess_device_readiness',
-        lambda bdf: type(
+        lambda bdf, declared_passthrough_devices=None: type(
             'Report',
             (),
             {
@@ -413,7 +421,7 @@ def test_vm_start_blocks_when_declared_gpu_readiness_is_bad(monkeypatch) -> None
     )
     monkeypatch.setattr(
         'aivm.vm.lifecycle.assess_device_readiness',
-        lambda bdf: type(
+        lambda bdf, declared_passthrough_devices=None: type(
             'Report',
             (),
             {
@@ -467,6 +475,154 @@ def test_companion_detection_is_conservative() -> None:
     )
     assert _is_companion_device(gpu, arbitrary_audio) is False
     assert _is_companion_device(gpu, hdmi_audio) is True
+
+
+def test_iommu_group_classification_recognizes_same_slot_audio_companion() -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='High Definition Audio Controller',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    classification = classify_iommu_group_members(gpu, [gpu, audio], ['0000:03:00.0'])
+    assert [d.bdf for d in classification.unrelated_members] == []
+    assert [d.bdf for d in classification.companion_members] == ['0000:03:00.1']
+    assert [d.bdf for d in classification.missing_required_companions] == ['0000:03:00.1']
+    assert [d.bdf for d in classification.effective_passthrough_members] == [
+        '0000:03:00.0',
+        '0000:03:00.1',
+    ]
+
+
+def test_readiness_reports_missing_companion_not_unrelated_member(monkeypatch) -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='High Definition Audio Controller',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    monkeypatch.setattr('aivm.pci.inspect_pci_device', lambda bdf: gpu if bdf.endswith('.0') else audio)
+    monkeypatch.setattr('aivm.pci._check_iommu_enabled', lambda: True)
+    _activate_manager()
+    report = assess_device_readiness(
+        '0000:03:00.0', declared_passthrough_devices=['0000:03:00.0']
+    )
+    text = render_readiness_report(report)
+    assert report.status == 'manual_steps_required'
+    assert 'Unexpected IOMMU-group members:' not in text
+    assert 'Missing required companions:' in text
+    assert '0000:03:00.1' in text
+
+
+def test_readiness_passes_for_gpu_plus_audio_pair_when_both_declared(monkeypatch) -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='High Definition Audio Controller',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1'),
+    )
+    monkeypatch.setattr('aivm.pci.inspect_pci_device', lambda bdf: gpu if bdf.endswith('.0') else audio)
+    monkeypatch.setattr('aivm.pci._check_iommu_enabled', lambda: True)
+    _activate_manager()
+    report = assess_device_readiness(
+        '0000:03:00.0',
+        declared_passthrough_devices=['0000:03:00.0', '0000:03:00.1'],
+    )
+    text = render_readiness_report(report)
+    assert report.status == 'ready_persistent_restart'
+    assert report.unexpected == ()
+    assert report.missing_required_companions == ()
+    assert 'Unexpected IOMMU-group members:' not in text
+
+
+def test_readiness_fails_for_gpu_audio_plus_unrelated_group_member(monkeypatch) -> None:
+    gpu = PCIDevice(
+        bdf='0000:03:00.0',
+        nodedev_name='n0',
+        class_code='0x030000',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='RTX 3090',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1', '0000:03:00.2'),
+    )
+    audio = PCIDevice(
+        bdf='0000:03:00.1',
+        nodedev_name='n1',
+        class_code='0x040300',
+        vendor_id='0x10de',
+        vendor_name='NVIDIA',
+        product_name='High Definition Audio Controller',
+        driver='vfio-pci',
+        iommu_group=('0000:03:00.0', '0000:03:00.1', '0000:03:00.2'),
+    )
+    usb = PCIDevice(
+        bdf='0000:03:00.2',
+        nodedev_name='n2',
+        class_code='0x0c0330',
+        vendor_id='0x1022',
+        vendor_name='AMD',
+        product_name='USB Controller',
+        driver='xhci_hcd',
+        iommu_group=('0000:03:00.0', '0000:03:00.1', '0000:03:00.2'),
+    )
+    monkeypatch.setattr(
+        'aivm.pci.inspect_pci_device',
+        lambda bdf: gpu if bdf.endswith('.0') else audio if bdf.endswith('.1') else usb,
+    )
+    monkeypatch.setattr('aivm.pci._check_iommu_enabled', lambda: True)
+    _activate_manager()
+    report = assess_device_readiness(
+        '0000:03:00.0',
+        declared_passthrough_devices=['0000:03:00.0', '0000:03:00.1'],
+    )
+    text = render_readiness_report(report)
+    assert report.status == 'manual_steps_required'
+    assert [d.bdf for d in report.unexpected] == ['0000:03:00.2']
+    assert 'Unexpected IOMMU-group members:' in text
+    assert '0000:03:00.2' in text
 
 
 def test_drift_reporting_distinguishes_declared_persistent_and_live() -> None:

@@ -13,6 +13,7 @@ import textwrap
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 from .commands import CommandManager, IntentScope, PlanScope
 from .runtime import virsh_system_cmd
@@ -47,6 +48,9 @@ class PCIReadiness:
     primary: PCIDevice | None = None
     companions: tuple[PCIDevice, ...] = ()
     unexpected: tuple[PCIDevice, ...] = ()
+    declared_members: tuple[PCIDevice, ...] = ()
+    effective_members: tuple[PCIDevice, ...] = ()
+    missing_required_companions: tuple[PCIDevice, ...] = ()
     issues: tuple[str, ...] = ()
     recommendations: tuple[str, ...] = ()
     iommu_enabled: bool = False
@@ -61,6 +65,16 @@ class GPUCandidate:
     driver: str = ''
     readiness_status: str = ''
     summary: str = ''
+
+
+@dataclass(frozen=True)
+class IOMMUGroupClassification:
+    expected_members: tuple[PCIDevice, ...]
+    companion_members: tuple[PCIDevice, ...]
+    unrelated_members: tuple[PCIDevice, ...]
+    missing_required_companions: tuple[PCIDevice, ...]
+    declared_members: tuple[PCIDevice, ...]
+    effective_passthrough_members: tuple[PCIDevice, ...]
 
 
 def normalize_bdf(bdf: str) -> str:
@@ -202,6 +216,59 @@ def _is_companion_device(primary: PCIDevice, candidate: PCIDevice) -> bool:
     )
 
 
+def classify_iommu_group_members(
+    primary_device: PCIDevice,
+    group_members: Sequence[PCIDevice],
+    declared_passthrough_devices: Sequence[str] | None = None,
+) -> IOMMUGroupClassification:
+    declared_bdfs = {
+        normalize_bdf(item) for item in (declared_passthrough_devices or [primary_device.bdf])
+    }
+    expected_members: list[PCIDevice] = []
+    companion_members: list[PCIDevice] = []
+    unrelated_members: list[PCIDevice] = []
+    declared_members: list[PCIDevice] = []
+    missing_required_companions: list[PCIDevice] = []
+    seen_expected: set[str] = set()
+    seen_declared: set[str] = set()
+
+    for device in group_members:
+        is_expected = (
+            device.bdf == primary_device.bdf
+            or _is_companion_device(primary_device, device)
+        )
+        if is_expected:
+            if device.bdf not in seen_expected:
+                expected_members.append(device)
+                seen_expected.add(device.bdf)
+            if (
+                device.bdf != primary_device.bdf
+                and _is_companion_device(primary_device, device)
+            ):
+                companion_members.append(device)
+            if device.bdf in declared_bdfs and device.bdf not in seen_declared:
+                declared_members.append(device)
+                seen_declared.add(device.bdf)
+            if device.bdf != primary_device.bdf and device.bdf not in declared_bdfs:
+                missing_required_companions.append(device)
+        else:
+            unrelated_members.append(device)
+
+    expected_members.sort(key=lambda d: d.bdf)
+    companion_members.sort(key=lambda d: d.bdf)
+    unrelated_members.sort(key=lambda d: d.bdf)
+    declared_members.sort(key=lambda d: d.bdf)
+    missing_required_companions.sort(key=lambda d: d.bdf)
+    return IOMMUGroupClassification(
+        expected_members=tuple(expected_members),
+        companion_members=tuple(companion_members),
+        unrelated_members=tuple(unrelated_members),
+        missing_required_companions=tuple(missing_required_companions),
+        declared_members=tuple(declared_members),
+        effective_passthrough_members=tuple(expected_members),
+    )
+
+
 def resolve_passthrough_set_for_gpu(
     bdf: str,
 ) -> tuple[list[PCIDevice], list[PCIDevice]]:
@@ -209,19 +276,11 @@ def resolve_passthrough_set_for_gpu(
     members = [inspect_pci_device(item) for item in (primary.iommu_group or ())]
     if not members:
         members = [primary]
-    companions: list[PCIDevice] = []
-    unexpected: list[PCIDevice] = []
-    seen: set[str] = set()
-    for device in members:
-        if device.bdf == primary.bdf or _is_companion_device(primary, device):
-            if device.bdf not in seen:
-                companions.append(device)
-                seen.add(device.bdf)
-        else:
-            unexpected.append(device)
-    companions.sort(key=lambda d: d.bdf)
-    unexpected.sort(key=lambda d: d.bdf)
-    return companions, unexpected
+    classification = classify_iommu_group_members(primary, members, [primary.bdf])
+    return (
+        list(classification.effective_passthrough_members),
+        list(classification.unrelated_members),
+    )
 
 
 def _check_iommu_enabled() -> bool:
@@ -234,7 +293,10 @@ def _check_iommu_enabled() -> bool:
         return False
 
 
-def assess_device_readiness(bdf: str) -> PCIReadiness:
+def assess_device_readiness(
+    bdf: str,
+    declared_passthrough_devices: Sequence[str] | None = None,
+) -> PCIReadiness:
     normalized = normalize_bdf(bdf)
     mgr = CommandManager.current()
     issues: list[str] = []
@@ -258,7 +320,14 @@ def assess_device_readiness(bdf: str) -> PCIReadiness:
             approval_scope=f'pci-check:{normalized}',
         ):
             primary = inspect_pci_device(normalized)
-            companions, unexpected = resolve_passthrough_set_for_gpu(normalized)
+            members = [inspect_pci_device(item) for item in (primary.iommu_group or ())]
+            if not members:
+                members = [primary]
+            classification = classify_iommu_group_members(
+                primary,
+                members,
+                declared_passthrough_devices,
+            )
             iommu_enabled = _check_iommu_enabled()
     if not _is_display_device(primary):
         issues.append(
@@ -275,15 +344,25 @@ def assess_device_readiness(bdf: str) -> PCIReadiness:
         issues.append(
             f'{normalized} does not expose an IOMMU group in sysfs.'
         )
-    if unexpected:
+    if classification.unrelated_members:
         issues.append(
             'The device shares an IOMMU group with non-companion devices that would also need passthrough.'
         )
         recommendations.append(
             'Use a different GPU or move hardware so the group contains only the GPU and its expected audio companion.'
         )
+    if classification.missing_required_companions:
+        issues.append(
+            'One or more recognized companion functions are required for this GPU passthrough set: '
+            + ', '.join(device.bdf for device in classification.missing_required_companions)
+        )
+        recommendations.append(
+            'Attach the full effective passthrough set for this GPU, including the same-slot audio companion functions.'
+        )
     missing_vfio = [
-        device.bdf for device in companions if device.driver != 'vfio-pci'
+        device.bdf
+        for device in classification.effective_passthrough_members
+        if device.driver != 'vfio-pci'
     ]
     if missing_vfio:
         issues.append(
@@ -300,8 +379,13 @@ def assess_device_readiness(bdf: str) -> PCIReadiness:
         bdf=normalized,
         status=status,
         primary=primary,
-        companions=tuple(companions),
-        unexpected=tuple(unexpected),
+        companions=tuple(classification.expected_members),
+        unexpected=tuple(classification.unrelated_members),
+        declared_members=tuple(classification.declared_members),
+        effective_members=tuple(classification.effective_passthrough_members),
+        missing_required_companions=tuple(
+            classification.missing_required_companions
+        ),
         issues=tuple(issues),
         recommendations=tuple(recommendations),
         iommu_enabled=iommu_enabled,
@@ -323,7 +407,13 @@ def render_readiness_report(report: PCIReadiness) -> str:
                 f'IOMMU enabled: {"yes" if report.iommu_enabled else "no"}',
             ]
         )
-    if report.companions:
+    if report.declared_members:
+        lines.append('Declared set:')
+        lines.extend(f'  - {device.bdf}' for device in report.declared_members)
+    if report.effective_members:
+        lines.append('Effective passthrough set:')
+        lines.extend(f'  - {device.bdf}' for device in report.effective_members)
+    elif report.companions:
         lines.append('Passthrough set:')
         lines.extend(f'  - {device.bdf}' for device in report.companions)
     if report.unexpected:
@@ -331,6 +421,12 @@ def render_readiness_report(report: PCIReadiness) -> str:
         lines.extend(
             f'  - {device.bdf} {device.description}'.rstrip()
             for device in report.unexpected
+        )
+    if report.missing_required_companions:
+        lines.append('Missing required companions:')
+        lines.extend(
+            f'  - {device.bdf} {device.description}'.rstrip()
+            for device in report.missing_required_companions
         )
     if report.issues:
         lines.append('Blocking issues:')
