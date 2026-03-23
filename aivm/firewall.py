@@ -194,12 +194,22 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 
 def firewall_status(cfg: AgentVMConfig) -> str:
     table = cfg.firewall.table
-    res = run_cmd(
-        ['nft', 'list', 'table', 'inet', table],
-        sudo=True,
-        check=False,
-        capture=True,
-    )
+    mgr = CommandManager.current()
+    with mgr.intent(title='Inspect firewall status'):
+        # TODO: Even though this is a read only command, we should should have
+        # the command manager try to detect if sudo will need authentication
+        # before we submit the command. If we need authentication, regardless
+        # of if the command has a read or modify role we should provide the
+        # user with appropriate prompting for why we are asking for sudo, and
+        # also note if future read only commands will be automatically approved
+        # or not based on their config.
+        res = mgr.submit(
+            ['nft', 'list', 'table', 'inet', table],
+            role='read',
+            sudo=True,
+            check=False,
+            capture=True,
+        )
     return res.stdout + (res.stderr or '')
 
 
@@ -208,6 +218,7 @@ def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     if dry_run:
         log.info('DRYRUN: nft delete table inet {}', table)
         return
+    # TODO: we should be using CommandManager inead of run_cmd
     run_cmd(
         ['nft', 'delete', 'table', 'inet', table],
         sudo=True,

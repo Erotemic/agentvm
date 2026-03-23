@@ -10,9 +10,18 @@ from aivm.cli.host import HostModalCLI, HostPCICheckCLI
 from aivm.cli.vm import GPUAttachCLI, GPUDetachCLI, _render_gpu_drift_report
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig, load as load_cfg, save as save_cfg
-from aivm.pci import PCIDevice, _is_companion_device
+from aivm.pci import (
+    GPUCandidate,
+    PCIDevice,
+    _is_companion_device,
+    resolve_gpu_selector,
+)
 from aivm.store import Store, load_store, save_store, upsert_vm
-from aivm.vm.hostdev import compute_hostdev_drift, ensure_hostdev_persistent, render_hostdev_xml
+from aivm.vm.hostdev import (
+    compute_hostdev_drift,
+    ensure_hostdev_persistent,
+    render_hostdev_xml,
+)
 
 
 def _make_cfg(vm_name: str = 'gpu-vm') -> AgentVMConfig:
@@ -60,13 +69,26 @@ def test_attach_unpacks_companion_tuple_semantics(monkeypatch, tmp_path: Path) -
     cfg_path = tmp_path / 'config.toml'
     cfg = _write_store(cfg_path)
     applied: list[list[str]] = []
+    seen_bdfs: list[str] = []
 
     monkeypatch.setattr(
         'aivm.cli.vm._load_cfg_with_path', lambda *a, **k: (cfg, cfg_path)
     )
     monkeypatch.setattr(
-        'aivm.cli.vm.assess_device_readiness',
-        lambda bdf: type(
+        'aivm.cli.vm.resolve_gpu_selector',
+        lambda *a, **k: GPUCandidate(
+            index=0,
+            name='NVIDIA RTX 3090',
+            primary_bdf='0000:65:00.0',
+            companion_bdfs=('0000:65:00.1',),
+            driver='vfio-pci',
+            readiness_status='ready_persistent_restart',
+            summary='gpu0',
+        ),
+    )
+    def fake_assess(bdf):
+        seen_bdfs.append(bdf)
+        return type(
             'Report',
             (),
             {
@@ -79,7 +101,11 @@ def test_attach_unpacks_companion_tuple_semantics(monkeypatch, tmp_path: Path) -
                 'recommendations': (),
                 'iommu_enabled': True,
             },
-        )(),
+        )()
+
+    monkeypatch.setattr(
+        'aivm.cli.vm.assess_device_readiness',
+        fake_assess,
     )
     monkeypatch.setattr(
         'aivm.cli.vm.render_readiness_report', lambda report: report.status
@@ -102,8 +128,9 @@ def test_attach_unpacks_companion_tuple_semantics(monkeypatch, tmp_path: Path) -
     CommandManager.activate(CommandManager(yes=True, yes_sudo=True))
 
     assert GPUAttachCLI.main(
-        argv=False, config=str(cfg_path), vm=cfg.vm.name, bdf='0000:65:00.0'
+        argv=False, config=str(cfg_path), vm=cfg.vm.name, selector='0'
     ) == 0
+    assert seen_bdfs == ['0000:65:00.0']
     assert applied == [['0000:65:00.0', '0000:65:00.1']]
     mutated = load_store(cfg_path)
     assert mutated.vms[0].cfg.passthrough.pci_devices == [
@@ -123,6 +150,18 @@ def test_attach_uses_resolved_cfg_path(monkeypatch, tmp_path: Path) -> None:
         'aivm.cli.vm._load_cfg_with_path', lambda *a, **k: (cfg, cfg_path)
     )
     monkeypatch.setattr(
+        'aivm.cli.vm.resolve_gpu_selector',
+        lambda *a, **k: GPUCandidate(
+            index=0,
+            name='NVIDIA RTX 3090',
+            primary_bdf='0000:65:00.0',
+            companion_bdfs=(),
+            driver='vfio-pci',
+            readiness_status='ready_persistent_restart',
+            summary='gpu0',
+        ),
+    )
+    monkeypatch.setattr(
         'aivm.cli.vm.assess_device_readiness',
         lambda bdf: type('Report', (), {'status': 'ready_persistent_restart'})(),
     )
@@ -140,7 +179,7 @@ def test_attach_uses_resolved_cfg_path(monkeypatch, tmp_path: Path) -> None:
     CommandManager.activate(CommandManager(yes=True, yes_sudo=True))
 
     GPUAttachCLI.main(
-        argv=False, config=str(cfg_path), vm=cfg.vm.name, bdf='0000:65:00.0'
+        argv=False, config=str(cfg_path), vm=cfg.vm.name, selector='0'
     )
     assert cfg_path in seen
 
@@ -225,6 +264,18 @@ def test_unexpected_devices_block_attach_and_detach(monkeypatch, tmp_path: Path)
         'aivm.cli.vm._load_cfg_with_path', lambda *a, **k: (cfg, cfg_path)
     )
     monkeypatch.setattr(
+        'aivm.cli.vm.resolve_gpu_selector',
+        lambda *a, **k: GPUCandidate(
+            index=0,
+            name='NVIDIA RTX 3090',
+            primary_bdf='0000:65:00.0',
+            companion_bdfs=(),
+            driver='vfio-pci',
+            readiness_status='ready_persistent_restart',
+            summary='gpu0',
+        ),
+    )
+    monkeypatch.setattr(
         'aivm.cli.vm.assess_device_readiness',
         lambda bdf: type(
             'Report',
@@ -261,7 +312,7 @@ def test_unexpected_devices_block_attach_and_detach(monkeypatch, tmp_path: Path)
 
     with pytest.raises(RuntimeError, match='unexpected devices'):
         GPUAttachCLI.main(
-            argv=False, config=str(cfg_path), vm=cfg.vm.name, bdf='0000:65:00.0'
+            argv=False, config=str(cfg_path), vm=cfg.vm.name
         )
     with pytest.raises(RuntimeError, match='unexpected devices'):
         GPUDetachCLI.main(
@@ -335,3 +386,127 @@ def test_drift_reporting_distinguishes_declared_persistent_and_live() -> None:
     assert 'Declared but missing from persistent: 0000:65:00.0' in text
     assert 'Persistent but not declared: 0000:65:00.1' in text
     assert 'Live-only hostdevs: 0000:65:00.2' in text
+
+
+def _fake_candidates() -> list[GPUCandidate]:
+    return [
+        GPUCandidate(
+            index=0,
+            name='NVIDIA GeForce RTX 3090',
+            primary_bdf='0000:65:00.0',
+            companion_bdfs=('0000:65:00.1',),
+            driver='nvidia',
+            readiness_status='manual_steps_required',
+            summary='gpu0',
+        ),
+        GPUCandidate(
+            index=1,
+            name='NVIDIA GeForce RTX 4090',
+            primary_bdf='0000:b3:00.0',
+            companion_bdfs=('0000:b3:00.1',),
+            driver='vfio-pci',
+            readiness_status='ready_persistent_restart',
+            summary='gpu1',
+        ),
+    ]
+
+
+def test_missing_selector_interactive_prompts_for_selection(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    monkeypatch.setattr('builtins.input', lambda prompt='': '1')
+    chosen = resolve_gpu_selector(None, interactive=True, vm_name='myvm')
+    assert chosen.primary_bdf == '0000:b3:00.0'
+
+
+def test_missing_selector_noninteractive_lists_options(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    with pytest.raises(RuntimeError, match='GPU selector is required') as ex:
+        resolve_gpu_selector(None, interactive=False, vm_name='myvm')
+    text = str(ex.value)
+    assert 'Detected GPUs:' in text
+    assert 'aivm vm gpu attach 0 --vm myvm' in text
+    assert 'aivm vm gpu attach "NVIDIA GeForce RTX 3090" --vm myvm' in text
+
+
+def test_gpu_attach_missing_selector_interactive_prompts(monkeypatch, tmp_path: Path) -> None:
+    cfg_path = tmp_path / 'config.toml'
+    cfg = _write_store(cfg_path)
+    applied: list[list[str]] = []
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._load_cfg_with_path', lambda *a, **k: (cfg, cfg_path)
+    )
+    monkeypatch.setattr('aivm.cli.vm.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    monkeypatch.setattr('builtins.input', lambda prompt='': '1')
+    monkeypatch.setattr(
+        'aivm.cli.vm.assess_device_readiness',
+        lambda bdf: type('Report', (), {'status': 'ready_persistent_restart'})(),
+    )
+    monkeypatch.setattr('aivm.cli.vm.render_readiness_report', lambda report: '')
+    monkeypatch.setattr(
+        'aivm.cli.vm.resolve_passthrough_set_for_gpu',
+        lambda bdf: ([PCIDevice(bdf='0000:b3:00.0', nodedev_name='n0')], []),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.ensure_hostdev_persistent',
+        lambda vm_name, bdfs: applied.append(list(bdfs)) or list(bdfs),
+    )
+    monkeypatch.setattr('aivm.cli.vm.vm_is_running', lambda vm_name: False)
+    CommandManager.activate(CommandManager(yes=True, yes_sudo=True))
+
+    assert GPUAttachCLI.main(argv=False, config=str(cfg_path), vm=cfg.vm.name) == 0
+    assert applied == [['0000:b3:00.0']]
+
+
+def test_gpu_attach_missing_selector_noninteractive_fails_helpfully(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    cfg_path = tmp_path / 'config.toml'
+    cfg = _write_store(cfg_path)
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._load_cfg_with_path', lambda *a, **k: (cfg, cfg_path)
+    )
+    monkeypatch.setattr('aivm.cli.vm.sys.stdin.isatty', lambda: False)
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    CommandManager.activate(CommandManager(yes=True, yes_sudo=True))
+
+    assert GPUAttachCLI.main(argv=False, config=str(cfg_path), vm=cfg.vm.name) == 1
+    text = capsys.readouterr().out
+    assert 'Detected GPUs:' in text
+    assert 'aivm vm gpu attach 0 --vm gpu-vm' in text
+
+
+def test_numeric_selector_resolves_by_index(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    chosen = resolve_gpu_selector('1', interactive=False)
+    assert chosen.primary_bdf == '0000:b3:00.0'
+
+
+def test_bdf_selector_still_works(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    chosen = resolve_gpu_selector('0000:65:00.0', interactive=False)
+    assert chosen.name == 'NVIDIA GeForce RTX 3090'
+
+
+def test_unique_substring_selector_works(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', _fake_candidates)
+    chosen = resolve_gpu_selector('RTX 4090', interactive=False)
+    assert chosen.primary_bdf == '0000:b3:00.0'
+
+
+def test_ambiguous_substring_selector_fails_clearly(monkeypatch) -> None:
+    candidates = _fake_candidates()
+    candidates[1] = GPUCandidate(
+        index=1,
+        name='NVIDIA GeForce RTX 3090 Ti',
+        primary_bdf='0000:b3:00.0',
+        companion_bdfs=('0000:b3:00.1',),
+        driver='vfio-pci',
+        readiness_status='ready_persistent_restart',
+        summary='gpu1',
+    )
+    monkeypatch.setattr('aivm.pci.list_gpu_candidates', lambda: candidates)
+    with pytest.raises(RuntimeError, match='Ambiguous GPU selector'):
+        resolve_gpu_selector('RTX 3090', interactive=False, vm_name='myvm')

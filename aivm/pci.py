@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import textwrap
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .commands import CommandManager, IntentScope, PlanScope
@@ -50,6 +50,17 @@ class PCIReadiness:
     issues: tuple[str, ...] = ()
     recommendations: tuple[str, ...] = ()
     iommu_enabled: bool = False
+
+
+@dataclass(frozen=True)
+class GPUCandidate:
+    index: int
+    name: str
+    primary_bdf: str
+    companion_bdfs: tuple[str, ...] = ()
+    driver: str = ''
+    readiness_status: str = ''
+    summary: str = ''
 
 
 def normalize_bdf(bdf: str) -> str:
@@ -331,3 +342,174 @@ def render_readiness_report(report: PCIReadiness) -> str:
             for item in report.recommendations
         )
     return '\n'.join(lines)
+
+
+def _iter_display_device_bdfs() -> list[str]:
+    device_root = Path('/sys/bus/pci/devices')
+    if not device_root.exists():
+        return []
+    found: list[str] = []
+    for path in sorted(device_root.iterdir(), key=lambda p: p.name):
+        if _read_sysfs_text(path / 'class').lower() in {
+            '0x030000',
+            '0x030200',
+            '0x038000',
+        }:
+            found.append(path.name.lower())
+    return found
+
+
+def _candidate_name(primary: PCIDevice) -> str:
+    name = primary.description.strip()
+    return name or f'GPU {primary.bdf}'
+
+
+def list_gpu_candidates() -> list[GPUCandidate]:
+    candidates: list[GPUCandidate] = []
+    for index, bdf in enumerate(_iter_display_device_bdfs()):
+        primary = inspect_pci_device(bdf)
+        companions, _unexpected = resolve_passthrough_set_for_gpu(primary.bdf)
+        readiness = assess_device_readiness(primary.bdf)
+        companion_bdfs = tuple(
+            device.bdf for device in companions if device.bdf != primary.bdf
+        )
+        name = _candidate_name(primary)
+        candidates.append(
+            GPUCandidate(
+                index=index,
+                name=name,
+                primary_bdf=primary.bdf,
+                companion_bdfs=companion_bdfs,
+                driver=primary.driver,
+                readiness_status=readiness.status,
+                summary=f'[{index}] {name} ({primary.bdf})',
+            )
+        )
+    return candidates
+
+
+def render_gpu_candidate_list(candidates: list[GPUCandidate]) -> str:
+    if not candidates:
+        return 'No GPU candidates were detected.'
+    lines = ['Detected GPUs:', '']
+    for candidate in candidates:
+        lines.append(f'  [{candidate.index}] {candidate.name}')
+        lines.append(f'      graphics: {candidate.primary_bdf}')
+        if candidate.companion_bdfs:
+            lines.append(
+                '      companion: ' + ', '.join(candidate.companion_bdfs)
+            )
+        else:
+            lines.append('      companion: (none)')
+        lines.append(f'      driver: {candidate.driver or "(unbound)"}')
+        if candidate.readiness_status:
+            lines.append(f'      readiness: {candidate.readiness_status}')
+        lines.append('')
+    return '\n'.join(lines).rstrip()
+
+
+def _render_gpu_selection_help(
+    candidates: list[GPUCandidate], *, vm_name: str = ''
+) -> str:
+    lines = [render_gpu_candidate_list(candidates), '', 'Choose a GPU by running one of:']
+    if candidates:
+        example = candidates[0]
+        vm_part = f' --vm {vm_name}' if vm_name else ''
+        lines.append(
+            f'  aivm vm gpu attach {example.index}{vm_part}'
+        )
+        lines.append(
+            f'  aivm vm gpu attach "{example.name}"{vm_part}'
+        )
+        lines.append(
+            f'  aivm vm gpu attach {example.primary_bdf}{vm_part}'
+        )
+    else:
+        lines.append('  aivm host pci check 0000:65:00.0')
+    return '\n'.join(lines)
+
+
+def _choose_gpu_candidate_interactive(
+    candidates: list[GPUCandidate],
+) -> GPUCandidate:
+    print(render_gpu_candidate_list(candidates))
+    while True:
+        raw = input('Select GPU number: ').strip()
+        if not raw.isdigit():
+            print('Please enter a number.')
+            continue
+        choice = int(raw)
+        for candidate in candidates:
+            if candidate.index == choice:
+                return candidate
+        print(f'Please enter a number between 0 and {len(candidates) - 1}.')
+
+
+def resolve_gpu_selector(
+    selector: str | None,
+    *,
+    interactive: bool,
+    vm_name: str = '',
+) -> GPUCandidate:
+    candidates = list_gpu_candidates()
+    text = str(selector or '').strip()
+    if not candidates:
+        raise RuntimeError(
+            'No GPU candidates were detected on this host.'
+        )
+    if not text:
+        if interactive:
+            return _choose_gpu_candidate_interactive(candidates)
+        raise RuntimeError(
+            'GPU selector is required in non-interactive mode.\n'
+            + _render_gpu_selection_help(candidates, vm_name=vm_name)
+        )
+
+    try:
+        normalized = normalize_bdf(text)
+    except RuntimeError:
+        normalized = ''
+    if normalized:
+        for candidate in candidates:
+            if candidate.primary_bdf == normalized:
+                return candidate
+        raise RuntimeError(
+            f'GPU BDF not found among detected GPU candidates: {normalized}\n'
+            + _render_gpu_selection_help(candidates, vm_name=vm_name)
+        )
+
+    if text.isdigit():
+        idx = int(text)
+        for candidate in candidates:
+            if candidate.index == idx:
+                return candidate
+        raise RuntimeError(
+            f'GPU index out of range: {idx}\n'
+            + _render_gpu_selection_help(candidates, vm_name=vm_name)
+        )
+
+    lowered = text.lower()
+    exact = [candidate for candidate in candidates if candidate.name.lower() == lowered]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise RuntimeError(
+            f'Ambiguous GPU name selector: {text!r}\n'
+            + _render_gpu_selection_help(candidates, vm_name=vm_name)
+        )
+
+    substring = [
+        candidate for candidate in candidates if lowered in candidate.name.lower()
+    ]
+    if len(substring) == 1:
+        return substring[0]
+    if len(substring) > 1:
+        raise RuntimeError(
+            f'Ambiguous GPU selector: {text!r}\n'
+            + _render_gpu_selection_help(candidates, vm_name=vm_name)
+        )
+
+    raise RuntimeError(
+        f'No detected GPU matched selector: {text!r}\n'
+        + _render_gpu_selection_help(candidates, vm_name=vm_name)
+    )

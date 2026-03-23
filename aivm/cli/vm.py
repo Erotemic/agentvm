@@ -23,6 +23,7 @@ from ..pci import (
     assess_device_readiness,
     normalize_bdf,
     render_readiness_report,
+    resolve_gpu_selector,
     resolve_passthrough_set_for_gpu,
 )
 from ..resource_checks import (
@@ -1242,17 +1243,26 @@ class GPUAttachCLI(_BaseCommand):
     """Declare and reconcile persistent GPU passthrough for a VM."""
 
     vm = scfg.Value('', help='Optional VM name override.')
-    bdf = scfg.Value(
+    selector = scfg.Value(
         '',
         position=1,
-        help='Primary GPU PCI BDF (for example 0000:65:00.0).',
+        help='Optional GPU selector: BDF, index, or GPU name substring.',
     )
 
     @classmethod
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
-        primary_bdf = normalize_bdf(args.bdf)
+        try:
+            candidate = resolve_gpu_selector(
+                args.selector or None,
+                interactive=sys.stdin.isatty(),
+                vm_name=cfg.vm.name,
+            )
+        except RuntimeError as ex:
+            print(str(ex))
+            return 1
+        primary_bdf = candidate.primary_bdf
         report = assess_device_readiness(primary_bdf)
         print(render_readiness_report(report))
         if report.status == 'manual_steps_required':
