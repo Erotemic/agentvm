@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aivm.cli.vm import (
-    AttachmentMode.GIT,
-    AttachmentMode.SHARED,
-    AttachmentMode.SHARED_ROOT,
-    VMDetachCLI,
-)
+from aivm.cli.vm import AttachmentMode, VMDetachCLI
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
 from aivm.store import AttachmentEntry, Store, find_attachment_for_vm

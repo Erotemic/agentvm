@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aivm.cli.vm import (
-    AttachmentMode.SHARED_ROOT,
+    AttachmentMode,
     ReconcileResult,
     ResolvedAttachment,
     VMUpdateCLI,
