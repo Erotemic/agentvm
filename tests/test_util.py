@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import builtins
+import subprocess
 
 import pytest
 
-from aivm.commands import CommandManager, IntentScope, PlanScope
+from aivm.commands import CommandError, CommandManager, IntentScope, PlanScope
 from aivm.util import CmdError, arm_sudo_intent, run_cmd, shell_join
 
 
@@ -156,6 +157,79 @@ def test_command_handle_result_flushes_through_handle(monkeypatch) -> None:
         assert second.done() is False
     assert calls == [['sudo', 'echo', 'one'], ['sudo', 'echo', 'two']]
     assert second.done() is True
+
+
+def test_failed_loose_command_is_not_replayed_after_catch(monkeypatch) -> None:
+    _activate_manager(yes_sudo=True)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class P:
+            returncode = 7 if len(calls) == 1 else 0
+            stdout = ''
+            stderr = 'boom' if len(calls) == 1 else ''
+
+        return P()
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_run)
+
+    mgr = CommandManager.current()
+    with pytest.raises(CommandError):
+        mgr.submit(['false'], sudo=True, check=True, capture=True, eager=True).result()
+
+    ok = mgr.submit(['true'], sudo=True, check=True, capture=True, eager=True).result()
+
+    assert ok.code == 0
+    assert calls == [['sudo', 'false'], ['sudo', 'true']]
+
+
+def test_failed_plan_command_is_not_replayed_after_catch(monkeypatch) -> None:
+    _activate_manager(yes_sudo=True)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(1, cmd)
+
+        class P:
+            returncode = 0
+            stdout = 'ok'
+            stderr = ''
+
+        return P()
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (
+            calls.append(cmd)
+            or type(
+                'P',
+                (),
+                {
+                    'returncode': 4 if len(calls) == 1 else 0,
+                    'stdout': '',
+                    'stderr': 'plan-fail' if len(calls) == 1 else '',
+                },
+            )()
+        ),
+    )
+
+    mgr = CommandManager.current()
+    with PlanScope(mgr, 'plan'):
+        bad = mgr.submit(['false'], sudo=True, check=True, capture=True, summary='bad')
+        good = mgr.submit(['true'], sudo=True, check=True, capture=True, summary='good')
+        with pytest.raises(CommandError):
+            bad.result()
+        assert good.result().code == 0
+
+    assert calls == [['sudo', 'false'], ['sudo', 'true']]
 
 
 def test_plan_yes_approves_current_block_only(monkeypatch) -> None:

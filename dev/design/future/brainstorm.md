@@ -193,3 +193,4 @@ the code is structured so this is expressed naturally.
 
 
 
+* When we do a GPU attach and shutdown the machine, I got an issue where the VM was hung on shutdown and I needed to run `sudo systemctl restart libvirtd.service` on the host, which then caused more issues. We might need to try to be robust to this.

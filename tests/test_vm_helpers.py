@@ -913,3 +913,39 @@ def test_create_vm_raises_clear_error_when_guest_memory_unavailable(
     monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
     with pytest.raises(RuntimeError, match='could not allocate guest RAM'):
         create_or_start_vm(cfg, dry_run=False, recreate=False)
+
+
+def test_create_or_start_vm_waits_for_shutdown_transition_before_start(
+    monkeypatch,
+) -> None:
+    _activate_manager()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    domstates = iter(['in shutdown', 'shut off', 'shut off'])
+    active_states = iter([True, False, False])
+    calls = []
+
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: True)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._maybe_prepare_declared_gpu_hostdevs',
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.vm_domstate', lambda vm_name: next(domstates)
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_is_active', lambda vm_name: next(active_states))
+
+    def fake_run_cmd(cmd, **kwargs):
+        calls.append((list(cmd), dict(kwargs)))
+        if cmd[:2] == ['virsh', 'domstate']:
+            return CmdResult(0, 'in shutdown\n', '')
+        if cmd[:2] == ['virsh', 'start']:
+            return CmdResult(0, '', '')
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    create_or_start_vm(cfg, dry_run=False, recreate=False)
+    assert [cmd for cmd, kwargs in calls if cmd[:2] == ['virsh', 'start']] == [
+        ['virsh', 'start', 'vmx']
+    ]

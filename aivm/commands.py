@@ -903,11 +903,16 @@ class CommandManager:
         """Execute pending commands in ``plan`` in submission order."""
         for idx in range(plan.executed_upto + 1, len(plan.commands)):
             item = plan.commands[idx]
-            res = self._execute_one(
-                item.spec,
-                ordinal=(idx + 1, len(plan.commands)),
-                within_plan=True,
-            )
+            try:
+                res = self._execute_one(
+                    item.spec,
+                    ordinal=(idx + 1, len(plan.commands)),
+                    within_plan=True,
+                )
+            except CommandError as ex:
+                item.handle._set_result(ex.result)
+                plan.executed_upto = idx
+                raise
             item.handle._set_result(res)
             plan.executed_upto = idx
             if (
@@ -922,7 +927,12 @@ class CommandManager:
         """Execute pending loose commands in FIFO order."""
         while self._loose_commands:
             item = self._loose_commands[0]
-            res = self._execute_one(item.spec, within_plan=False)
+            try:
+                res = self._execute_one(item.spec, within_plan=False)
+            except CommandError as ex:
+                item.handle._set_result(ex.result)
+                self._loose_commands.pop(0)
+                raise
             item.handle._set_result(res)
             self._loose_commands.pop(0)
             if (
@@ -1118,4 +1128,3 @@ class CommandManager:
             )
             raise CommandError(cmd, res)
         return res
-

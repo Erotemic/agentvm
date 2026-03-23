@@ -11,6 +11,8 @@ from ..commands import CommandManager
 from ..runtime import virsh_system_cmd
 from ..util import CmdError
 
+_LIBVIRT_INACTIVE_STATES = {'shut off', 'shutoff'}
+
 
 @dataclass(frozen=True)
 class HostdevDrift:
@@ -29,6 +31,13 @@ class HostdevDrift:
     @property
     def only_live(self) -> tuple[str, ...]:
         return tuple(sorted(set(self.live) - set(self.persistent)))
+
+
+@dataclass(frozen=True)
+class RestartRequirement:
+    required: bool
+    reasons: tuple[str, ...] = ()
+    summary: str = ''
 
 
 def render_hostdev_xml(bdfs: list[str]) -> str:
@@ -110,7 +119,7 @@ def domain_hostdevs_live(vm_name: str) -> list[str]:
     return _extract_hostdev_bdfs(_dumpxml(vm_name, inactive=False))
 
 
-def vm_is_running(vm_name: str) -> bool:
+def vm_domstate(vm_name: str) -> str:
     result = (
         CommandManager.current()
         .submit(
@@ -119,11 +128,20 @@ def vm_is_running(vm_name: str) -> bool:
             role='read',
             check=False,
             capture=True,
-            summary=f'Check whether VM {vm_name} is running',
+            summary=f'Check current libvirt state for VM {vm_name}',
         )
         .result()
     )
-    return result.code == 0 and 'running' in result.stdout.strip().lower()
+    return result.stdout.strip().lower() if result.code == 0 else ''
+
+
+def vm_is_active(vm_name: str) -> bool:
+    state = vm_domstate(vm_name)
+    return bool(state) and state not in _LIBVIRT_INACTIVE_STATES
+
+
+def vm_is_running(vm_name: str) -> bool:
+    return 'running' in vm_domstate(vm_name)
 
 
 def _apply_hostdev_change(
@@ -196,4 +214,37 @@ def compute_hostdev_drift(
         declared=tuple(sorted(set(declared))),
         persistent=tuple(sorted(set(persistent))),
         live=tuple(sorted(set(live))),
+    )
+
+
+def restart_required_for_code_open(vm_name: str) -> RestartRequirement:
+    if not vm_is_running(vm_name):
+        return RestartRequirement(
+            required=False,
+            summary='VM is not running; cold start will apply persistent config.',
+        )
+    persistent = domain_hostdevs_persistent(vm_name)
+    live = domain_hostdevs_live(vm_name)
+    missing_live = tuple(sorted(set(persistent) - set(live)))
+    extra_live = tuple(sorted(set(live) - set(persistent)))
+    reasons: list[str] = []
+    if missing_live:
+        reasons.append(
+            'Live guest is missing persistent PCI hostdevs: '
+            + ', '.join(missing_live)
+        )
+    if extra_live:
+        reasons.append(
+            'Live guest still has PCI hostdevs not present in persistent config: '
+            + ', '.join(extra_live)
+        )
+    if not reasons:
+        return RestartRequirement(
+            required=False,
+            summary='Live and persistent PCI hostdev config already match.',
+        )
+    return RestartRequirement(
+        required=True,
+        reasons=tuple(reasons),
+        summary='VM restart required to activate cold-plug-only PCI config changes.',
     )

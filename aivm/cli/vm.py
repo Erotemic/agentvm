@@ -7,6 +7,7 @@ import json
 import re
 import shlex
 import sys
+import time
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
@@ -14,7 +15,7 @@ from pathlib import Path, PurePosixPath
 
 import scriptconfig as scfg
 
-from ..commands import CommandManager, IntentScope, PlanScope
+from ..commands import CommandError, CommandManager, IntentScope, PlanScope
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
 from ..host_pci import (
@@ -76,12 +77,17 @@ from ..vm import (
     wait_for_ip,
     wait_for_ssh,
 )
+from ..vm.lifecycle import _maybe_prepare_declared_gpu_hostdevs
 from ..vm.hostdev import (
     compute_hostdev_drift,
     detach_hostdev_persistent,
     domain_hostdevs_live,
     domain_hostdevs_persistent,
     ensure_hostdev_persistent,
+    RestartRequirement,
+    restart_required_for_code_open,
+    vm_domstate,
+    vm_is_active,
     vm_is_running,
 )
 from ..vm.drift import (
@@ -654,6 +660,10 @@ class VMCodeCLI(_BaseCommand):
                 f'DRYRUN: would open {session.share_guest_dst} in VS Code via host {cfg.vm.name}'
             )
             return 0
+        session = _maybe_restart_for_code_open(
+            session,
+            yes=bool(args.yes),
+        )
         ip = session.ip
         assert ip is not None
 
@@ -2822,6 +2832,217 @@ def _resolve_ip_for_ssh_ops(
     ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
     wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
     return ip
+
+
+def _restart_requirement_prompt_text(requirement) -> str:
+    lines = [
+        'VM configuration changed in a way that requires a restart before the guest will see it '
+        '(for example PCI/GPU passthrough changes).',
+    ]
+    for reason in getattr(requirement, 'reasons', ()):
+        lines.append(f'  - {reason}')
+    lines.append('')
+    lines.append('Restart the VM now and continue opening VS Code? [y/N]')
+    return '\n'.join(lines)
+
+
+def _pending_passthrough_requirement(cfg: AgentVMConfig) -> RestartRequirement:
+    declared = tuple(sorted(set(cfg.passthrough.pci_devices)))
+    if not declared:
+        return RestartRequirement(required=False)
+    if cfg.passthrough.host_prepare_mode != 'vfio-boot':
+        return RestartRequirement(required=False)
+    if not cfg.passthrough.host_prepare_applied:
+        return RestartRequirement(
+            required=False,
+            summary='Host VFIO boot prep has not been applied yet.',
+        )
+    if cfg.passthrough.persistent_hostdev_applied:
+        return RestartRequirement(required=False)
+    return RestartRequirement(
+        required=True,
+        reasons=(
+            'Declared GPU passthrough has not been written into the persistent VM definition yet: '
+            + ', '.join(declared),
+        ),
+        summary='Persistent PCI hostdev mappings still need to be applied before restart.',
+    )
+
+
+def _combined_restart_requirement(session: PreparedSession) -> RestartRequirement:
+    requirements = [
+        restart_required_for_code_open(session.cfg.vm.name),
+        _pending_passthrough_requirement(session.cfg),
+    ]
+    reasons: list[str] = []
+    summaries: list[str] = []
+    for requirement in requirements:
+        if requirement.summary:
+            summaries.append(requirement.summary)
+        reasons.extend(requirement.reasons)
+    reasons = list(dict.fromkeys(reasons))
+    summaries = list(dict.fromkeys(summaries))
+    if not any(requirement.required for requirement in requirements):
+        return RestartRequirement(
+            required=False,
+            reasons=tuple(reasons),
+            summary=' '.join(summaries).strip(),
+        )
+    return RestartRequirement(
+        required=True,
+        reasons=tuple(reasons),
+        summary=' '.join(summaries).strip(),
+    )
+
+
+def _maybe_restart_for_code_open(
+    session: PreparedSession,
+    *,
+    yes: bool,
+) -> PreparedSession:
+    requirement = _combined_restart_requirement(session)
+    if not requirement.required:
+        return session
+    approved = bool(yes)
+    if not approved and sys.stdin.isatty():
+        answer = input(_restart_requirement_prompt_text(requirement) + '\n')
+        approved = answer.strip().lower() in {'y', 'yes'}
+    if not approved:
+        print(
+            'Pending VM configuration changes are not active until the domain is cold-restarted. '
+            'Continuing with the current guest.'
+        )
+        for reason in requirement.reasons:
+            print(f'  - {reason}')
+        return session
+    return _restart_vm_for_code_open(session, yes=yes)
+
+
+def _restart_vm_for_code_open(
+    session: PreparedSession, *, yes: bool
+) -> PreparedSession:
+    cfg = session.cfg
+    pending_requirement = _pending_passthrough_requirement(cfg)
+    if pending_requirement.required:
+        _maybe_prepare_declared_gpu_hostdevs(cfg, dry_run=False)
+        cfg.passthrough.persistent_hostdev_applied = True
+        _record_vm(cfg, session.cfg_path)
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        'Restart VM to activate pending config',
+        why=(
+            'Some libvirt device changes only become visible to the guest after '
+            'a full domain stop/start cycle.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Shut down VM domain',
+            why='Request a graceful libvirt shutdown before restarting with updated domain config.',
+            approval_scope=f'vm-code-restart-stop:{cfg.vm.name}',
+        ):
+            mgr.submit(
+                virsh_system_cmd('shutdown', cfg.vm.name),
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary=f'Request graceful shutdown for VM {cfg.vm.name}',
+            )
+    deadline = time.time() + 180
+    last_state = vm_domstate(cfg.vm.name) or 'unknown'
+    while time.time() < deadline:
+        if not vm_is_active(cfg.vm.name):
+            break
+        state = vm_domstate(cfg.vm.name)
+        if state:
+            last_state = state
+        time.sleep(2.0)
+    else:
+        raise RuntimeError(
+            f'VM {cfg.vm.name} did not become inactive in time for a config-activating restart '
+            f'(last_state={last_state!r}). It may be stuck in shutdown; check '
+            f'`sudo virsh domstate {cfg.vm.name}` or `sudo virsh console {cfg.vm.name}`.'
+        )
+    # Libvirt state can flip back to running between the shutdown wait loop and
+    # the explicit start request (for example via concurrent/manual recovery).
+    # Treat that as the desired end state instead of failing the code-open flow.
+    if not vm_is_active(cfg.vm.name):
+        with IntentScope(
+            mgr,
+            'Restart VM to activate pending config',
+            why='Start the VM again so the guest sees the updated persistent domain config.',
+            role='modify',
+        ):
+            with PlanScope(
+                mgr,
+                'Start VM domain',
+                why='Boot the VM after shutdown so the new persistent config becomes active.',
+                approval_scope=f'vm-code-restart-start:{cfg.vm.name}',
+            ):
+                res = (
+                    mgr.submit(
+                        virsh_system_cmd('start', cfg.vm.name),
+                        sudo=True,
+                        role='modify',
+                        check=False,
+                        capture=True,
+                        summary=f'Start VM {cfg.vm.name}',
+                    )
+                    .result()
+                )
+                detail = f'{res.stderr}\n{res.stdout}'.lower()
+                if res.code != 0 and 'domain is already active' not in detail:
+                    raise CommandError(virsh_system_cmd('start', cfg.vm.name), res)
+    else:
+        log.info(
+            'VM {} became active before the explicit restart start step; continuing.',
+            cfg.vm.name,
+        )
+    _confirm_sudo_block(
+        yes=bool(yes),
+        purpose='Query VM network state via virsh after restart to rediscover the VM IP.',
+        action='read',
+    )
+    ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
+    wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
+    attachment = _resolve_attachment(
+        cfg,
+        session.cfg_path,
+        session.host_src,
+        session.share_guest_dst,
+    )
+    if attachment.mode in {ATTACHMENT_MODE_SHARED, ATTACHMENT_MODE_SHARED_ROOT}:
+        _ensure_attachment_available_in_guest(
+            cfg,
+            session.host_src,
+            attachment,
+            ip,
+            yes=bool(yes),
+            dry_run=False,
+            ensure_shared_root_host_side=(attachment.mode == ATTACHMENT_MODE_SHARED_ROOT),
+        )
+        _restore_saved_vm_attachments(
+            cfg,
+            session.cfg_path,
+            ip=ip,
+            primary_attachment=attachment,
+            yes=bool(yes),
+        )
+    return PreparedSession(
+        cfg=session.cfg,
+        cfg_path=session.cfg_path,
+        host_src=session.host_src,
+        attachment_mode=session.attachment_mode,
+        share_source_dir=session.share_source_dir,
+        share_tag=session.share_tag,
+        share_guest_dst=session.share_guest_dst,
+        ip=ip,
+        reg_path=session.reg_path,
+        meta_path=session.meta_path,
+    )
 
 
 def _record_attachment(

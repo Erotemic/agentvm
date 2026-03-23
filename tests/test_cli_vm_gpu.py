@@ -372,6 +372,19 @@ def test_vm_start_can_apply_declared_passthrough_after_host_prep(monkeypatch) ->
         'aivm.vm.lifecycle.ensure_hostdev_persistent',
         lambda vm_name, bdfs: ensured.append(list(bdfs)) or list(bdfs),
     )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.assess_device_readiness',
+        lambda bdf: type(
+            'Report',
+            (),
+            {
+                'status': 'ready_persistent_restart',
+                'primary': type(
+                    'Primary', (), {'class_code': '0x030000' if bdf.endswith('.0') else '0x040300'}
+                )(),
+            },
+        )(),
+    )
     def fake_run_cmd(cmd, **kwargs):
         started.append(list(cmd))
         if cmd[:2] == ['virsh', 'domstate']:
@@ -385,6 +398,46 @@ def test_vm_start_can_apply_declared_passthrough_after_host_prep(monkeypatch) ->
     create_or_start_vm(cfg, dry_run=False, recreate=False)
     assert ensured == [['0000:65:00.0', '0000:65:00.1']]
     assert any(cmd[:2] == ['virsh', 'start'] for cmd in started)
+
+
+def test_vm_start_blocks_when_declared_gpu_readiness_is_bad(monkeypatch) -> None:
+    cfg = _make_cfg()
+    cfg.passthrough.pci_devices = ['0000:65:00.0', '0000:65:00.1']
+    cfg.passthrough.host_prepare_mode = 'vfio-boot'
+    cfg.passthrough.host_prepare_applied = True
+
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.ensure_hostdev_persistent',
+        lambda vm_name, bdfs: list(bdfs),
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.assess_device_readiness',
+        lambda bdf: type(
+            'Report',
+            (),
+            {
+                'status': 'manual_steps_required',
+                'primary': type('Primary', (), {'class_code': '0x030000'})(),
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.render_readiness_report',
+        lambda report: 'PCI device: 0000:65:00.0\nBlocking issues:\n  - not bound to vfio-pci',
+    )
+
+    def fake_run_cmd(cmd, **kwargs):
+        if cmd[:2] == ['virsh', 'domstate']:
+            return type(
+                'Result', (), {'code': 0, 'stdout': 'shut off\n', 'stderr': ''}
+            )()
+        return type('Result', (), {'code': 0, 'stdout': '', 'stderr': ''})()
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    _activate_manager()
+    with pytest.raises(RuntimeError, match='Declared GPU passthrough is not ready'):
+        create_or_start_vm(cfg, dry_run=False, recreate=False)
 
 
 def test_companion_detection_is_conservative() -> None:

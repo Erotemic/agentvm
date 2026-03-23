@@ -20,10 +20,10 @@ from ..config import (
     SUPPORTED_IMAGE_SHA256,
     AgentVMConfig,
 )
-from ..pci import normalize_bdf
+from ..pci import assess_device_readiness, normalize_bdf, render_readiness_report
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdError, ensure_dir, run_cmd
-from .hostdev import ensure_hostdev_persistent
+from .hostdev import ensure_hostdev_persistent, vm_domstate, vm_is_active
 
 log = logger
 
@@ -88,6 +88,66 @@ def _is_missing_command_error(ex: Exception) -> bool:
         return True
     text = f'{ex.result.stderr}\n{ex.result.stdout}'.lower()
     return 'command not found' in text
+
+
+def _is_domain_already_active_error(ex: Exception) -> bool:
+    if not isinstance(ex, CmdError):
+        return False
+    text = f'{ex.result.stderr}\n{ex.result.stdout}'.lower()
+    return 'domain is already active' in text
+
+
+def _is_domain_already_active_result_text(text: str) -> bool:
+    return 'domain is already active' in text.lower()
+
+
+def _is_unknown_pci_header_type_result_text(text: str) -> bool:
+    return 'unknown pci header type' in text.lower()
+
+
+def _display_class_code(class_code: str) -> bool:
+    return str(class_code or '').lower() in {'0x030000', '0x030200', '0x038000'}
+
+
+def _ensure_declared_gpu_start_readiness(cfg: AgentVMConfig) -> None:
+    if not cfg.passthrough.pci_devices:
+        return
+    reports = []
+    for bdf in sorted(set(cfg.passthrough.pci_devices)):
+        report = assess_device_readiness(bdf)
+        primary = report.primary
+        if primary is not None and not _display_class_code(primary.class_code):
+            continue
+        reports.append(report)
+    if not reports and cfg.passthrough.pci_devices:
+        reports.append(assess_device_readiness(sorted(set(cfg.passthrough.pci_devices))[0]))
+    blocking = [report for report in reports if report.status != 'ready_persistent_restart']
+    if not blocking:
+        return
+    joined = '\n\n'.join(render_readiness_report(report) for report in blocking)
+    raise RuntimeError(
+        'Declared GPU passthrough is not ready on the host, so the VM was not started.\n'
+        f'{joined}'
+    )
+
+
+def _wait_for_vm_inactive(
+    vm_name: str, *, timeout_s: float = 180, poll_s: float = 2.0
+) -> str:
+    deadline = time.time() + timeout_s
+    last_state = vm_domstate(vm_name) or 'unknown'
+    while time.time() < deadline:
+        if not vm_is_active(vm_name):
+            return vm_domstate(vm_name) or last_state
+        time.sleep(poll_s)
+        state = vm_domstate(vm_name)
+        if state:
+            last_state = state
+    raise RuntimeError(
+        f'VM {vm_name} remained active while waiting for shutdown completion '
+        f'(last_state={last_state!r}). It may be hung in shutdown; check '
+        f'`sudo virsh domstate {vm_name}` or `sudo virsh console {vm_name}`.'
+    )
 
 
 def _sudo_path_exists(path: Path) -> bool:
@@ -896,15 +956,50 @@ def create_or_start_vm(
             if 'running' in st:
                 log.info('VM already running: {}', cfg.vm.name)
                 return
+            if st and st not in {'shut off', 'shutoff'}:
+                if 'shutdown' in st or 'dying' in st:
+                    log.warning(
+                        'VM {} is still active in transitional state={!r}; waiting for shutdown to complete before start.',
+                        cfg.vm.name,
+                        st,
+                    )
+                    _wait_for_vm_inactive(cfg.vm.name)
+                else:
+                    raise RuntimeError(
+                        f'VM {cfg.vm.name} is active but not running (state={st!r}). '
+                        'Resolve the guest state manually before retrying.'
+                    )
             if dry_run:
                 log.info('DRYRUN: virsh start {}', cfg.vm.name)
                 return
-            run_cmd(
+            _ensure_declared_gpu_start_readiness(cfg)
+            res = run_cmd(
                 ['virsh', 'start', cfg.vm.name],
                 sudo=True,
-                check=True,
+                check=False,
                 capture=True,
             )
+            detail = f'{res.stderr}\n{res.stdout}'.strip()
+            if res.code != 0:
+                if not _is_domain_already_active_result_text(detail):
+                    if _is_unknown_pci_header_type_result_text(detail):
+                        raise RuntimeError(
+                            'Libvirt refused to start the VM because the passthrough PCI device '
+                            'did not respond sanely on the host.\n'
+                            f'VM: {cfg.vm.name}\n'
+                            f'Declared passthrough devices: {", ".join(sorted(set(cfg.passthrough.pci_devices)))}\n'
+                            f'Libvirt error: {detail.strip()}\n'
+                            'This usually means the GPU is stuck in a bad reset/binding state after host/libvirt churn.\n'
+                            'Check the host driver binding with `aivm host pci_check '
+                            f'{normalize_bdf(sorted(set(cfg.passthrough.pci_devices))[0])}` and, if needed, '
+                            'rebind or reboot the host before retrying.'
+                        )
+                    raise CmdError(['virsh', 'start', cfg.vm.name], res)
+                log.info(
+                    'VM {} became active before the explicit start request; continuing.',
+                    cfg.vm.name,
+                )
+                return
             log.info('VM started: {}', cfg.vm.name)
             return
         if dry_run:
