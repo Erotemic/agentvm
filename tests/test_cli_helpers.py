@@ -14,13 +14,13 @@ from aivm.cli._common import (
     _confirm_sudo_block,
     _maybe_offer_create_ssh_identity,
 )
-from aivm.commands import CommandManager
 from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
 from aivm.cli.vm import (
     _auto_share_tag_for_path,
     _parse_sync_paths_arg,
     _upsert_ssh_config_entry,
 )
+from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.store import Store, save_store, upsert_attachment, upsert_vm
 
@@ -406,8 +406,12 @@ def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
     calls: list[list[str]] = []
 
     CommandManager.activate(CommandManager(yes=True))
-    monkeypatch.setattr(common_mod.Path, 'home', staticmethod(lambda: fake_home))
-    monkeypatch.setattr('aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen')
+    monkeypatch.setattr(
+        common_mod.Path, 'home', staticmethod(lambda: fake_home)
+    )
+    monkeypatch.setattr(
+        'aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen'
+    )
 
     class Proc:
         def __init__(self):
@@ -443,4 +447,6 @@ def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
     assert changed is True
     assert cfg.paths.ssh_identity_file == str(ssh_dir / 'id_aivm_ed25519')
     assert cfg.paths.ssh_pubkey_path == str(ssh_dir / 'id_aivm_ed25519.pub')
-    assert any(cmd[:4] == ['ssh-keygen', '-q', '-t', 'ed25519'] for cmd in calls)
+    assert any(
+        cmd[:4] == ['ssh-keygen', '-q', '-t', 'ed25519'] for cmd in calls
+    )

@@ -7,7 +7,6 @@ Debian/Ubuntu dependencies used by VM/network/firewall workflows.
 from __future__ import annotations
 
 import shlex
-
 from pathlib import Path
 
 from loguru import logger

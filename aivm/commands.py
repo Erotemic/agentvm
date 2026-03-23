@@ -1118,4 +1118,3 @@ class CommandManager:
             )
             raise CommandError(cmd, res)
         return res
-

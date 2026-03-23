@@ -16,7 +16,7 @@ reconcile flows.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import AgentVMConfig
@@ -24,10 +24,9 @@ from ..runtime import virsh_system_cmd
 from ..store import find_attachments_for_vm
 from ..util import run_cmd
 from .share import (
-    AttachmentAccess,
+    SHARED_ROOT_VIRTIOFS_TAG,
     AttachmentMode,
     ResolvedAttachment,
-    SHARED_ROOT_VIRTIOFS_TAG,
     align_attachment_tag_with_mappings,
     vm_share_mappings,
 )

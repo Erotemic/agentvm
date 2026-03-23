@@ -117,13 +117,19 @@ def test_config_init_interactive_can_create_dedicated_aivm_key(
 
     answers = iter(['', ''])
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
-    monkeypatch.setattr('aivm.cli.config.auto_defaults', fake_defaults_missing_keys)
+    monkeypatch.setattr(
+        'aivm.cli.config.auto_defaults', fake_defaults_missing_keys
+    )
     monkeypatch.setattr('aivm.cli.config.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr('aivm.cli._common.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr('builtins.input', lambda _: next(answers))
-    monkeypatch.setattr('aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen')
+    monkeypatch.setattr(
+        'aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen'
+    )
     monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
-    monkeypatch.setattr('aivm.cli._common.Path.home', staticmethod(lambda: fake_home))
+    monkeypatch.setattr(
+        'aivm.cli._common.Path.home', staticmethod(lambda: fake_home)
+    )
 
     rc = InitCLI.main(
         argv=False, config=str(cfg_path), yes=False, defaults=False

@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+from aivm.config import (
+    AgentVMConfig,
+    FirewallConfig,
+    NetworkConfig,
+    PathsConfig,
+    VMConfig,
+)
 from aivm.status import (
     ProbeOutcome,
     probe_runtime_environment,
     render_global_status,
 )
-from aivm.store import Store, AttachmentEntry, upsert_attachment
+from aivm.store import Store, upsert_attachment
 from aivm.util import CmdResult
-from aivm.config import AgentVMConfig, VMConfig, NetworkConfig, FirewallConfig, PathsConfig
 from aivm.vm.drift import saved_vm_drift_report
-from aivm.vm.share import vm_share_mappings
-from unittest.mock import patch, MagicMock
 
 
 def test_probe_runtime_environment_from_systemd_detect_virt_guest(
@@ -95,7 +101,7 @@ def test_saved_vm_drift_report_no_nameerror(
     monkeypatch,
 ) -> None:
     """Regression test for runtime status path.
-    
+
     This test ensures that saved_vm_drift_report can be called without
     raising a NameError for vm_share_mappings. The original bug was that
     drift.py called vm_share_mappings() without importing it.
@@ -110,21 +116,21 @@ def test_saved_vm_drift_report_no_nameerror(
         state_dir='/var/lib/aivm',
         ssh_identity_file='/home/user/.ssh/id_rsa',
     )
-    
+
     # Create a minimal store with no VMs
     reg = Store()
-    
+
     # Mock the hardware read to return valid values
     with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_hw:
         mock_hw.return_value = (4, 8192, '', '')
-        
+
         # Mock vm_share_mappings to return empty mappings
         with patch('aivm.vm.drift.vm_share_mappings') as mock_mappings:
             mock_mappings.return_value = []
-            
+
             # This should NOT raise NameError: name 'vm_share_mappings' is not defined
             report = saved_vm_drift_report(cfg, reg, use_sudo=False)
-            
+
             # Verify the report is available and has no drift
             assert report.available is True
             assert report.ok is True
@@ -134,7 +140,7 @@ def test_saved_vm_drift_report_with_mappings(
     monkeypatch,
 ) -> None:
     """Test saved_vm_drift_report with actual share mappings.
-    
+
     This test verifies that the drift report correctly handles share mappings
     and that vm_share_mappings is properly imported and callable.
     """
@@ -147,7 +153,7 @@ def test_saved_vm_drift_report_with_mappings(
         state_dir='/var/lib/aivm',
         ssh_identity_file='/home/user/.ssh/id_rsa',
     )
-    
+
     # Create a store with an attachment
     reg = Store()
     upsert_attachment(
@@ -159,16 +165,16 @@ def test_saved_vm_drift_report_with_mappings(
         guest_dst='/guest/path',
         tag='my-tag',
     )
-    
+
     with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_hw:
         mock_hw.return_value = (4, 8192, '', '')
-        
+
         with patch('aivm.vm.drift.vm_share_mappings') as mock_mappings:
             # VM has the same share mapping as in the store
             mock_mappings.return_value = [('/home/user/project', 'my-tag')]
-            
+
             report = saved_vm_drift_report(cfg, reg, use_sudo=False)
-            
+
             assert report.available is True
             assert report.ok is True
 
@@ -177,7 +183,7 @@ def test_saved_vm_drift_report_mapping_drift(
     monkeypatch,
 ) -> None:
     """Test saved_vm_drift_report when VM has different mappings than expected.
-    
+
     This test verifies that drift is correctly detected when the VM's actual
     share mappings differ from what's expected based on the store.
     """
@@ -190,7 +196,7 @@ def test_saved_vm_drift_report_mapping_drift(
         state_dir='/var/lib/aivm',
         ssh_identity_file='/home/user/.ssh/id_rsa',
     )
-    
+
     # Create a store with an attachment
     reg = Store()
     upsert_attachment(
@@ -202,16 +208,16 @@ def test_saved_vm_drift_report_mapping_drift(
         guest_dst='/guest/path',
         tag='my-tag',
     )
-    
+
     with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_hw:
         mock_hw.return_value = (4, 8192, '', '')
-        
+
         with patch('aivm.vm.drift.vm_share_mappings') as mock_mappings:
             # VM has a different share mapping than expected
             mock_mappings.return_value = [('/other/path', 'other-tag')]
-            
+
             report = saved_vm_drift_report(cfg, reg, use_sudo=False)
-            
+
             assert report.available is True
             assert report.ok is False
             assert len(report.items) == 2  # missing expected + unexpected extra
@@ -221,14 +227,14 @@ def test_vm_share_mappings_imported_in_drift_module(
     monkeypatch,
 ) -> None:
     """Verify that vm_share_mappings is properly imported in drift module.
-    
+
     This test specifically checks that the drift module has vm_share_mappings
     available as an imported function, which was the root cause of the
     original NameError.
     """
     # Import the drift module to check its namespace
     from aivm.vm import drift
-    
+
     # vm_share_mappings should be available in the drift module namespace
     assert hasattr(drift, 'vm_share_mappings')
     assert callable(drift.vm_share_mappings)

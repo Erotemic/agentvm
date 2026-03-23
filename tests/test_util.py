@@ -373,8 +373,14 @@ def test_run_logs_include_submitter_attribution(monkeypatch) -> None:
         )
 
     joined = '\n'.join(messages)
-    assert 'Submitted by: test_util:test_run_logs_include_submitter_attribution' in joined
-    assert 'submitted_by=test_util:test_run_logs_include_submitter_attribution' in joined
+    assert (
+        'Submitted by: test_util:test_run_logs_include_submitter_attribution'
+        in joined
+    )
+    assert (
+        'submitted_by=test_util:test_run_logs_include_submitter_attribution'
+        in joined
+    )
 
 
 def test_read_only_command_stays_read_inside_modify_intent(

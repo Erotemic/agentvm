@@ -6,10 +6,10 @@ to support folder-centric VM resolution workflows.
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import tomllib
 import ubelt as ub
 from loguru import logger as log
 

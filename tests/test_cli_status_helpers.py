@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from aivm.vm.drift import (
-    parse_dominfo_hardware as _parse_dominfo_hardware,
-    hardware_drift_report,
-    saved_vm_drift_report,
-)
 from aivm.config import AgentVMConfig
 from aivm.status import (
     ProbeOutcome,
@@ -16,6 +11,12 @@ from aivm.status import (
     render_status,
 )
 from aivm.util import CmdResult
+from aivm.vm.drift import (
+    hardware_drift_report,
+)
+from aivm.vm.drift import (
+    parse_dominfo_hardware as _parse_dominfo_hardware,
+)
 
 
 def test_check_network_parsing_and_permission(monkeypatch) -> None:
@@ -144,7 +145,9 @@ def test_render_status_non_sudo_keeps_vm_unknown_distinct_from_missing(
             None,
         ),
     )
-    monkeypatch.setattr('aivm.status.get_ip_cached', lambda *_a, **_k: '10.77.0.166')
+    monkeypatch.setattr(
+        'aivm.status.get_ip_cached', lambda *_a, **_k: '10.77.0.166'
+    )
     monkeypatch.setattr(
         'aivm.status.probe_ssh_ready',
         lambda *_a, **_k: ProbeOutcome(True, 'ready', ''),

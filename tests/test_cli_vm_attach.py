@@ -8,21 +8,22 @@ from pathlib import Path
 
 import pytest
 
-from aivm.commands import CommandManager
 from aivm.cli.vm import (
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
     VMAttachCLI,
-    _ensure_shared_root_host_bind,
     _ensure_shared_root_guest_bind,
+    _ensure_shared_root_host_bind,
     _git_attachment_remote_name,
     _git_current_branch,
     _record_attachment,
     _resolve_attachment,
     _upsert_host_git_remote,
 )
+from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
+from aivm.status import ProbeOutcome
 from aivm.store import (
     AttachmentEntry,
     Store,
@@ -31,7 +32,6 @@ from aivm.store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from aivm.status import ProbeOutcome
 from aivm.util import CmdResult
 
 
@@ -605,7 +605,8 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
 
     command_text = [' '.join(c) for c in calls]
     assert any(
-        line.startswith('findmnt -n -o SOURCE --target') for line in command_text
+        line.startswith('findmnt -n -o SOURCE --target')
+        for line in command_text
     )
     assert any(line.startswith('mount --bind') for line in command_text)
     assert all(not line.startswith('umount ') for line in command_text)
@@ -734,10 +735,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
     target = (
-        Path(cfg.paths.base_dir)
-        / cfg.vm.name
-        / 'shared-root'
-        / attachment.tag
+        Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root' / attachment.tag
     )
 
     def fake_subprocess_run(cmd, **kwargs):
@@ -800,7 +798,9 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
         if normalized[0] == 'umount':
             raise AssertionError('unexpected unmount in non-disruptive mode')
         if normalized[:2] == ['mount', '--bind']:
-            raise AssertionError('unexpected bind remount in non-disruptive mode')
+            raise AssertionError(
+                'unexpected bind remount in non-disruptive mode'
+            )
         raise AssertionError(f'unexpected command: {cmd}')
 
     monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
@@ -880,8 +880,14 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
         '[ "$final_src" = \'aivm-shared-root[/token-source]\' ]'
         in remote_script
     )
-    assert 'shared-root bind verification failed: unexpected source' in remote_script
-    assert 'shared-root bind verification failed: unexpected mount options' in remote_script
+    assert (
+        'shared-root bind verification failed: unexpected source'
+        in remote_script
+    )
+    assert (
+        'shared-root bind verification failed: unexpected mount options'
+        in remote_script
+    )
 
 
 def test_shared_root_host_bind_prompts_once_per_prepare_step(
@@ -985,7 +991,10 @@ def test_shared_root_vm_mapping_uses_named_steps_and_single_prompt(
     assert len(prompts) == 1
     assert 'Step: Inspect shared-root VM mapping' in messages
     assert 'Step: Ensure VM virtiofs mapping' in messages
-    assert '  1. Attach virtiofs device to running VM vm-shared-root-map' in messages
+    assert (
+        '  1. Attach virtiofs device to running VM vm-shared-root-map'
+        in messages
+    )
     assert any(
         msg.startswith('     command: sudo virsh attach-device ')
         for msg in messages

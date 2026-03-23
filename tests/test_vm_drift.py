@@ -5,26 +5,24 @@ that expected vs actual state comparison works correctly for hardware
 (CPU, RAM) and share mappings.
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+from aivm.config import (
+    AgentVMConfig,
+    PathsConfig,
+    VMConfig,
+)
 from aivm.vm.drift import (
     DriftItem,
     DriftReport,
-    parse_dominfo_hardware,
-    read_actual_vm_hardware,
-    expected_mapping_for_attachment,
-    attachment_has_mapping,
-    align_attachment_tag_with_mappings,
-    read_actual_vm_mappings,
-    hardware_drift_report,
     attachment_drift_report,
+    attachment_has_mapping,
+    expected_mapping_for_attachment,
+    hardware_drift_report,
+    parse_dominfo_hardware,
     vm_config_drift_report,
-    desired_saved_vm_mappings,
-    saved_attachment_drift_report,
 )
-from aivm.config import AgentVMConfig, VMConfig, NetworkConfig, FirewallConfig, PathsConfig
 from aivm.vm.share import AttachmentMode, ResolvedAttachment
 
 
@@ -45,7 +43,7 @@ class TestDriftItem:
             key='ram_mb',
             expected=8192,
             actual=4096,
-            reason='Config specifies different RAM than current VM'
+            reason='Config specifies different RAM than current VM',
         )
         assert item.reason == 'Config specifies different RAM than current VM'
 
@@ -65,9 +63,7 @@ class TestDriftReport:
         """Test DriftReport with drift items."""
         item = DriftItem(key='cpus', expected=4, actual=2)
         report = DriftReport(
-            available=True,
-            summary='1 drift item detected',
-            items=(item,)
+            available=True, summary='1 drift item detected', items=(item,)
         )
         assert report.available is True
         assert report.ok is False
@@ -77,7 +73,7 @@ class TestDriftReport:
         report = DriftReport(
             available=False,
             summary='VM not defined',
-            diag='virsh dominfo failed'
+            diag='virsh dominfo failed',
         )
         assert report.available is False
         assert report.ok is None
@@ -165,7 +161,7 @@ class TestExpectedMappingForAttachment:
             mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
         result = expected_mapping_for_attachment(cfg, att)
         assert result == ('/home/user/project', 'my-tag')
@@ -173,16 +169,14 @@ class TestExpectedMappingForAttachment:
     def test_shared_root_mode_mapping(self):
         """Test expected mapping for shared-root mode attachment."""
         cfg = MagicMock(spec=AgentVMConfig)
-        cfg.paths = PathsConfig(
-            base_dir='/var/lib/aivm'
-        )
+        cfg.paths = PathsConfig(base_dir='/var/lib/aivm')
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
             mode=AttachmentMode.SHARED_ROOT,
             source_dir='/home/user/project',
             tag='shared-root',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
         result = expected_mapping_for_attachment(cfg, att)
         assert result is not None
@@ -196,7 +190,7 @@ class TestExpectedMappingForAttachment:
             mode='git',
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
         result = expected_mapping_for_attachment(cfg, att)
         assert result is None
@@ -213,9 +207,12 @@ class TestAttachmentHasMapping:
             mode='shared',
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
-        mappings = [('/home/user/project', 'my-tag'), ('/other/path', 'other-tag')]
+        mappings = [
+            ('/home/user/project', 'my-tag'),
+            ('/other/path', 'other-tag'),
+        ]
         assert attachment_has_mapping(cfg, att, mappings) is True
 
     def test_mapping_missing_shared_mode(self):
@@ -226,7 +223,7 @@ class TestAttachmentHasMapping:
             mode='shared',
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
         mappings = [('/other/path', 'other-tag')]
         assert attachment_has_mapping(cfg, att, mappings) is False
@@ -234,19 +231,21 @@ class TestAttachmentHasMapping:
     def test_mapping_exists_shared_root_mode(self):
         """Test when mapping exists for shared-root mode."""
         cfg = MagicMock(spec=AgentVMConfig)
-        cfg.paths = PathsConfig(
-            base_dir='/var/lib/aivm'
-        )
+        cfg.paths = PathsConfig(base_dir='/var/lib/aivm')
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
             mode='shared-root',
             source_dir='/home/user/project',
             tag='shared-root',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
         # Shared-root uses canonical path, not the attachment source_dir
-        from aivm.vm.drift import _shared_root_host_dir, SHARED_ROOT_VIRTIOFS_TAG
+        from aivm.vm.drift import (
+            SHARED_ROOT_VIRTIOFS_TAG,
+            _shared_root_host_dir,
+        )
+
         expected_src = str(_shared_root_host_dir(cfg))
         mappings = [(expected_src, SHARED_ROOT_VIRTIOFS_TAG)]
         assert attachment_has_mapping(cfg, att, mappings) is True
@@ -254,19 +253,18 @@ class TestAttachmentHasMapping:
     def test_mapping_missing_shared_root_mode(self):
         """Test when mapping does not exist for shared-root mode."""
         cfg = MagicMock(spec=AgentVMConfig)
-        cfg.paths = PathsConfig(
-            base_dir='/var/lib/aivm'
-        )
+        cfg.paths = PathsConfig(base_dir='/var/lib/aivm')
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
             mode='shared-root',
             source_dir='/home/user/project',
             tag='shared-root',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
         # Wrong tag for shared-root
         from aivm.vm.drift import _shared_root_host_dir
+
         expected_src = str(_shared_root_host_dir(cfg))
         mappings = [(expected_src, 'wrong-tag')]
         assert attachment_has_mapping(cfg, att, mappings) is False
@@ -279,9 +277,14 @@ class TestHardwareDriftReport:
         """Test when hardware matches config."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_read:
-            mock_read.return_value = (4, 8192, '', '')  # cpus=4, mem=8192 MiB, no error
+            mock_read.return_value = (
+                4,
+                8192,
+                '',
+                '',
+            )  # cpus=4, mem=8192 MiB, no error
             report = hardware_drift_report(cfg, use_sudo=False)
             assert report.available is True
             assert report.ok is True
@@ -291,10 +294,15 @@ class TestHardwareDriftReport:
         """Test that None memory value doesn't crash (reported as unavailable, not 'in sync')."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_read:
             # If memory parsing fails (returns None), report as unavailable
-            mock_read.return_value = (4, None, '', '')  # cpus=4, mem parsing failed
+            mock_read.return_value = (
+                4,
+                None,
+                '',
+                '',
+            )  # cpus=4, mem parsing failed
             report = hardware_drift_report(cfg, use_sudo=False)
             # Parse failures should be reported as unavailable, not "in sync"
             assert report.available is False
@@ -305,7 +313,7 @@ class TestHardwareDriftReport:
         """Test when CPU count differs from config."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_read:
             mock_read.return_value = (2, 8192, '', '')  # cpus=2, mem=8192 MiB
             report = hardware_drift_report(cfg, use_sudo=False)
@@ -320,7 +328,7 @@ class TestHardwareDriftReport:
         """Test when RAM differs from config."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_read:
             mock_read.return_value = (4, 4096, '', '')  # cpus=4, mem=4096 MiB
             report = hardware_drift_report(cfg, use_sudo=False)
@@ -335,9 +343,14 @@ class TestHardwareDriftReport:
         """Test when VM is not defined."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.read_actual_vm_hardware') as mock_read:
-            mock_read.return_value = (None, None, 'not_found', 'virsh: domain not found')
+            mock_read.return_value = (
+                None,
+                None,
+                'not_found',
+                'virsh: domain not found',
+            )
             report = hardware_drift_report(cfg, use_sudo=False)
             assert report.available is False
             assert report.ok is None
@@ -356,12 +369,17 @@ class TestAttachmentDriftReport:
             mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
-        
+
         with patch('aivm.vm.drift.read_actual_vm_mappings') as mock_read:
-            mock_read.return_value = [('/home/user/project', 'my-tag'), ('/other', 'other')], ''
-            report = attachment_drift_report(cfg, att, host_src=Path('/home/user/project'), use_sudo=False)
+            mock_read.return_value = (
+                [('/home/user/project', 'my-tag'), ('/other', 'other')],
+                '',
+            )
+            report = attachment_drift_report(
+                cfg, att, host_src=Path('/home/user/project'), use_sudo=False
+            )
             assert report.available is True
             assert report.ok is True
 
@@ -374,12 +392,14 @@ class TestAttachmentDriftReport:
             mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
-        
+
         with patch('aivm.vm.drift.read_actual_vm_mappings') as mock_read:
             mock_read.return_value = [('/other/path', 'other-tag')], ''
-            report = attachment_drift_report(cfg, att, host_src=Path('/home/user/project'), use_sudo=False)
+            report = attachment_drift_report(
+                cfg, att, host_src=Path('/home/user/project'), use_sudo=False
+            )
             assert report.available is True
             assert report.ok is False
             assert len(report.items) == 1
@@ -394,12 +414,14 @@ class TestAttachmentDriftReport:
             mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
-            guest_dst='/guest/path'
+            guest_dst='/guest/path',
         )
-        
+
         with patch('aivm.vm.drift.read_actual_vm_mappings') as mock_read:
             mock_read.return_value = None, 'failed to read mappings'
-            report = attachment_drift_report(cfg, att, host_src=Path('/home/user/project'), use_sudo=False)
+            report = attachment_drift_report(
+                cfg, att, host_src=Path('/home/user/project'), use_sudo=False
+            )
             assert report.available is False
             assert report.ok is None
 
@@ -411,9 +433,11 @@ class TestVmConfigDriftReport:
         """Test when no drift exists."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.hardware_drift_report') as mock_hw:
-            mock_hw.return_value = DriftReport(available=True, summary='no drift', items=())
+            mock_hw.return_value = DriftReport(
+                available=True, summary='no drift', items=()
+            )
             report = vm_config_drift_report(cfg, use_sudo=False)
             assert report.available is True
             assert report.ok is True
@@ -422,12 +446,12 @@ class TestVmConfigDriftReport:
         """Test combined hardware and share drift."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         with patch('aivm.vm.drift.hardware_drift_report') as mock_hw:
             mock_hw.return_value = DriftReport(
                 available=True,
                 summary='1 hardware drift',
-                items=(DriftItem(key='cpus', expected=4, actual=2),)
+                items=(DriftItem(key='cpus', expected=4, actual=2),),
             )
             report = vm_config_drift_report(cfg, use_sudo=False)
             assert report.available is True
@@ -438,13 +462,11 @@ class TestVmConfigDriftReport:
         """Test with explicit expected mappings."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
-        
+
         # Patch hardware_drift_report to avoid hitting real virsh
         with patch('aivm.vm.drift.hardware_drift_report') as mock_hw:
             mock_hw.return_value = DriftReport(
-                available=True,
-                summary='No hardware drift',
-                items=()
+                available=True, summary='No hardware drift', items=()
             )
             with patch('aivm.vm.drift.read_actual_vm_mappings') as mock_read:
                 # VM has /other mapped, but we expect /home/user/project
@@ -453,13 +475,18 @@ class TestVmConfigDriftReport:
                 report = vm_config_drift_report(
                     cfg,
                     use_sudo=False,
-                    expected_mappings=[('/home/user/project', 'my-tag')]
+                    expected_mappings=[('/home/user/project', 'my-tag')],
                 )
                 assert report.available is True
                 assert report.ok is False
                 # Two-way diff detects both missing and unexpected mappings
                 assert len(report.items) == 2
                 # One should be the missing expected mapping
-                assert any('share_mapping:my-tag' in item.key for item in report.items)
+                assert any(
+                    'share_mapping:my-tag' in item.key for item in report.items
+                )
                 # One should be the unexpected extra mapping
-                assert any('share_mapping:extra:other' in item.key for item in report.items)
+                assert any(
+                    'share_mapping:extra:other' in item.key
+                    for item in report.items
+                )

@@ -11,13 +11,13 @@ import os
 import re
 import shlex
 import sys
+import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import fields
 from pathlib import Path
 from typing import cast
 
 import scriptconfig as scfg
-import tomllib
 from loguru import logger
 
 from ..config import (

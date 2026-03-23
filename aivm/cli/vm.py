@@ -9,7 +9,7 @@ import shlex
 import sys
 import xml.etree.ElementTree as ET
 from copy import deepcopy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 import scriptconfig as scfg
@@ -49,8 +49,8 @@ from ..util import CmdError, ensure_dir, run_cmd, which
 from ..vm import (
     attach_vm_share,
     create_or_start_vm,
-    detach_vm_share,
     destroy_vm,
+    detach_vm_share,
     ensure_share_mounted,
     get_ip_cached,
     provision,
@@ -61,23 +61,27 @@ from ..vm import (
     wait_for_ip,
     wait_for_ssh,
 )
+from ..vm import (
+    ssh_config as mk_ssh_config,
+)
+from ..vm.drift import (
+    attachment_has_mapping as drift_attachment_has_mapping,
+)
 from ..vm.drift import (
     hardware_drift_report,
-    attachment_has_mapping as drift_attachment_has_mapping,
+)
+from ..vm.drift import (
     parse_dominfo_hardware as _parse_dominfo_hardware,
-    saved_vm_drift_report,
 )
 from ..vm.share import (
+    SHARED_ROOT_VIRTIOFS_TAG,
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
-    SHARED_ROOT_VIRTIOFS_TAG,
-    _auto_share_tag_for_path,
     _ensure_share_tag_len,
-    align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
 )
-from ..vm import (
-    ssh_config as mk_ssh_config,
+from ..vm.share import (
+    align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
 )
 from ._common import (
     PreparedSession,
@@ -2758,7 +2762,10 @@ def _probe_vm_running_nonsudo(vm_name: str) -> bool | None:
     )
     if res.code != 0:
         raw_detail = (res.stderr or res.stdout or '').strip().lower()
-        if 'permission denied' in raw_detail or 'authentication failed' in raw_detail:
+        if (
+            'permission denied' in raw_detail
+            or 'authentication failed' in raw_detail
+        ):
             return None
         return False
     state = res.stdout.strip().lower()

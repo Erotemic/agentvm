@@ -7,16 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from aivm.commands import CommandManager
 from aivm.cli.vm import ResolvedAttachment, _ensure_shared_root_host_bind
+from aivm.commands import CommandManager
 from aivm.config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     AgentVMConfig,
 )
 from aivm.util import CmdError, CmdResult
 from aivm.vm import (
-    _mac_for_vm,
     _ensure_qemu_access,
+    _mac_for_vm,
     _write_cloud_init,
     attach_vm_share,
     create_or_start_vm,
@@ -396,9 +396,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     CommandManager.activate(CommandManager(yes_sudo=True))
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
-    monkeypatch.setattr(
-        'aivm.commands.subprocess.run', fake_subprocess_run
-    )
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     _write_cloud_init(cfg, dry_run=False)
     user_data_script = heredocs['user-data']
     assert '#cloud-config' in user_data_script
@@ -772,7 +770,9 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
 
     command_text = [' '.join(c) for c in calls]
     base_root = str(Path(cfg.paths.base_dir) / cfg.vm.name)
-    assert any(line.startswith(f'mount --bind {source_dir}') for line in command_text)
+    assert any(
+        line.startswith(f'mount --bind {source_dir}') for line in command_text
+    )
     assert f'chown -R root:libvirt-qemu {base_root}' not in command_text
     assert f'chown -R root:kvm {base_root}' not in command_text
 
