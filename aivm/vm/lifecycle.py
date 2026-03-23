@@ -23,6 +23,7 @@ from ..config import (
 from ..pci import normalize_bdf
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdError, ensure_dir, run_cmd
+from .hostdev import ensure_hostdev_persistent
 
 log = logger
 
@@ -880,6 +881,7 @@ def create_or_start_vm(
 
     if vm_exists(cfg, dry_run=dry_run):
         if not recreate:
+            _maybe_prepare_declared_gpu_hostdevs(cfg, dry_run=dry_run)
             st = (
                 run_cmd(
                     ['virsh', 'domstate', cfg.vm.name],
@@ -1029,6 +1031,52 @@ def create_or_start_vm(
         else:
             raise ex
     log.info('VM created: {}', cfg.vm.name)
+
+
+def _maybe_prepare_declared_gpu_hostdevs(
+    cfg: AgentVMConfig, *, dry_run: bool = False
+) -> None:
+    if not cfg.passthrough.pci_devices:
+        return
+    if cfg.passthrough.host_prepare_mode != 'vfio-boot':
+        return
+    if not cfg.passthrough.host_prepare_applied:
+        log.warning(
+            'GPU passthrough is declared for vm={} but host boot prep has not been applied yet. '
+            'Run `aivm vm gpu attach --vm {}` and choose the stable path, then reboot the host.',
+            cfg.vm.name,
+            cfg.vm.name,
+        )
+        return
+    if dry_run:
+        log.info(
+            'DRYRUN: would ensure persistent GPU hostdev mappings for vm={} devices={}',
+            cfg.vm.name,
+            ','.join(sorted(set(cfg.passthrough.pci_devices))),
+        )
+        return
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        'Prepare declared GPU passthrough before VM boot',
+        why=(
+            'Stable GPU passthrough applies persistent libvirt hostdev mapping '
+            'during the VM start path after host boot-time VFIO preparation.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Ensure persistent GPU hostdev mappings',
+            why=(
+                'Apply persistent libvirt hostdev devices so the VM starts with '
+                'its declared GPU after the host has rebound it to vfio-pci.'
+            ),
+            approval_scope=f'vm-gpu-boot-attach:{cfg.vm.name}',
+        ):
+            ensure_hostdev_persistent(
+                cfg.vm.name, list(cfg.passthrough.pci_devices)
+            )
 
 
 def _mac_for_vm(cfg: AgentVMConfig) -> str:

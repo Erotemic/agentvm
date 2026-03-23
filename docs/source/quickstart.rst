@@ -42,6 +42,36 @@ After either path
    aivm status --sudo
    aivm vm update
 
+Optional stable GPU passthrough
+-------------------------------
+
+.. code-block:: bash
+
+   aivm vm gpu attach --vm myvm
+   sudo reboot
+   aivm vm up --vm myvm
+
+This workflow can make explicit host-level VFIO boot-binding changes managed by
+``aivm``. Those changes are high risk by design:
+
+* the host and guest cannot use the GPU at the same time
+* after reboot, the host may lose display/compute access on that GPU
+* undoing the change later also requires another host reboot
+
+Undo with ``aivm``:
+
+.. code-block:: bash
+
+   aivm vm gpu detach 0000:65:00.0 --vm myvm
+   sudo reboot
+
+Manual undo:
+
+* remove the AIVM-managed ``aivm-vfio-*`` files from
+  ``/etc/modules-load.d/`` and ``/etc/initramfs-tools/scripts/init-top/``
+* run ``sudo update-initramfs -u``
+* reboot the host
+
 Notes
 -----
 

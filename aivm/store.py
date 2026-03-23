@@ -47,7 +47,7 @@ class AttachmentEntry:
 
 @dataclass
 class Store:
-    schema_version: int = 6
+    schema_version: int = 7
     active_vm: str = ''
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     defaults: AgentVMConfig | None = None
@@ -120,7 +120,7 @@ def load_store(path: Path | None = None) -> Store:
         return Store()
     raw = tomllib.loads(fpath.read_text(encoding='utf-8'))
     reg = Store()
-    reg.schema_version = int(raw.get('schema_version', 6))
+    reg.schema_version = int(raw.get('schema_version', 7))
     reg.active_vm = str(raw.get('active_vm', '')).strip()
     behavior_raw = raw.get('behavior', None)
     if isinstance(behavior_raw, dict):

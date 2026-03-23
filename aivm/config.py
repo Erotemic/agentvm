@@ -129,6 +129,10 @@ class BehaviorConfig:
 @dataclass
 class PassthroughConfig:
     pci_devices: list[str] = field(default_factory=list)
+    host_prepare_mode: str = 'none'
+    host_prepare_applied: bool = False
+    persistent_hostdev_applied: bool = False
+    selector_label: str = ''
 
 
 @dataclass

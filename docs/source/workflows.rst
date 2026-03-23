@@ -177,3 +177,41 @@ Get command tree
    aivm help plan
    aivm help raw
    aivm help completion
+
+Stable GPU passthrough
+----------------------
+
+.. code-block:: bash
+
+   aivm vm gpu attach --vm myvm
+
+Interactive attach now has two stages:
+
+* choose a GPU if you did not pass a selector
+* choose an attachment strategy
+
+The supported strategy in this pass is stable boot-time attachment. ``aivm``
+can write explicit AIVM-managed host files so the GPU binds to ``vfio-pci`` on
+the next boot, then later ``aivm vm up`` applies the persistent libvirt hostdev
+mapping and starts the VM.
+
+This is a host-level change with serious consequences:
+
+* the host may lose access to that GPU after reboot
+* the guest should be treated as the owner of that GPU while host prep is active
+* undoing the host prep later requires removing the AIVM-managed files,
+  rebuilding initramfs, and rebooting again
+
+Undo with ``aivm``:
+
+.. code-block:: bash
+
+   aivm vm gpu detach 0000:65:00.0 --vm myvm
+   sudo reboot
+
+Manual undo:
+
+* remove the AIVM-managed ``aivm-vfio-*`` files from
+  ``/etc/modules-load.d/`` and ``/etc/initramfs-tools/scripts/init-top/``
+* run ``sudo update-initramfs -u``
+* reboot the host

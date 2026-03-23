@@ -249,6 +249,15 @@ State management
 * Avoid hidden coupling between config mutation and runtime mutation.
 * When behavior depends on inferred state, provide diagnostics that make the
   inference visible.
+* GPU passthrough must keep these states separate:
+
+  * declared VM ownership intent in the config store
+  * host boot-time VFIO preparation managed by ``aivm``
+  * persistent libvirt hostdev mapping
+  * active attachment in a running guest
+
+  Commands may reconcile between these states, but they should not collapse
+  them into one ambiguous "attached" flag.
 
 Provisioning scope
 ~~~~~~~~~~~~~~~~~~

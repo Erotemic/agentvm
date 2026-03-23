@@ -32,6 +32,7 @@ What it provides
 * SSH + VS Code Remote-SSH workflows
 * Optional virtiofs folder sharing (explicit trust extension)
 * Optional settings sync into the guest user profile
+* Optional stable GPU passthrough with AIVM-managed boot-time VFIO prep
 * A single config store for defaults, VMs, networks, and attachments
 
 .. note::
@@ -258,6 +259,50 @@ Config-store lifecycle (explicit flow)
    aivm config edit
    aivm help plan
    aivm help tree
+
+Stable GPU Passthrough
+----------------------
+
+``aivm vm gpu attach`` now supports a stable boot-time workflow by default.
+
+Typical flow:
+
+.. code-block:: bash
+
+   aivm vm gpu attach --vm myvm
+   sudo reboot
+   aivm vm up --vm myvm
+
+Stable mode behavior:
+
+* lets you choose a GPU if you do not already know the PCI BDF
+* records in the AIVM config store which VM should own that GPU
+* can install AIVM-managed host boot files so the GPU binds to ``vfio-pci`` on
+  the next host boot
+* requires a host reboot before the VM can start with that GPU
+* does **not** claim live hotplug support in this pass
+
+Important consequences:
+
+* the host and guest cannot use that GPU at the same time
+* after reboot, the host may lose display or compute access on that GPU
+* undoing the host prep later also requires another host reboot
+
+Undo with AIVM:
+
+.. code-block:: bash
+
+   aivm vm gpu detach 0000:65:00.0 --vm myvm
+   sudo reboot
+
+Manual undo:
+
+* remove the AIVM-managed files under ``/etc/modules-load.d/`` and
+  ``/etc/initramfs-tools/scripts/init-top/`` whose names start with
+  ``aivm-vfio-``
+* run ``sudo update-initramfs -u``
+* reboot the host
+* verify the normal host driver rebinds to the GPU
    aivm help completion
    aivm host doctor
 

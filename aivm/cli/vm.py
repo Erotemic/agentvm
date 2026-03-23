@@ -17,10 +17,18 @@ import scriptconfig as scfg
 from ..commands import CommandManager, IntentScope, PlanScope
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
+from ..host_pci import (
+    apply_vfio_boot_prep,
+    boot_prep_paths_for_vm,
+    describe_host_prep,
+    remove_vfio_boot_prep,
+)
 from ..host import check_commands, host_is_debian_like, install_deps_debian
 from ..net import ensure_network
 from ..pci import (
     assess_device_readiness,
+    GPUCandidate,
+    PCIDevice,
     normalize_bdf,
     render_readiness_report,
     resolve_gpu_selector,
@@ -156,6 +164,12 @@ class VMUpCLI(_BaseCommand):
         if not args.dry_run and not args.recreate:
             _maybe_warn_hardware_drift(cfg)
         if not args.dry_run:
+            if (
+                cfg.passthrough.pci_devices
+                and cfg.passthrough.host_prepare_mode == 'vfio-boot'
+                and cfg.passthrough.host_prepare_applied
+            ):
+                cfg.passthrough.persistent_hostdev_applied = True
             _record_vm(cfg, cfg_path)
         return 0
 
@@ -1265,8 +1279,6 @@ class GPUAttachCLI(_BaseCommand):
         primary_bdf = candidate.primary_bdf
         report = assess_device_readiness(primary_bdf)
         print(render_readiness_report(report))
-        if report.status == 'manual_steps_required':
-            return 1
         companions, unexpected = resolve_passthrough_set_for_gpu(primary_bdf)
         if unexpected:
             raise RuntimeError(
@@ -1274,26 +1286,90 @@ class GPUAttachCLI(_BaseCommand):
                 'unexpected devices: '
                 + ', '.join(device.bdf for device in unexpected)
             )
+        blockers = _stable_attach_blockers(report)
+        if blockers:
+            print('Blocking issues:')
+            for item in blockers:
+                print(f'  - {item}')
+            return 1
+        strategy = _choose_gpu_attach_strategy(
+            cfg=cfg,
+            candidate=candidate,
+            companions=companions,
+            interactive=sys.stdin.isatty(),
+            auto_yes=bool(args.yes),
+        )
+        if strategy == 'cancel':
+            print('Cancelled.')
+            return 1
+        if strategy == 'hotplug':
+            raise NotImplementedError(
+                'Immediate GPU hotplug is not implemented yet. '
+                'Stable boot-time attachment is the supported path right now.'
+            )
         bdfs = [device.bdf for device in companions]
-        desired = sorted(set(cfg.passthrough.pci_devices) | set(bdfs))
-        _update_declared_passthrough(cfg, cfg_path, desired)
-        changed = _reconcile_persistent_gpu_hostdevs(
-            cfg.vm.name,
-            bdfs,
-            action='attach',
+        host_prepare_mode = 'vfio-boot' if strategy == 'stable' else 'none'
+        _update_declared_passthrough(
+            cfg,
+            cfg_path,
+            pci_devices=bdfs,
+            selector_label=candidate.name,
+            host_prepare_mode=host_prepare_mode,
+            host_prepare_applied=(
+                bool(cfg.passthrough.host_prepare_applied)
+                if strategy == 'stable'
+                else False
+            ),
+            persistent_hostdev_applied=False,
         )
         print(f'Updated config store: {cfg_path}')
-        if changed:
-            print('Persistent PCI hostdevs attached: ' + ', '.join(changed))
-        else:
-            print('Persistent PCI hostdevs already matched declared config.')
-        if vm_is_running(cfg.vm.name):
+        if strategy == 'record-only':
             print(
-                _restart_recommendation_text(
-                    vm_name=cfg.vm.name,
-                    changed=bool(changed),
-                    action='attach',
+                'Recorded GPU passthrough intent only. No host VFIO prep or '
+                'libvirt hostdev changes were made yet.'
+            )
+            return 0
+        if _host_prep_needed(companions):
+            approved = _confirm_host_gpu_prep(
+                cfg=cfg,
+                companions=companions,
+                auto_yes=bool(args.yes),
+            )
+            if approved:
+                apply_vfio_boot_prep(cfg.vm.name, bdfs)
+                _update_declared_passthrough(
+                    cfg,
+                    cfg_path,
+                    pci_devices=bdfs,
+                    selector_label=candidate.name,
+                    host_prepare_mode='vfio-boot',
+                    host_prepare_applied=True,
+                    persistent_hostdev_applied=False,
                 )
+                print(
+                    'Host VFIO boot prep was applied. Reboot the host before '
+                    'starting the VM so vfio-pci can claim the GPU.'
+                )
+            else:
+                print(
+                    'Host VFIO boot prep was not applied. The VM intent is '
+                    'saved, but you must prepare the host and reboot before '
+                    'the GPU can attach stably.'
+                )
+        else:
+            _update_declared_passthrough(
+                cfg,
+                cfg_path,
+                pci_devices=bdfs,
+                selector_label=candidate.name,
+                host_prepare_mode='vfio-boot',
+                host_prepare_applied=True,
+                persistent_hostdev_applied=False,
+            )
+            print(
+                'Selected GPU already appears prepared for vfio-pci. '
+                'Reboot the host if you just changed host prep; otherwise the '
+                'next `aivm vm up` can apply the persistent hostdev mapping.'
             )
         return 0
 
@@ -1322,7 +1398,19 @@ class GPUDetachCLI(_BaseCommand):
             )
         bdfs = [device.bdf for device in companions]
         desired = sorted(set(cfg.passthrough.pci_devices) - set(bdfs))
-        _update_declared_passthrough(cfg, cfg_path, desired)
+        host_prep_removed = False
+        if cfg.passthrough.host_prepare_applied:
+            remove_vfio_boot_prep(cfg.vm.name)
+            host_prep_removed = True
+        _update_declared_passthrough(
+            cfg,
+            cfg_path,
+            pci_devices=desired,
+            selector_label='',
+            host_prepare_mode='none',
+            host_prepare_applied=False,
+            persistent_hostdev_applied=False,
+        )
         changed = _reconcile_persistent_gpu_hostdevs(
             cfg.vm.name,
             bdfs,
@@ -1333,6 +1421,17 @@ class GPUDetachCLI(_BaseCommand):
             print('Persistent PCI hostdevs detached: ' + ', '.join(changed))
         else:
             print('Persistent PCI hostdevs already absent from VM config.')
+        if host_prep_removed:
+            modules_load_path, initramfs_script_path = boot_prep_paths_for_vm(
+                cfg.vm.name
+            )
+            print('Removed AIVM-managed host VFIO boot prep:')
+            print(f'  - {modules_load_path}')
+            print(f'  - {initramfs_script_path}')
+            print(
+                'Host reboot required before the normal host driver can '
+                'reclaim the GPU.'
+            )
         if vm_is_running(cfg.vm.name):
             print(
                 _restart_recommendation_text(
@@ -1364,7 +1463,7 @@ class GPUListCLI(_BaseCommand):
             persistent=persistent,
             live=live,
         )
-        print(_render_gpu_drift_report(cfg.vm.name, drift))
+        print(_render_gpu_drift_report(cfg, drift))
         return 0
 
 
@@ -1419,9 +1518,20 @@ def _bytes_to_gib(size_bytes: int) -> float:
 def _update_declared_passthrough(
     cfg: AgentVMConfig,
     cfg_path: Path,
+    *,
     pci_devices: list[str],
+    selector_label: str,
+    host_prepare_mode: str,
+    host_prepare_applied: bool,
+    persistent_hostdev_applied: bool,
 ) -> None:
     cfg.passthrough.pci_devices = sorted(set(pci_devices))
+    cfg.passthrough.selector_label = selector_label
+    cfg.passthrough.host_prepare_mode = host_prepare_mode
+    cfg.passthrough.host_prepare_applied = bool(host_prepare_applied)
+    cfg.passthrough.persistent_hostdev_applied = bool(
+        persistent_hostdev_applied
+    )
     store = load_store(cfg_path)
     upsert_vm_with_network(store, cfg, network_name=cfg.network.name)
     save_store(store, cfg_path)
@@ -1470,9 +1580,12 @@ def _restart_recommendation_text(
     )
 
 
-def _render_gpu_drift_report(vm_name: str, drift) -> str:
+def _render_gpu_drift_report(cfg: AgentVMConfig, drift) -> str:
     lines = [
-        f'VM: {vm_name}',
+        f'VM: {cfg.vm.name}',
+        f'Host prepare mode: {cfg.passthrough.host_prepare_mode}',
+        f'Host prepare applied: {"yes" if cfg.passthrough.host_prepare_applied else "no"}',
+        f'Persistent hostdev applied: {"yes" if cfg.passthrough.persistent_hostdev_applied else "no"}',
         'Declared passthrough devices:',
     ]
     lines.extend(
@@ -1495,6 +1608,94 @@ def _render_gpu_drift_report(vm_name: str, drift) -> str:
     if drift.only_live:
         lines.append('Live-only hostdevs: ' + ', '.join(drift.only_live))
     return '\n'.join(lines)
+
+
+def _stable_attach_blockers(report) -> list[str]:
+    blockers: list[str] = []
+    for item in getattr(report, 'issues', ()):
+        if 'not bound to vfio-pci' in item:
+            continue
+        blockers.append(item)
+    return blockers
+
+
+def _render_gpu_selection_summary(
+    candidate: GPUCandidate,
+    companions: list[PCIDevice],
+) -> str:
+    lines = [
+        'You selected:',
+        f'  GPU: {candidate.name}',
+        f'  graphics: {candidate.primary_bdf}',
+    ]
+    companion_bdfs = [
+        device.bdf for device in companions if device.bdf != candidate.primary_bdf
+    ]
+    if companion_bdfs:
+        lines.append('  companion: ' + ', '.join(companion_bdfs))
+    else:
+        lines.append('  companion: (none)')
+    lines.append(f'  current driver: {candidate.driver or "(unbound)"}')
+    return '\n'.join(lines)
+
+
+def _choose_gpu_attach_strategy(
+    *,
+    cfg: AgentVMConfig,
+    candidate: GPUCandidate,
+    companions: list[PCIDevice],
+    interactive: bool,
+    auto_yes: bool,
+) -> str:
+    if auto_yes or not interactive:
+        print(_render_gpu_selection_summary(candidate, companions))
+        print(
+            'Using stable attachment on next boot by default. '
+            'Hotplug is not implemented in this pass.'
+        )
+        return 'stable'
+    print(_render_gpu_selection_summary(candidate, companions))
+    print('')
+    print('Choose how to attach it:')
+    print('  [1] Stable attachment on next boot (recommended)')
+    print('      AIVM will prepare the host to bind this GPU to vfio-pci at boot.')
+    print('      This requires a host reboot.')
+    print('  [2] Try hotplug / immediate activation')
+    print('      Not implemented yet.')
+    print('  [3] Record only in AIVM config')
+    print('      No host changes now.')
+    print('  [4] Cancel')
+    while True:
+        raw = input('Select attach strategy [1-4]: ').strip()
+        if raw in {'', '1'}:
+            return 'stable'
+        if raw == '2':
+            return 'hotplug'
+        if raw == '3':
+            return 'record-only'
+        if raw == '4':
+            return 'cancel'
+        print('Please enter 1, 2, 3, or 4.')
+
+
+def _host_prep_needed(companions: list[PCIDevice]) -> bool:
+    return any(device.driver != 'vfio-pci' for device in companions)
+
+
+def _confirm_host_gpu_prep(
+    *,
+    cfg: AgentVMConfig,
+    companions: list[PCIDevice],
+    auto_yes: bool,
+) -> bool:
+    print('')
+    print(describe_host_prep(cfg.vm.name, companions))
+    if auto_yes:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    answer = input('Proceed with AIVM-managed host VFIO boot prep now? [y/N]: ')
+    return answer.strip().lower() in {'y', 'yes'}
 
 
 def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
