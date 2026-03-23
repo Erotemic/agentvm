@@ -1006,7 +1006,7 @@ def create_or_start_vm(
                             f'Declared passthrough devices: {", ".join(sorted(set(cfg.passthrough.pci_devices)))}\n'
                             f'Libvirt error: {detail.strip()}\n'
                             'This usually means the GPU is stuck in a bad reset/binding state after host/libvirt churn.\n'
-                            'Check the host driver binding with `aivm host pci_check '
+                            'Check the host driver binding with `aivm host pci check '
                             f'{normalize_bdf(sorted(set(cfg.passthrough.pci_devices))[0])}` and, if needed, '
                             'rebind or reboot the host before retrying.'
                         )
