@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from . import commands as _commands
+from .commands import CommandError as CmdError  # used for backwards compat. TODO: remove # NOQA
 from .commands import (
-    CommandError as CmdError,
     CommandManager,
     CommandResult as CmdResult,
     shell_join,
