@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.firewall import (
     _effective_bridge_and_gateway,
@@ -91,14 +92,21 @@ def test_apply_firewall_runs_delete_then_apply(monkeypatch) -> None:
     cfg = AgentVMConfig()
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        return CmdResult(0, '', '')
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
 
-    monkeypatch.setattr('aivm.firewall.run_cmd', fake_run_cmd)
+    CommandManager.activate(CommandManager())
     monkeypatch.setattr(
         'aivm.firewall._effective_bridge_and_gateway',
         lambda _cfg: ('virbr-aivm', '10.77.0.1'),
+    )
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 0)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
     )
     apply_firewall(cfg, dry_run=False)
     assert calls[0][0][:4] == ['nft', 'delete', 'table', 'inet']

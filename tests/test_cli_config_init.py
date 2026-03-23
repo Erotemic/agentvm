@@ -76,6 +76,64 @@ def test_config_init_interactive_shows_summary_and_accepts(
     assert 'ssh-keygen -t ed25519' in out
 
 
+def test_config_init_interactive_can_create_dedicated_aivm_key(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg_path = tmp_path / 'config.toml'
+    fake_home = tmp_path / 'home'
+    ssh_dir = fake_home / '.ssh'
+
+    def fake_defaults_missing_keys(
+        cfg: AgentVMConfig, project_dir: Path
+    ) -> AgentVMConfig:
+        del cfg, project_dir
+        out = AgentVMConfig()
+        out.vm.name = 'aivm-init-test'
+        out.paths.ssh_identity_file = ''
+        out.paths.ssh_pubkey_path = ''
+        return out
+
+    class Proc:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = ''
+            self.stderr = ''
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        normalized = [str(c) for c in cmd]
+        if normalized[:2] == ['mkdir', '-p']:
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            return Proc()
+        if normalized[:2] == ['chmod', '700']:
+            return Proc()
+        if normalized[:4] == ['ssh-keygen', '-q', '-t', 'ed25519']:
+            key_path = Path(normalized[5])
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            key_path.write_text('PRIVATE', encoding='utf-8')
+            Path(str(key_path) + '.pub').write_text('PUBLIC', encoding='utf-8')
+            return Proc()
+        raise AssertionError(f'unexpected command: {cmd}')
+
+    answers = iter(['', ''])
+    monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
+    monkeypatch.setattr('aivm.cli.config.auto_defaults', fake_defaults_missing_keys)
+    monkeypatch.setattr('aivm.cli.config.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.cli._common.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('builtins.input', lambda _: next(answers))
+    monkeypatch.setattr('aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen')
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+    monkeypatch.setattr('aivm.cli._common.Path.home', staticmethod(lambda: fake_home))
+
+    rc = InitCLI.main(
+        argv=False, config=str(cfg_path), yes=False, defaults=False
+    )
+
+    assert rc == 0
+    text = cfg_path.read_text(encoding='utf-8')
+    assert 'id_aivm_ed25519' in text
+
+
 def test_config_init_defaults_warns_when_ssh_keys_missing(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:

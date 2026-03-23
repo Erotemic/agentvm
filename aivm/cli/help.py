@@ -159,7 +159,10 @@ class HelpCompletionCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         shell = _resolve_completion_shell(str(args.shell or ''))
-        reg = shutil.which('register-python-argcomplete') or 'register-python-argcomplete'
+        reg = (
+            shutil.which('register-python-argcomplete')
+            or 'register-python-argcomplete'
+        )
         activate_global = (
             shutil.which('activate-global-python-argcomplete')
             or 'activate-global-python-argcomplete'
@@ -290,7 +293,7 @@ def _render_completion_help(
 ) -> str:
     if shell == 'bash':
         hook_now = f'eval "$({register_cmd} aivm)"'
-        persist = f'echo \'{hook_now}\' >> ~/.bashrc'
+        persist = f"echo '{hook_now}' >> ~/.bashrc"
         reload_cmd = 'source ~/.bashrc'
     elif shell == 'zsh':
         hook_now = textwrap.dedent(
@@ -311,7 +314,9 @@ def _render_completion_help(
             f'{register_cmd} --shell fish aivm > '
             '~/.config/fish/completions/aivm.fish'
         )
-        persist = '(fish uses the completions file above; no extra rc hook needed)'
+        persist = (
+            '(fish uses the completions file above; no extra rc hook needed)'
+        )
         reload_cmd = 'exec fish'
 
     return textwrap.dedent(

@@ -17,6 +17,7 @@ from .runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
 from .store import load_store, store_path
 from .util import run_cmd, which
 from .vm import get_ip_cached, vm_share_mappings
+from .vm.drift import saved_vm_drift_report
 
 
 @dataclass(frozen=True)
@@ -197,7 +198,7 @@ def probe_firewall(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
 
 def probe_vm_state(
     cfg: AgentVMConfig, *, use_sudo: bool
-) -> tuple[ProbeOutcome, bool]:
+) -> tuple[ProbeOutcome, bool | None]:
     """Return VM run-state probe plus explicit domain-defined flag."""
     dom = run_cmd(
         virsh_system_cmd('dominfo', cfg.vm.name),
@@ -214,7 +215,7 @@ def probe_vm_state(
                     None,
                     f'{cfg.vm.name} unavailable (run status --sudo for privileged checks)',
                 ),
-                False,
+                None,
             )
         if not use_sudo:
             return (
@@ -222,7 +223,7 @@ def probe_vm_state(
                     None,
                     f'{cfg.vm.name} probe inconclusive without sudo ({raw_detail or "unknown error"})',
                 ),
-                False,
+                None,
             )
         return ProbeOutcome(False, f'{cfg.vm.name} not defined'), False
     state = run_cmd(
@@ -367,15 +368,34 @@ def render_status(
         )
 
     vm_out, vm_defined = probe_vm_state(cfg, use_sudo=use_sudo)
-    if vm_out.ok is not None:
+    ip = get_ip_cached(cfg)
+    cached_ip = ip
+    if ip and vm_defined is False:
+        ip = None
+
+    ssh = ProbeOutcome(False, 'VM/IP not ready', '')
+    if ip:
+        ssh = probe_ssh_ready(cfg, ip)
+
+    vm_display = vm_out
+    vm_defined_effective = vm_defined
+    if vm_out.ok is None and ssh.ok:
+        vm_display = ProbeOutcome(
+            True,
+            f'{cfg.vm.name} reachable over SSH (libvirt state unavailable without --sudo)',
+            vm_out.diag,
+        )
+        vm_defined_effective = True
+
+    if vm_display.ok is not None:
         total += 1
-        done += int(vm_out.ok)
-    lines.append(status_line(vm_out.ok, 'VM state', vm_out.detail))
+        done += int(bool(vm_display.ok))
+    lines.append(status_line(vm_display.ok, 'VM state', vm_display.detail))
 
     share_mappings: list[tuple[str, str]] = []
-    if vm_defined:
+    if vm_defined is True:
         share_mappings = vm_share_mappings(cfg, use_sudo=use_sudo)
-    if vm_defined and share_mappings:
+    if vm_defined is True and share_mappings:
         lines.append(
             status_line(
                 True,
@@ -383,34 +403,90 @@ def render_status(
                 f'{len(share_mappings)} mapping(s) configured (use --detail to inspect host paths)',
             )
         )
-    elif vm_defined:
-        lines.append(status_line(None, 'VM shared folders', 'none detected'))
+    elif vm_defined_effective is True:
+        if vm_defined is None:
+            share_detail = 'guest is reachable, but host mappings need privileged VM checks'
+        else:
+            share_detail = 'none detected'
+            if not use_sudo:
+                share_detail = 'none detected or unavailable without --sudo'
+        lines.append(status_line(None, 'VM shared folders', share_detail))
+    elif vm_defined is None:
+        lines.append(
+            status_line(
+                None,
+                'VM shared folders',
+                'unverified without privileged VM checks',
+            )
+        )
     else:
         lines.append(status_line(None, 'VM shared folders', 'VM not defined'))
 
-    ip = get_ip_cached(cfg)
-    ip_ok = bool(ip) and bool(vm_defined)
-    if vm_out.ok is not None:
+    # Config drift check: compare saved VM config against actual libvirt state
+    if vm_defined is True:
+        reg = load_store(path)
+        drift = saved_vm_drift_report(cfg, reg, use_sudo=use_sudo)
+        if drift.available:
+            if drift.ok is True:
+                lines.append(status_line(True, 'Config drift', 'in sync'))
+            else:
+                # drift.ok is False here (drift detected)
+                lines.append(
+                    status_line(
+                        False,
+                        'Config drift',
+                        f'{len(drift.items)} mismatch(es) detected',
+                    )
+                )
+                if detail:
+                    lines.append('Config Drift Details:')
+                    for item in drift.items:
+                        lines.append(
+                            f'  - {item.key}: expected={item.expected}, actual={item.actual}'
+                        )
+            # Count this check
+            total += 1
+            done += int(drift.ok)
+        else:
+            # drift.available is False here (unavailable)
+            lines.append(
+                status_line(None, 'Config drift', drift.diag or 'unavailable')
+            )
+    else:
+        lines.append(status_line(None, 'Config drift', 'VM not defined'))
+
+    ip_ok = bool(ip) and (vm_defined_effective is not False)
+    if vm_display.ok is not None:
         total += 1
         done += int(ip_ok)
-    if ip and not vm_defined:
+    if cached_ip and vm_defined is False:
         lines.append(
-            status_line(False, 'Cached VM IP', f'{ip} (stale: VM not defined)')
+            status_line(
+                False,
+                'Cached VM IP',
+                f'{cached_ip} (stale: VM not defined)',
+            )
         )
-        ip = None
+    elif ip and ssh.ok:
+        lines.append(status_line(True, 'Cached VM IP', ip))
+    elif ip and vm_defined is None:
+        lines.append(
+            status_line(
+                None,
+                'Cached VM IP',
+                f'{ip} (not verified without privileged VM checks)',
+            )
+        )
     else:
         lines.append(
             status_line(bool(ip), 'Cached VM IP', ip or 'no cached IP yet')
         )
 
-    ssh = ProbeOutcome(False, 'VM/IP not ready', '')
-    if vm_out.ok is True and ip:
-        ssh = probe_ssh_ready(cfg, ip)
     total += 1
     done += int(bool(ssh.ok))
     lines.append(status_line(bool(ssh.ok), 'SSH readiness', ssh.detail))
 
-    if vm_out.ok is True and ip and ssh.ok:
+    if ip and ssh.ok:
         prov = probe_provisioned(cfg, ip)
     else:
         prov = ProbeOutcome(

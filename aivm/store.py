@@ -13,7 +13,12 @@ import tomllib
 import ubelt as ub
 from loguru import logger as log
 
-from .config import AgentVMConfig, BehaviorConfig, FirewallConfig, NetworkConfig
+from .config import (
+    AgentVMConfig,
+    BehaviorConfig,
+    FirewallConfig,
+    NetworkConfig,
+)
 
 
 @dataclass
@@ -42,7 +47,7 @@ class AttachmentEntry:
 
 @dataclass
 class Store:
-    schema_version: int = 5
+    schema_version: int = 7
     active_vm: str = ''
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     defaults: AgentVMConfig | None = None
@@ -78,6 +83,7 @@ def _cfg_from_dict(raw: dict) -> AgentVMConfig:
         'provision',
         'sync',
         'paths',
+        'passthrough',
     ):
         body = raw.get(section, None)
         if isinstance(body, dict):
@@ -114,7 +120,7 @@ def load_store(path: Path | None = None) -> Store:
         return Store()
     raw = tomllib.loads(fpath.read_text(encoding='utf-8'))
     reg = Store()
-    reg.schema_version = int(raw.get('schema_version', 5))
+    reg.schema_version = int(raw.get('schema_version', 7))
     reg.active_vm = str(raw.get('active_vm', '')).strip()
     behavior_raw = raw.get('behavior', None)
     if isinstance(behavior_raw, dict):
@@ -215,6 +221,7 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
             'provision',
             'sync',
             'paths',
+            'passthrough',
         ):
             body = d.get(section, {})
             if not isinstance(body, dict):
@@ -247,7 +254,14 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
         verbosity = int(d.get('verbosity', 1))
         if verbosity != 1:
             lines.append(f'verbosity = {verbosity}')
-        for section in ('vm', 'image', 'provision', 'sync', 'paths'):
+        for section in (
+            'vm',
+            'image',
+            'provision',
+            'sync',
+            'paths',
+            'passthrough',
+        ):
             body = d.get(section, {})
             if not isinstance(body, dict):
                 continue

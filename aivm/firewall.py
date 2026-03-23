@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from loguru import logger
 
+from .commands import CommandManager, IntentScope, PlanScope
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
 from .util import run_cmd
@@ -152,30 +153,63 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     if dry_run:
         log.info('DRYRUN: nft -f - <<EOF\\n{}\\nEOF', script.rstrip())
         return
-    run_cmd(
-        ['nft', 'delete', 'table', 'inet', table],
-        sudo=True,
-        check=False,
-        capture=True,
-    )
-    run_cmd(
-        ['nft', '-f', '-'],
-        sudo=True,
-        check=True,
-        capture=True,
-        input_text=script,
-    )
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        f'Apply firewall table {table}',
+        why=(
+            'The VM bridge firewall step enforces the configured host/guest '
+            'isolation policy before workloads run inside the VM.'
+        ),
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Replace nftables rules for managed VM bridge',
+            why=(
+                'Clear the previous managed nftables table if present, then '
+                'load the freshly rendered ruleset.'
+            ),
+            approval_scope=f'firewall:{table}',
+        ):
+            mgr.submit(
+                ['nft', 'delete', 'table', 'inet', table],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary=f'Remove previous nftables table inet {table} if present',
+            )
+            mgr.submit(
+                ['nft', '-f', '-'],
+                sudo=True,
+                role='modify',
+                check=True,
+                capture=True,
+                input_text=script,
+                summary=f'Load rendered nftables rules into inet {table}',
+            )
     log.info('Firewall rules applied (table=inet {}).', table)
 
 
 def firewall_status(cfg: AgentVMConfig) -> str:
     table = cfg.firewall.table
-    res = run_cmd(
-        ['nft', 'list', 'table', 'inet', table],
-        sudo=True,
-        check=False,
-        capture=True,
-    )
+    mgr = CommandManager.current()
+    with mgr.intent(title='Inspect firewall status'):
+        # TODO: Even though this is a read only command, we should should have
+        # the command manager try to detect if sudo will need authentication
+        # before we submit the command. If we need authentication, regardless
+        # of if the command has a read or modify role we should provide the
+        # user with appropriate prompting for why we are asking for sudo, and
+        # also note if future read only commands will be automatically approved
+        # or not based on their config.
+        res = mgr.submit(
+            ['nft', 'list', 'table', 'inet', table],
+            role='read',
+            sudo=True,
+            check=False,
+            capture=True,
+        )
     return res.stdout + (res.stderr or '')
 
 
@@ -184,6 +218,7 @@ def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     if dry_run:
         log.info('DRYRUN: nft delete table inet {}', table)
         return
+    # TODO: we should be using CommandManager inead of run_cmd
     run_cmd(
         ['nft', 'delete', 'table', 'inet', table],
         sudo=True,

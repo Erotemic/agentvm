@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.net import (
     _route_overlap,
@@ -48,12 +49,19 @@ def test_ensure_network_existing_not_recreate(monkeypatch) -> None:
     cfg = AgentVMConfig()
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
-        calls.append(cmd)
-        return CmdResult(0, '', '')
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
 
+    CommandManager.activate(CommandManager())
     monkeypatch.setattr('aivm.net._route_overlap', lambda _s: None)
-    monkeypatch.setattr('aivm.net.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 0)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+    )
     ensure_network(cfg, recreate=False, dry_run=False)
     assert calls == [['virsh', 'net-info', cfg.network.name]]
 

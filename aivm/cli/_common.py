@@ -11,6 +11,7 @@ from pathlib import Path
 import scriptconfig as scfg
 from loguru import logger
 
+from ..commands import CommandManager, IntentScope, PlanScope
 from ..config import AgentVMConfig
 from ..detect import detect_ssh_identity
 from ..store import (
@@ -23,10 +24,15 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import arm_sudo_intent, clear_sudo_intent, sudo_intent_auto_yes
+from ..util import (
+    arm_sudo_intent,
+    clear_sudo_intent,
+    sudo_intent_auto_yes,
+    which,
+)
 
 log = logger
-_LAST_LOGGING_STATE: tuple[str, bool] | None = None
+_LAST_LOGGING_STATE: tuple[str, bool, int] | None = None
 _CURRENT_YES_SUDO: ContextVar[bool] = ContextVar(
     'aivm_current_yes_sudo', default=False
 )
@@ -81,6 +87,13 @@ class _BaseCommand(scfg.DataConfig):
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
         _CURRENT_AUTO_APPROVE_READONLY_SUDO.set(
             bool(cfg_auto_approve_readonly_sudo)
+        )
+        CommandManager.activate(
+            CommandManager(
+                yes=bool(getattr(parsed, 'yes', False)),
+                yes_sudo=bool(effective_yes_sudo),
+                auto_approve_readonly_sudo=bool(cfg_auto_approve_readonly_sudo),
+            )
         )
         args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
         _setup_logging(args_verbose, cfg_verbosity)
@@ -157,7 +170,7 @@ def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
     elif effective_verbosity >= 3:
         level = 'TRACE'
     colorize = sys.stderr.isatty() and os.getenv('NO_COLOR') is None
-    state = (level, colorize)
+    state = (level, colorize, id(sys.stderr))
     if _LAST_LOGGING_STATE == state:
         return
     logger.remove()
@@ -193,6 +206,117 @@ def _hydrate_runtime_defaults(cfg: AgentVMConfig) -> bool:
             cfg.paths.ssh_pubkey_path or '(empty)',
         )
     return changed
+
+
+def _default_aivm_identity_paths() -> tuple[Path, Path]:
+    priv = Path.home() / '.ssh' / 'id_aivm_ed25519'
+    return priv, Path(str(priv) + '.pub')
+
+
+def _maybe_offer_create_ssh_identity(
+    cfg: AgentVMConfig,
+    *,
+    yes: bool,
+    prompt_reason: str,
+) -> bool:
+    """Offer to create a dedicated aivm SSH keypair when none is configured."""
+    ident = (cfg.paths.ssh_identity_file or '').strip()
+    pub = (cfg.paths.ssh_pubkey_path or '').strip()
+    ident_path = Path(ident).expanduser() if ident else None
+    pub_path = Path(pub).expanduser() if pub else None
+    ident_ok = bool(ident_path) and ident_path.exists()
+    pub_ok = bool(pub_path) and pub_path.exists()
+    if ident_ok and pub_ok:
+        return False
+
+    # Do not override a partially configured custom path automatically.
+    if ident or pub:
+        return False
+
+    default_priv, default_pub = _default_aivm_identity_paths()
+    if default_priv.exists() and default_pub.exists():
+        cfg.paths.ssh_identity_file = str(default_priv)
+        cfg.paths.ssh_pubkey_path = str(default_pub)
+        return True
+
+    if which('ssh-keygen') is None:
+        log.warning(
+            'ssh-keygen not found; cannot create dedicated aivm SSH identity.'
+        )
+        return False
+
+    if yes:
+        approved = True
+    else:
+        if not sys.stdin.isatty():
+            return False
+        ans = (
+            input(
+                'No SSH identity/public key was detected for aivm VM access. '
+                f'Create a dedicated keypair now at {default_priv}? [Y/n]: '
+            )
+            .strip()
+            .lower()
+        )
+        approved = ans in {'', 'y', 'yes'}
+    if not approved:
+        return False
+
+    mgr = CommandManager.current()
+    comment = f'aivm@{os.uname().nodename}'
+    with IntentScope(
+        mgr,
+        'Create SSH identity',
+        why='A VM SSH keypair is required for guest access and provisioning.',
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Create dedicated aivm SSH keypair',
+            why=prompt_reason,
+            approval_scope='aivm-ssh-identity',
+        ):
+            mgr.submit(
+                ['mkdir', '-p', str(default_priv.parent)],
+                sudo=False,
+                role='modify',
+                summary='Create ~/.ssh directory if missing',
+                detail=f'target={default_priv.parent}',
+            )
+            mgr.submit(
+                ['chmod', '700', str(default_priv.parent)],
+                sudo=False,
+                role='modify',
+                summary='Ensure ~/.ssh directory permissions',
+                detail=f'target={default_priv.parent}',
+            )
+            mgr.submit(
+                [
+                    'ssh-keygen',
+                    '-q',
+                    '-t',
+                    'ed25519',
+                    '-f',
+                    str(default_priv),
+                    '-N',
+                    '',
+                    '-C',
+                    comment,
+                ],
+                sudo=False,
+                role='modify',
+                summary='Generate dedicated aivm SSH keypair',
+                detail=f'private={default_priv} public={default_pub}',
+            )
+    cfg.paths.ssh_identity_file = str(default_priv)
+    cfg.paths.ssh_pubkey_path = str(default_pub)
+    log.info(
+        'Configured dedicated aivm SSH identity for vm={} private={} public={}',
+        cfg.vm.name,
+        default_priv,
+        default_pub,
+    )
+    return True
 
 
 def _choose_vm_interactive(options: list[str], *, reason: str) -> str:
@@ -373,10 +497,7 @@ def _confirm_sudo_block(
     )
     sticky_all = sudo_intent_auto_yes()
     eff_yes = bool(
-        yes
-        or _CURRENT_YES_SUDO.get(False)
-        or sticky_all
-        or auto_yes_read
+        yes or _CURRENT_YES_SUDO.get(False) or sticky_all or auto_yes_read
     )
     # Preserve "accept all" across later confirm blocks in the same command.
     arm_sudo_intent(

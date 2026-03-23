@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 import aivm.cli._common as common_mod
-from aivm.cli._common import _confirm_external_file_update, _confirm_sudo_block
+from aivm.cli._common import (
+    _confirm_external_file_update,
+    _confirm_sudo_block,
+    _maybe_offer_create_ssh_identity,
+)
+from aivm.commands import CommandManager
 from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
 from aivm.cli.vm import (
     _auto_share_tag_for_path,
@@ -390,3 +395,52 @@ def test_resolve_vm_name_errors_noninteractive_for_multi_attached_folder(
             vm_opt='',
             host_src=host_src,
         )
+
+
+def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    fake_home = tmp_path / 'home'
+    ssh_dir = fake_home / '.ssh'
+    calls: list[list[str]] = []
+
+    CommandManager.activate(CommandManager(yes=True))
+    monkeypatch.setattr(common_mod.Path, 'home', staticmethod(lambda: fake_home))
+    monkeypatch.setattr('aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen')
+
+    class Proc:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = ''
+            self.stderr = ''
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        normalized = [str(c) for c in cmd]
+        calls.append(normalized)
+        if normalized[:2] == ['mkdir', '-p']:
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            return Proc()
+        if normalized[:2] == ['chmod', '700']:
+            return Proc()
+        if normalized[:4] == ['ssh-keygen', '-q', '-t', 'ed25519']:
+            key_path = Path(normalized[5])
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            key_path.write_text('PRIVATE', encoding='utf-8')
+            Path(str(key_path) + '.pub').write_text('PUBLIC', encoding='utf-8')
+            return Proc()
+        raise AssertionError(f'unexpected command: {cmd}')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    changed = _maybe_offer_create_ssh_identity(
+        cfg,
+        yes=True,
+        prompt_reason='test prompt',
+    )
+
+    assert changed is True
+    assert cfg.paths.ssh_identity_file == str(ssh_dir / 'id_aivm_ed25519')
+    assert cfg.paths.ssh_pubkey_path == str(ssh_dir / 'id_aivm_ed25519.pub')
+    assert any(cmd[:4] == ['ssh-keygen', '-q', '-t', 'ed25519'] for cmd in calls)

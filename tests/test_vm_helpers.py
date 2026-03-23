@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from aivm.commands import CommandManager
+from aivm.cli.vm import ResolvedAttachment, _ensure_shared_root_host_bind
 from aivm.config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     AgentVMConfig,
@@ -14,7 +16,9 @@ from aivm.config import (
 from aivm.util import CmdError, CmdResult
 from aivm.vm import (
     _mac_for_vm,
+    _ensure_qemu_access,
     _write_cloud_init,
+    attach_vm_share,
     create_or_start_vm,
     ensure_share_mounted,
     fetch_image,
@@ -24,6 +28,17 @@ from aivm.vm import (
     vm_share_mappings,
     wait_for_ssh,
 )
+
+
+def _activate_manager(*, yes_sudo: bool = True) -> None:
+    CommandManager.activate(CommandManager(yes_sudo=yes_sudo))
+
+
+class _Proc:
+    def __init__(self, returncode=0, stdout='', stderr=''):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def test_mac_for_vm_parsing(monkeypatch) -> None:
@@ -71,8 +86,10 @@ def test_vm_share_helpers(monkeypatch, tmp_path: Path) -> None:
   </devices>
 </domain>
 """
+    _activate_manager()
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd', lambda *a, **k: CmdResult(0, xml, '')
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, xml, ''),
     )
     assert vm_has_share(cfg, source_dir, share_tag, use_sudo=False) is True
     assert vm_share_mappings(cfg, use_sudo=False) == [
@@ -82,6 +99,7 @@ def test_vm_share_helpers(monkeypatch, tmp_path: Path) -> None:
 
 def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
     cfg = AgentVMConfig()
+    _activate_manager()
     xml_with_shared = """
 <domain>
   <memoryBacking>
@@ -91,17 +109,65 @@ def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
 </domain>
 """
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd',
-        lambda *a, **k: CmdResult(0, xml_with_shared, ''),
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, xml_with_shared, ''),
     )
     assert vm_has_virtiofs_shared_memory(cfg, use_sudo=False) is True
 
     xml_without_shared = '<domain><memoryBacking/></domain>'
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd',
-        lambda *a, **k: CmdResult(0, xml_without_shared, ''),
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, xml_without_shared, ''),
     )
     assert vm_has_virtiofs_shared_memory(cfg, use_sudo=False) is False
+
+
+def test_attach_vm_share_treats_existing_mapping_as_satisfied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    source = tmp_path / 'src'
+    source.mkdir()
+    source_dir = str(source.resolve())
+    tag = 'hostcode-src'
+
+    calls: list[list[str]] = []
+
+    _activate_manager()
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        parts = list(cmd)
+        calls.append(parts)
+        normalized = parts
+        if normalized[:2] == ['sudo', '-n']:
+            normalized = normalized[2:]
+        elif normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:2] == ['virsh', 'domstate']:
+            return _Proc(0, 'running\n', '')
+        if normalized[:2] == ['virsh', 'attach-device']:
+            return _Proc(
+                1,
+                '',
+                'error: Requested operation is not valid: Target already exists',
+            )
+        raise AssertionError(f'unexpected command: {cmd!r}')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+    monkeypatch.setattr(
+        'aivm.vm.share.vm_share_mappings',
+        lambda *_a, **_k: [(source_dir, tag)],
+    )
+
+    attach_vm_share(cfg, source_dir, tag, dry_run=False)
+    norm0 = calls[0][2:] if calls[0][:2] == ['sudo', '-n'] else calls[0]
+    norm1 = calls[1][2:] if calls[1][:2] == ['sudo', '-n'] else calls[1]
+    assert norm0[:2] == ['virsh', 'domstate']
+    assert norm1[:2] == ['virsh', 'attach-device']
 
 
 def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:
@@ -312,15 +378,27 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
         'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        if cmd[:2] == ['bash', '-lc'] and 'cat > ' in cmd[2]:
-            script = cmd[2]
+        normalized = cmd[1:] if cmd and cmd[0] == 'sudo' else cmd
+        if normalized[:2] == ['bash', '-lc'] and 'cat > ' in normalized[2]:
+            script = normalized[2]
             if 'user-data' in script:
                 heredocs['user-data'] = script
-        return CmdResult(0, '', '')
+        return P(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run', fake_subprocess_run
+    )
     _write_cloud_init(cfg, dry_run=False)
     user_data_script = heredocs['user-data']
     assert '#cloud-config' in user_data_script
@@ -331,6 +409,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
 def test_fetch_image_uses_atomic_temp_then_move(
     monkeypatch, tmp_path: Path
 ) -> None:
+    _activate_manager()
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path)
@@ -345,13 +424,19 @@ def test_fetch_image_uses_atomic_temp_then_move(
         '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
     )
 
-    def fake_run_cmd(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[:1] == ['sha256sum']:
-            return CmdResult(0, f'{expected}  {cmd[-1]}\n', '')
-        return CmdResult(0, '', '')
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        calls.append(normalized)
+        if normalized[:1] == ['sha256sum']:
+            return _Proc(0, f'{expected}  {normalized[-1]}\n', '')
+        return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     out = fetch_image(cfg, dry_run=False)
     assert out.name == 'noble-base.img'
     curl_calls = [c for c in calls if c and c[0] == 'curl']
@@ -369,6 +454,7 @@ def test_fetch_image_uses_atomic_temp_then_move(
 def test_fetch_image_revalidates_cached_image_before_reuse(
     monkeypatch, tmp_path: Path
 ) -> None:
+    _activate_manager()
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path)
@@ -381,14 +467,19 @@ def test_fetch_image_revalidates_cached_image_before_reuse(
 
     monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: True)
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        calls.append(cmd)
-        if cmd[:1] == ['sha256sum']:
-            return CmdResult(0, f'{expected}  {cmd[-1]}\n', '')
-        return CmdResult(0, '', '')
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        calls.append(normalized)
+        if normalized[:1] == ['sha256sum']:
+            return _Proc(0, f'{expected}  {normalized[-1]}\n', '')
+        return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     out = fetch_image(cfg, dry_run=False)
     assert out.name == 'noble-base.img'
     assert any(c[:1] == ['sha256sum'] for c in calls)
@@ -399,6 +490,7 @@ def test_fetch_image_revalidates_cached_image_before_reuse(
 def test_fetch_image_redownloads_when_cached_hash_is_stale(
     monkeypatch, tmp_path: Path
 ) -> None:
+    _activate_manager()
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path)
@@ -415,19 +507,24 @@ def test_fetch_image_redownloads_when_cached_hash_is_stale(
         'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs):
         nonlocal sha_calls
         del kwargs
-        calls.append(cmd)
-        if cmd[:1] == ['sha256sum']:
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        calls.append(normalized)
+        if normalized[:1] == ['sha256sum']:
             sha_calls += 1
             digest = 'bad' * 21 + 'b' if sha_calls == 1 else expected
-            return CmdResult(0, f'{digest[:64]}  {cmd[-1]}\n', '')
-        if cmd[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
-            return CmdResult(0, '', '')
-        return CmdResult(0, '', '')
+            return _Proc(0, f'{digest[:64]}  {normalized[-1]}\n', '')
+        if normalized[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
+            return _Proc(0, '', '')
+        return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     out = fetch_image(cfg, dry_run=False)
     assert out.name == 'noble-base.img'
     assert sha_calls >= 2
@@ -439,6 +536,7 @@ def test_fetch_image_redownloads_when_cached_hash_is_stale(
 def test_fetch_image_validates_ubuntu_checksum(
     monkeypatch, tmp_path: Path
 ) -> None:
+    _activate_manager()
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path)
@@ -453,16 +551,21 @@ def test_fetch_image_validates_ubuntu_checksum(
         '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        calls.append(cmd)
-        if cmd[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
-            return CmdResult(0, '', '')
-        if cmd[:1] == ['sha256sum']:
-            return CmdResult(0, f'{expected}  {cmd[-1]}\n', '')
-        return CmdResult(0, '', '')
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        calls.append(normalized)
+        if normalized[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
+            return _Proc(0, '', '')
+        if normalized[:1] == ['sha256sum']:
+            return _Proc(0, f'{expected}  {normalized[-1]}\n', '')
+        return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     out = fetch_image(cfg, dry_run=False)
     assert out.name == 'noble-base.img'
     assert any(c[:1] == ['sha256sum'] for c in calls)
@@ -471,6 +574,7 @@ def test_fetch_image_validates_ubuntu_checksum(
 def test_fetch_image_raises_on_checksum_mismatch(
     monkeypatch, tmp_path: Path
 ) -> None:
+    _activate_manager()
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path)
@@ -483,16 +587,21 @@ def test_fetch_image_raises_on_checksum_mismatch(
     calls = []
     actual = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        calls.append(cmd)
-        if cmd[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
-            return CmdResult(0, '', '')
-        if cmd[:1] == ['sha256sum']:
-            return CmdResult(0, f'{actual}  {cmd[-1]}\n', '')
-        return CmdResult(0, '', '')
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        calls.append(normalized)
+        if normalized[:6] == ['curl', '-L', '--fail', '--progress-bar', '-o']:
+            return _Proc(0, '', '')
+        if normalized[:1] == ['sha256sum']:
+            return _Proc(0, f'{actual}  {normalized[-1]}\n', '')
+        return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     with pytest.raises(RuntimeError, match='checksum mismatch'):
         fetch_image(cfg, dry_run=False)
     assert any(c[:2] == ['rm', '-f'] for c in calls)
@@ -516,6 +625,7 @@ def test_fetch_image_rejects_unsupported_url(
 def test_fetch_image_accepts_supported_file_url(
     monkeypatch, tmp_path: Path
 ) -> None:
+    _activate_manager()
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
     cfg.paths.base_dir = str(tmp_path / 'base')
@@ -535,18 +645,136 @@ def test_fetch_image_accepts_supported_file_url(
 
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs):
         del kwargs
-        calls.append(cmd)
-        if cmd[:1] == ['sha256sum']:
-            return CmdResult(0, f'{digest}  {cmd[-1]}\n', '')
-        return CmdResult(0, '', '')
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        calls.append(normalized)
+        if normalized[:1] == ['sha256sum']:
+            return _Proc(0, f'{digest}  {normalized[-1]}\n', '')
+        return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
     out = fetch_image(cfg, dry_run=False)
     assert out.name == 'noble-base.img'
     assert any(c[:2] == ['cp', '--reflink=auto'] for c in calls)
     assert any(c[:2] == ['mv', '-f'] for c in calls)
+
+
+def test_fetch_image_preview_uses_grouped_block_summaries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _activate_manager()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    cfg.paths.base_dir = str(tmp_path)
+    cfg.image.cache_name = 'noble-base.img'
+    cfg.image.ubuntu_img_url = DEFAULT_UBUNTU_NOBLE_IMG_URL
+    monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: False)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
+    )
+    messages: list[str] = []
+    expected = (
+        '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
+    )
+
+    class _FakeLog:
+        def info(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def debug(self, fmt: str, *args) -> None:
+            return None
+
+        def trace(self, fmt: str, *args) -> None:
+            return None
+
+        def warning(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def error(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        normalized = [str(part) for part in cmd]
+        if normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['-n']:
+            normalized = normalized[1:]
+        if normalized[:1] == ['sha256sum']:
+            return _Proc(0, f'{expected}  {normalized[-1]}\n', '')
+        return _Proc(0, '', '')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    fetch_image(cfg, dry_run=False)
+
+    assert 'Step: Fetch and verify base image' in messages
+    assert '  1. Create VM image directory' in messages
+    assert '  2. Remove stale partial image file' in messages
+    assert '  3. Download base image into staging file' in messages
+    assert '  4. Move staged base image into cache' in messages
+    assert '  5. Compute base image checksum' in messages
+
+
+def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _activate_manager()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-bind-safe'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    source_dir = tmp_path / 'source'
+    source_dir.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode='shared-root',
+        access='rw',
+        source_dir=str(source_dir.resolve()),
+        guest_dst='/workspace/source',
+        tag='hostcode-source',
+    )
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(cmd, **kwargs):
+        del kwargs
+        calls.append([str(part) for part in cmd])
+        if cmd[:2] == ['getent', 'group']:
+            return CmdResult(0, 'libvirt-qemu:x:1:\n', '')
+        return CmdResult(0, '', '')
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        normalized = [str(part) for part in cmd]
+        if normalized[:2] == ['sudo', '-n']:
+            normalized = normalized[2:]
+        calls.append(normalized)
+        if normalized[:2] == ['findmnt', '-n']:
+            return _Proc(1, '', '')
+        return _Proc(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    _ensure_shared_root_host_bind(
+        cfg,
+        attachment,
+        yes=True,
+        dry_run=False,
+    )
+    _ensure_qemu_access(cfg, dry_run=False)
+
+    command_text = [' '.join(c) for c in calls]
+    base_root = str(Path(cfg.paths.base_dir) / cfg.vm.name)
+    assert any(line.startswith(f'mount --bind {source_dir}') for line in command_text)
+    assert f'chown -R root:libvirt-qemu {base_root}' not in command_text
+    assert f'chown -R root:kvm {base_root}' not in command_text
 
 
 def test_fetch_image_rejects_unsupported_file_url_digest(
@@ -685,3 +913,39 @@ def test_create_vm_raises_clear_error_when_guest_memory_unavailable(
     monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
     with pytest.raises(RuntimeError, match='could not allocate guest RAM'):
         create_or_start_vm(cfg, dry_run=False, recreate=False)
+
+
+def test_create_or_start_vm_waits_for_shutdown_transition_before_start(
+    monkeypatch,
+) -> None:
+    _activate_manager()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    domstates = iter(['in shutdown', 'shut off', 'shut off'])
+    active_states = iter([True, False, False])
+    calls = []
+
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: True)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._maybe_prepare_declared_gpu_hostdevs',
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.vm_domstate', lambda vm_name: next(domstates)
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_is_active', lambda vm_name: next(active_states))
+
+    def fake_run_cmd(cmd, **kwargs):
+        calls.append((list(cmd), dict(kwargs)))
+        if cmd[:2] == ['virsh', 'domstate']:
+            return CmdResult(0, 'in shutdown\n', '')
+        if cmd[:2] == ['virsh', 'start']:
+            return CmdResult(0, '', '')
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    create_or_start_vm(cfg, dry_run=False, recreate=False)
+    assert [cmd for cmd, kwargs in calls if cmd[:2] == ['virsh', 'start']] == [
+        ['virsh', 'start', 'vmx']
+    ]

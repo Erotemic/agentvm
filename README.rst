@@ -32,6 +32,7 @@ What it provides
 * SSH + VS Code Remote-SSH workflows
 * Optional virtiofs folder sharing (explicit trust extension)
 * Optional settings sync into the guest user profile
+* Optional stable GPU passthrough with AIVM-managed boot-time VFIO prep
 * A single config store for defaults, VMs, networks, and attachments
 
 .. note::
@@ -72,6 +73,12 @@ Currently ``aivm config init``  is required, but we will make that implicit in a
 (``~/.config/aivm/config.toml``), attaches the current folder if needed, and
 opens VS Code.
 
+During setup and reconcile flows, subprocess logging is now organized around
+user-meaningful steps instead of isolated commands. ``aivm`` shows the current
+step, why it exists, a semantic summary for each planned command, and the exact
+command line that will run before it executes the step. Full raw commands still
+appear at higher verbosity.
+
 If you prefer an explicit flow, ``aivm config init`` is required before
 ``aivm vm create``.
 
@@ -87,15 +94,44 @@ Status and sudo behavior
 By default, ``aivm status`` avoids privileged probes. Use ``--sudo`` for
 network/firewall/libvirt/image checks.
 
-Sudo policy defaults:
+Command manager defaults:
 
-* read-only sudo probes (inspect/query/status) are auto-approved
-* state-changing sudo actions still prompt unless ``--yes``/``--yes-sudo`` is set
+* subprocess execution is centralized through a command manager
+* logs are grouped into step/plan previews with nested context
+* read-only sudo probes (inspect/query/status) are auto-approved by default
+* state-changing sudo steps still prompt unless ``--yes``/``--yes-sudo`` is set
+* approval usually happens once per grouped step, not once per command
+
+Grouped approval does **not** widen privilege beyond the commands shown in the
+step preview. The preview is the approval boundary.
 
 Use:
 
 * ``--yes`` to auto-approve all prompts
 * ``--yes-sudo`` to auto-approve only sudo prompts
+
+When running interactively, expect step previews such as:
+
+* current context / breadcrumb
+* current step title
+* why the step exists
+* semantic summaries plus exact commands for the current step
+* a single approval prompt for the whole step when required
+
+Interactive approval semantics:
+
+* ``y`` approves the current step only
+* ``a`` approves the current step and all later steps
+* ``s`` shows the full exact commands for the current step, then reprompts
+
+For example, the default ``shared-root`` path used by ``aivm ssh .`` /
+``aivm code .`` now groups attachment reconciliation into named steps such as
+inspecting host bind state, preparing host bind targets, ensuring the VM
+virtiofs mapping, and mounting/verifying the bind inside the guest.
+
+Readable previews may abbreviate long shell payloads, but the full exact
+commands are still available on demand in the approval prompt and are always
+logged when they actually run.
 
 Config defaults:
 
@@ -158,6 +194,9 @@ PCI/PCIe capacity), which surfaces from libvirt as errors like
 
 ``shared-root`` is designed to reduce this pressure by using one persistent
 virtiofs mapping per VM and per-attachment host/guest bind mounts.
+Its host-side preparation is also designed to avoid mutating the ownership or
+permissions of the user's source tree; ``aivm`` prepares only its own internal
+directories and does not recursively rewrite a bind-mounted project path.
 
 Workarounds today:
 
@@ -220,6 +259,50 @@ Config-store lifecycle (explicit flow)
    aivm config edit
    aivm help plan
    aivm help tree
+
+Stable GPU Passthrough
+----------------------
+
+``aivm vm gpu attach`` now supports a stable boot-time workflow by default.
+
+Typical flow:
+
+.. code-block:: bash
+
+   aivm vm gpu attach --vm myvm
+   sudo reboot
+   aivm vm up --vm myvm
+
+Stable mode behavior:
+
+* lets you choose a GPU if you do not already know the PCI BDF
+* records in the AIVM config store which VM should own that GPU
+* can install AIVM-managed host boot files so the GPU binds to ``vfio-pci`` on
+  the next host boot
+* requires a host reboot before the VM can start with that GPU
+* does **not** claim live hotplug support in this pass
+
+Important consequences:
+
+* the host and guest cannot use that GPU at the same time
+* after reboot, the host may lose display or compute access on that GPU
+* undoing the host prep later also requires another host reboot
+
+Undo with AIVM:
+
+.. code-block:: bash
+
+   aivm vm gpu detach 0000:65:00.0 --vm myvm
+   sudo reboot
+
+Manual undo:
+
+* remove the AIVM-managed files under ``/etc/modules-load.d/`` and
+  ``/etc/initramfs-tools/scripts/init-top/`` whose names start with
+  ``aivm-vfio-``
+* run ``sudo update-initramfs -u``
+* reboot the host
+* verify the normal host driver rebinds to the GPU
    aivm help completion
    aivm host doctor
 

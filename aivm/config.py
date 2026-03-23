@@ -127,6 +127,15 @@ class BehaviorConfig:
 
 
 @dataclass
+class PassthroughConfig:
+    pci_devices: list[str] = field(default_factory=list)
+    host_prepare_mode: str = 'none'
+    host_prepare_applied: bool = False
+    persistent_hostdev_applied: bool = False
+    selector_label: str = ''
+
+
+@dataclass
 class AgentVMConfig:
     vm: VMConfig = field(default_factory=VMConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
@@ -135,6 +144,7 @@ class AgentVMConfig:
     provision: ProvisionConfig = field(default_factory=ProvisionConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
+    passthrough: PassthroughConfig = field(default_factory=PassthroughConfig)
     verbosity: int = 1
 
     def expanded_paths(self) -> 'AgentVMConfig':
@@ -195,6 +205,7 @@ def load(path: Path) -> AgentVMConfig:
         'provision',
         'sync',
         'paths',
+        'passthrough',
     ):
         if section in raw and isinstance(raw[section], dict):
             sec = raw[section]
