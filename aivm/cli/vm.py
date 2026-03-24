@@ -78,6 +78,7 @@ from ..vm.share import (
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
+    _auto_share_tag_for_path,
     _ensure_share_tag_len,
 )
 from ..vm.share import (
