@@ -993,12 +993,12 @@ def create_or_start_vm(
         # Some call sites/tests may still raise even when check=False.
         first = ex.result
     if first.code != 0:
-        ex = CmdError(cmd, first)
-        if source_dir and _is_missing_virtiofsd_error(ex):
-            raise RuntimeError(_virtiofsd_failure_message(source_dir)) from ex
-        if _is_guest_memory_allocation_error(ex):
-            raise RuntimeError(_memory_allocation_failure_message(cfg)) from ex
-        if _is_missing_uefi_firmware_error(ex):
+        err = CmdError(cmd, first)
+        if source_dir and _is_missing_virtiofsd_error(err):
+            raise RuntimeError(_virtiofsd_failure_message(source_dir)) from err
+        if _is_guest_memory_allocation_error(err):
+            raise RuntimeError(_memory_allocation_failure_message(cfg)) from err
+        if _is_missing_uefi_firmware_error(err):
             log.warning(
                 'UEFI firmware not available on host. Retrying VM create with non-UEFI boot.'
             )
@@ -1023,7 +1023,7 @@ def create_or_start_vm(
                     ) from ex2
                 raise
         else:
-            raise ex
+            raise err
     log.info('VM created: {}', cfg.vm.name)
 
 

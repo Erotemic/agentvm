@@ -19,7 +19,7 @@ import subprocess
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Literal, Sequence
+from typing import Literal, Sequence, cast
 
 from loguru import logger
 
@@ -305,7 +305,7 @@ class IntentScope:
         self.manager.push_intent(self.frame)
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         """Pop this scope's frame from the manager on exit."""
         self.manager.pop_intent(self.frame)
         return False
@@ -339,7 +339,7 @@ class PlanScope:
         self.manager.begin_plan(self.plan)
         return self.plan
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         """Finish or abort the plan, then remove it from the manager."""
         try:
             if exc_type is None:
@@ -768,9 +768,9 @@ class CommandManager:
     def _normalize_role(self, role: str | None) -> CommandRole:
         """Normalize a role string to ``'read'`` or ``'modify'``."""
         mode = str(role or 'modify').strip().lower()
-        if mode not in {'read', 'modify'}:
-            mode = 'modify'
-        return mode  # type: ignore[return-value]
+        if mode == 'read':
+            return cast(CommandRole, 'read')
+        return cast(CommandRole, 'modify')
 
     def _effective_role(self, spec: CommandSpec) -> CommandRole:
         """Infer the effective role for a command specification."""

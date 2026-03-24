@@ -220,8 +220,8 @@ def _maybe_offer_create_ssh_identity(
     pub = (cfg.paths.ssh_pubkey_path or '').strip()
     ident_path = Path(ident).expanduser() if ident else None
     pub_path = Path(pub).expanduser() if pub else None
-    ident_ok = bool(ident_path) and ident_path.exists()
-    pub_ok = bool(pub_path) and pub_path.exists()
+    ident_ok = ident_path is not None and ident_path.exists()
+    pub_ok = pub_path is not None and pub_path.exists()
     if ident_ok and pub_ok:
         return False
 

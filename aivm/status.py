@@ -494,7 +494,7 @@ def render_status(
                         )
             # Count this check
             total += 1
-            done += int(drift.ok)
+            done += 1 if drift.ok is True else 0
         else:
             # drift.available is False here (unavailable)
             lines.append(
@@ -718,8 +718,8 @@ def render_status(
         if next_steps:
             lines.append('')
             lines.append('🛠️ Suggested Next Commands')
-            for cmd in next_steps:
-                lines.append(f'- `{cmd}`')
+            for next_cmd in next_steps:
+                lines.append(f'- `{next_cmd}`')
     return '\n'.join(lines)
 
 

@@ -2370,7 +2370,7 @@ def _maybe_warn_hardware_drift(cfg: AgentVMConfig) -> None:
                 f'  sudo virsh setvcpus {cfg.vm.name} {item.expected} --config'
             )
         elif item.key == 'ram_mb':
-            kib = int(item.expected) * 1024
+            kib = int(str(item.expected)) * 1024
             print(f'  sudo virsh setmaxmem {cfg.vm.name} {kib} --config')
             print(f'  sudo virsh setmem {cfg.vm.name} {kib} --config')
     print(
@@ -3230,10 +3230,10 @@ def _prepare_attached_session(
     )
 
 
-def _normalize_attachment_mode(mode: str) -> str:
+def _normalize_attachment_mode(mode: str) -> AttachmentMode:
     raw = str(mode or '').strip().lower()
     if not raw:
-        return ATTACHMENT_MODE_SHARED_ROOT
+        return AttachmentMode(ATTACHMENT_MODE_SHARED_ROOT)
     aliases = {
         'clone': ATTACHMENT_MODE_GIT,
         'cloned': ATTACHMENT_MODE_GIT,
@@ -3249,13 +3249,13 @@ def _normalize_attachment_mode(mode: str) -> str:
     if resolved not in ATTACHMENT_MODES:
         allowed = ', '.join(sorted(ATTACHMENT_MODES))
         raise RuntimeError(f'--mode must be one of: {allowed}')
-    return resolved
+    return AttachmentMode(resolved)
 
 
-def _normalize_attachment_access(access: str) -> str:
+def _normalize_attachment_access(access: str) -> AttachmentAccess:
     raw = str(access or '').strip().lower()
     if not raw:
-        return ATTACHMENT_ACCESS_RW
+        return AttachmentAccess(ATTACHMENT_ACCESS_RW)
     aliases = {
         'readonly': ATTACHMENT_ACCESS_RO,
         'read-only': ATTACHMENT_ACCESS_RO,
@@ -3270,7 +3270,7 @@ def _normalize_attachment_access(access: str) -> str:
     if resolved not in ATTACHMENT_ACCESS_MODES:
         allowed = ', '.join(sorted(ATTACHMENT_ACCESS_MODES))
         raise RuntimeError(f'--access must be one of: {allowed}')
-    return resolved
+    return AttachmentAccess(resolved)
 
 
 def _git_repo_context(host_src: Path) -> tuple[Path, Path]:
