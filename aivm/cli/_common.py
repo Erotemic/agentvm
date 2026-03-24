@@ -468,25 +468,6 @@ def _record_vm(cfg: AgentVMConfig, store_file: Path | None = None) -> Path:
     upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
     return save_store(reg, target)
 
-
-def _confirm_external_file_update(
-    *, yes: bool, path: Path, purpose: str
-) -> None:
-    if yes:
-        return
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            'External host file updates require confirmation, but stdin is not interactive. '
-            'Re-run with --yes.'
-        )
-    print('About to update a host file not managed by aivm:')
-    print(f'  {path}')
-    print(f'  {purpose}')
-    ans = input('Continue? [y/N]: ').strip().lower()
-    if ans not in {'y', 'yes'}:
-        raise RuntimeError('Aborted by user.')
-
-
 def _resolve_cfg_for_code(
     *,
     config_opt: str | None,

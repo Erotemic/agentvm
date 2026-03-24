@@ -1235,8 +1235,8 @@ def test_upsert_host_git_remote_adds_remote(
         prompts.append(kwargs['purpose'])
 
     monkeypatch.setattr(
-        'aivm.cli.vm._confirm_external_file_update',
-        _capture_prompt,
+        'aivm.cli.vm.CommandManager.confirm_file_update',
+        lambda self, **kwargs: _capture_prompt(**kwargs),
     )
     _, updated = _upsert_host_git_remote(
         repo,
@@ -1304,8 +1304,8 @@ def test_upsert_host_git_remote_updates_remote_url(
     )
     prompts: list[str] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._confirm_external_file_update',
-        lambda **kwargs: prompts.append(kwargs['purpose']),
+        'aivm.cli.vm.CommandManager.confirm_file_update',
+        lambda self, **kwargs: prompts.append(kwargs['purpose']),
     )
     _, updated = _upsert_host_git_remote(
         repo,

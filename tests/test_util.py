@@ -509,3 +509,28 @@ def test_noninteractive_sudo_plan_requires_yes() -> None:
                     role='modify',
                     summary='Refresh apt metadata',
                 )
+
+
+def test_confirm_file_update_requires_yes_noninteractive(monkeypatch) -> None:
+    mgr = _activate_manager()
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
+    with pytest.raises(RuntimeError, match='Re-run with --yes'):
+        mgr.confirm_file_update(
+            yes=False,
+            path='/tmp/ssh-config',
+            purpose='Update SSH entry',
+        )
+
+
+def test_confirm_file_update_aborts_on_negative_response(
+    monkeypatch,
+) -> None:
+    mgr = _activate_manager()
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(builtins, 'input', lambda _: 'n')
+    with pytest.raises(RuntimeError, match='Aborted by user'):
+        mgr.confirm_file_update(
+            yes=False,
+            path='/tmp/ssh-config',
+            purpose='Update SSH entry',
+        )

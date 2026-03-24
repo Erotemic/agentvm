@@ -2061,3 +2061,14 @@ Reflection/state of mind: this was satisfying because it reduced the number of �
 Uncertainties/risks: the full pytest count dropped because we removed helper-specific tests, so the new baseline is lower (`211 passed, 3 skipped` instead of `216 passed, 3 skipped`). I’m comfortable with that because those tests were intentionally about the removed wrapper, but it is a real count change rather than a flaky reporting artifact.
 
 What I am confident about: there are no `_confirm_sudo_block(...)` references left in the repository, `ty check aivm` and `mypy aivm` still pass, and the full suite is green at the new baseline (`/home/agent/.local/uv/envs/uvpy3.13.2/bin/python -m pytest -q` -> `211 passed, 3 skipped`).
+## 2026-03-24 01:22:30 +0000
+
+Applied the same cleanup pattern to `_confirm_external_file_update(...)`. Instead of keeping a second CLI-local approval helper for user-managed file writes, I added a manager-native `CommandManager.confirm_file_update(...)` API and moved the two real call sites in `aivm/cli/vm.py` onto it: the SSH config block update and the Git remote config update. After that, the old wrapper and its helper-specific tests were removed entirely.
+
+This one felt a little different from sudo because, as we discussed, there is no reliable automatic detector for “this command writes a user-owned file.” That means the design necessarily depends on developers annotating these cases intentionally. I’m okay with that because the manager API makes the right thing obvious at the call site without pretending we can infer more than we really can. The important architectural improvement is still there: the approval policy now lives with the command manager instead of in a parallel `_common.py` helper.
+
+Reflection/state of mind: I like how this keeps the repo honest about what is explicit versus implicit. Sudo can be detected at execution time; user-file writes generally cannot. The best we can do is provide a first-class manager API for explicit confirmation and make sure the remaining call sites use it. That feels much better than hiding the same requirement inside another helper that future contributors might cargo-cult.
+
+Uncertainties/risks: the pytest baseline dropped by one more test bucket because we removed the wrapper-specific external-file helper tests and replaced them with direct manager coverage in `tests/test_util.py`. I think that is the right trade, but it does mean the “passing count” changed again for a deliberate reason rather than because the suite is flaky.
+
+What I am confident about: there are no `_confirm_external_file_update(...)` references left in the repository, `CommandManager.confirm_file_update(...)` now covers the real approval behavior, `ty check aivm` and `mypy aivm` still pass, and the full suite is green at the new baseline (`/home/agent/.local/uv/envs/uvpy3.13.2/bin/python -m pytest -q` -> `210 passed, 3 skipped`).

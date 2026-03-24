@@ -88,7 +88,6 @@ from ._common import (
     PreparedSession,
     _BaseCommand,
     _cfg_path,
-    _confirm_external_file_update,
     _load_cfg,
     _load_cfg_with_path,
     _maybe_offer_create_ssh_identity,
@@ -2300,7 +2299,7 @@ def _upsert_ssh_config_entry(
             ssh_cfg,
         )
         return ssh_cfg, False
-    _confirm_external_file_update(
+    CommandManager.current().confirm_file_update(
         yes=bool(yes),
         path=ssh_cfg,
         purpose=f"Update SSH config entry for host '{block_name}'.",
@@ -3308,7 +3307,7 @@ def _upsert_host_git_remote(
             remote_name,
             remote_url,
         ]
-    _confirm_external_file_update(
+    mgr.confirm_file_update(
         yes=bool(yes),
         path=git_cfg,
         purpose=purpose,

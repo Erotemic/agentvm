@@ -929,6 +929,29 @@ class CommandManager:
         if auth_required:
             self._authenticate_sudo()
 
+    def confirm_file_update(
+        self,
+        *,
+        path: str | os.PathLike[str],
+        purpose: str,
+        yes: bool = False,
+    ) -> None:
+        """Confirm an update to a user-managed host file."""
+        if yes or self.yes or self._approve_all_remaining:
+            return
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                'External host file updates require confirmation, but stdin is not interactive. '
+                'Re-run with --yes.'
+            )
+        local_log = log.opt(depth=3)
+        local_log.info('About to update a host file not managed by aivm:')
+        local_log.info('  {}', os.fspath(path))
+        local_log.info('  {}', purpose)
+        ans = input('Continue? [y/N]: ').strip().lower()
+        if ans not in {'y', 'yes'}:
+            raise RuntimeError('Aborted by user.')
+
     def _plan_needs_approval(self, plan: CommandPlan) -> bool:
         """Return True if any command in ``plan`` requires approval."""
         return any(
