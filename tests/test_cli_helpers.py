@@ -162,6 +162,21 @@ def test_help_completion_rejects_unknown_shell() -> None:
         HelpCompletionCLI.main(argv=False, shell='tcsh', yes=True)
 
 
+def test_hydrate_runtime_defaults_skips_detection_when_paths_already_set(
+    monkeypatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.paths.ssh_identity_file = '/tmp/id_existing'
+    cfg.paths.ssh_pubkey_path = '/tmp/id_existing.pub'
+    monkeypatch.setattr(
+        'aivm.cli._common.detect_ssh_identity',
+        lambda: (_ for _ in ()).throw(
+            AssertionError('detect_ssh_identity should not be called')
+        ),
+    )
+    assert common_mod._hydrate_runtime_defaults(cfg) is False
+
+
 def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(
     monkeypatch, tmp_path: Path
 ) -> None:

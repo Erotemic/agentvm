@@ -28,9 +28,9 @@ This document is for recording thoughts I had while thinking of features I want.
 general command line option, and maybe it should be? Perhaps the
 behavior items are always overridable via the command line?
 
-* TODO: I'm also noticing that we are detecting ssh identity when
-running `aivm code .` and the vm has already been configured, so
-we should already know what the identity is
+* DONE: Avoid detecting ssh identity when config already has both
+ssh key paths set. `aivm code .` / related flows now short-circuit that
+runtime detection when the VM config already specifies the identity.
 
 
 * Starting from a reboot state my prompts are:
@@ -61,7 +61,6 @@ Especially on the first prompt, I don't think this clearly gives an indication
 of what the intent is. We have determined that we found config drift, and we
 intend to fix it, so we should mark that in the appropriate location and ensure
 the code is structured so this is expressed naturally.
-
 
 
 

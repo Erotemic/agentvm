@@ -187,11 +187,15 @@ def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
 
 def _hydrate_runtime_defaults(cfg: AgentVMConfig) -> bool:
     changed = False
+    have_ident = bool((cfg.paths.ssh_identity_file or '').strip())
+    have_pub = bool((cfg.paths.ssh_pubkey_path or '').strip())
+    if have_ident and have_pub:
+        return False
     ident, pub = detect_ssh_identity()
-    if not cfg.paths.ssh_identity_file and ident:
+    if not have_ident and ident:
         cfg.paths.ssh_identity_file = ident
         changed = True
-    if not cfg.paths.ssh_pubkey_path and pub:
+    if not have_pub and pub:
         cfg.paths.ssh_pubkey_path = pub
         changed = True
     if changed:

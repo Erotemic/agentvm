@@ -123,3 +123,31 @@ def test_install_deps_debian_behaviors(monkeypatch) -> None:
     assert calls[3][0][:4] == ['sudo', 'systemctl', 'enable', '--now']
     assert calls[0][1]['capture_output'] is False
     assert calls[1][1]['capture_output'] is False
+
+
+def test_install_deps_debian_reports_apt_lock_cleanly(monkeypatch) -> None:
+    monkeypatch.setattr('aivm.host.host_is_debian_like', lambda: True)
+    CommandManager.activate(CommandManager(yes_sudo=True))
+
+    class P:
+        def __init__(self, returncode=100, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+
+    def fake_run(cmd, **kwargs):
+        del kwargs
+        if cmd[-2:] == ['update', '-y']:
+            return P(
+                returncode=100,
+                stderr='E: Could not get lock /var/lib/dpkg/lock-frontend. '
+                'It is held by process 1234',
+            )
+        return P()
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_run)
+    with pytest.raises(RuntimeError, match='apt/dpkg appears to be locked'):
+        install_deps_debian()
