@@ -32,9 +32,6 @@ def test_vm_create_uses_defaults_and_adds_vm(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
@@ -72,9 +69,6 @@ def test_vm_create_falls_back_to_existing_vm_when_defaults_missing(
 
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
@@ -117,9 +111,6 @@ def test_vm_create_yes_preserves_existing_active_vm(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
@@ -158,9 +149,6 @@ def test_vm_create_set_default_opt_in(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
@@ -202,9 +190,6 @@ def test_vm_create_interactive_default_prompt_no_keeps_active(
 
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm._review_vm_create_overrides_interactive',
@@ -260,9 +245,6 @@ def test_vm_destroy_removes_vm_and_attachments(
         'aivm.cli.vm._load_cfg_with_path',
         lambda *a, **k: (cfg, cfg_path),
     )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     monkeypatch.setattr('aivm.cli.vm.destroy_vm', lambda *a, **k: None)
     rc = VMDestroyCLI.main(argv=False, config=str(cfg_path), yes=True)
     assert rc == 0
@@ -285,9 +267,6 @@ def test_vm_destroy_warns_when_network_becomes_unused(
     monkeypatch.setattr(
         'aivm.cli.vm._load_cfg_with_path',
         lambda *a, **k: (cfg, cfg_path),
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr('aivm.cli.vm.destroy_vm', lambda *a, **k: None)
     monkeypatch.setattr(
@@ -312,9 +291,6 @@ def test_vm_destroy_accepts_positional_vm_name(
     save_store(store, cfg_path)
 
     captured: dict[str, str] = {}
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     monkeypatch.setattr(
         'aivm.cli.vm.destroy_vm',
         lambda destroy_cfg, **kwargs: captured.setdefault(
@@ -379,9 +355,6 @@ def test_vm_create_interactive_edit_overrides_defaults(
             return 'y'
 
     monkeypatch.setattr('builtins.input', fake_input)
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
@@ -442,9 +415,6 @@ def test_vm_create_warns_when_requested_resources_look_too_high(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
@@ -478,9 +448,6 @@ def test_vm_create_ensures_network_before_vm_create(
     save_store(store, cfg_path)
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(

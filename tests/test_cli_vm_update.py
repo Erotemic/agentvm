@@ -95,7 +95,6 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
         'aivm.cli.vm._vm_update_drift',
         lambda *a, **k: (drift, True),
     )
-    monkeypatch.setattr('aivm.cli.vm._confirm_sudo_block', lambda **k: None)
     monkeypatch.setattr(
         'aivm.cli.vm._apply_vm_update',
         lambda *a, **k: (True, True),
@@ -181,9 +180,6 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
-        del yes, purpose, kwargs
-
     def fake_run_cmd(self, cmd, *, sudo=False, **kwargs):
         del kwargs, sudo
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
@@ -224,9 +220,6 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
             return CmdResult(0, 'Capacity: 42949672960\nAllocation: 0\n', '')
         raise AssertionError(f'Unexpected command: {cmd!r}')
 
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
-    )
     monkeypatch.setattr('aivm.cli.vm.CommandManager.run', fake_run_cmd)
     drift, _running = _vm_update_drift(cfg, yes=True)
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
@@ -585,9 +578,6 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         ),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
-    monkeypatch.setattr(
         'aivm.cli.vm.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
     )
@@ -740,9 +730,6 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
             cached_ip='10.0.0.3',
             cached_ssh_ok=True,
         ),
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm.probe_ssh_ready',

@@ -11,7 +11,6 @@ import pytest
 import aivm.cli._common as common_mod
 from aivm.cli._common import (
     _confirm_external_file_update,
-    _confirm_sudo_block,
     _maybe_offer_create_ssh_identity,
 )
 from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
@@ -113,119 +112,6 @@ def test_plan_includes_nondefault_config_flag(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert 'aivm config init' in out
     assert f'--config {custom}' in out
-
-
-def test_confirm_sudo_block_arms_intent(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    mgr = CommandManager()
-    CommandManager.activate(mgr)
-    calls = []
-    monkeypatch.setattr(
-        mgr,
-        'confirm_sudo_scope',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    _confirm_sudo_block(
-        yes=True,
-        purpose='test',
-    )
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'test',
-            'role': 'modify',
-            'preview_cmds': None,
-        }
-    ]
-
-
-def test_confirm_sudo_block_noop_when_root(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 0)
-    mgr = CommandManager()
-    CommandManager.activate(mgr)
-    calls = []
-    monkeypatch.setattr(
-        mgr,
-        'confirm_sudo_scope',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    _confirm_sudo_block(yes=False, purpose='test')
-    assert calls == []
-
-
-def test_confirm_sudo_block_uses_effective_yes_sudo_context(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    mgr = CommandManager()
-    CommandManager.activate(mgr)
-    calls = []
-    monkeypatch.setattr(
-        mgr,
-        'confirm_sudo_scope',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    token = common_mod._CURRENT_YES_SUDO.set(True)
-    try:
-        _confirm_sudo_block(yes=False, purpose='test')
-    finally:
-        common_mod._CURRENT_YES_SUDO.reset(token)
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'test',
-            'role': 'modify',
-            'preview_cmds': None,
-        }
-    ]
-
-
-def test_confirm_sudo_block_read_auto_approved_by_default(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    mgr = CommandManager()
-    CommandManager.activate(mgr)
-    calls = []
-    monkeypatch.setattr(
-        mgr,
-        'confirm_sudo_scope',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    _confirm_sudo_block(yes=False, purpose='read check', action='read')
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'read check',
-            'role': 'read',
-            'preview_cmds': None,
-        }
-    ]
-
-
-def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    mgr = CommandManager()
-    CommandManager.activate(mgr)
-    calls = []
-    monkeypatch.setattr(
-        mgr,
-        'confirm_sudo_scope',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    tok_yes = common_mod._CURRENT_YES_SUDO.set(False)
-    tok = common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.set(False)
-    try:
-        _confirm_sudo_block(yes=False, purpose='read check', action='read')
-    finally:
-        common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.reset(tok)
-        common_mod._CURRENT_YES_SUDO.reset(tok_yes)
-    assert calls == [
-        {
-            'yes': False,
-            'purpose': 'read check',
-            'role': 'read',
-            'preview_cmds': None,
-        }
-    ]
 
 
 def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:

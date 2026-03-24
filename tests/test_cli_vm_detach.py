@@ -39,9 +39,6 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (ProbeOutcome(True, 'running'), True),
     )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     detached: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         'aivm.cli.vm.detach_vm_share',
@@ -91,9 +88,6 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (ProbeOutcome(False, 'shut off'), True),
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm.detach_vm_share',
@@ -146,9 +140,6 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (ProbeOutcome(True, 'running'), True),
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm._resolve_ip_for_ssh_ops',

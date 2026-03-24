@@ -97,9 +97,6 @@ def test_vm_attach_mounts_share_when_vm_running(
         lambda *a, **k: attachment,
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
-    monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (ProbeOutcome(True, 'vm-running state=running'), True),
     )
@@ -166,9 +163,6 @@ def test_vm_attach_skips_guest_mount_when_vm_not_running(
     monkeypatch.setattr(
         'aivm.cli.vm._resolve_attachment',
         lambda *a, **k: attachment,
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
@@ -504,9 +498,6 @@ def test_vm_attach_shared_root_running_ensures_guest_ready(
     monkeypatch.setattr(
         'aivm.cli.vm._resolve_attachment',
         lambda *a, **k: attachment,
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
@@ -1131,9 +1122,6 @@ def test_vm_attach_git_mode_syncs_guest_repo_when_running(
     monkeypatch.setattr(
         'aivm.cli.vm._resolve_attachment',
         lambda *a, **k: attachment,
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
