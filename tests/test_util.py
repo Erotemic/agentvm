@@ -7,7 +7,7 @@ import builtins
 import pytest
 
 from aivm.commands import CommandManager, IntentScope, PlanScope
-from aivm.util import CmdError, arm_sudo_intent, run_cmd, shell_join
+from aivm.util import CmdError, run_cmd, shell_join
 
 
 def _activate_manager(**kwargs) -> CommandManager:
@@ -87,43 +87,9 @@ def test_plan_prompts_once_for_multiple_sudo_commands(monkeypatch) -> None:
             )
 
     assert len(prompts) == 1
-    assert calls[0][0][:2] == ['sudo', 'virsh']
+    assert calls[0][0] == ['sudo', '-n', 'true']
     assert calls[1][0][:2] == ['sudo', 'virsh']
-
-
-def test_approved_plan_skips_legacy_compat_prompt(monkeypatch) -> None:
-    _activate_manager()
-    compat_calls = []
-
-    class P:
-        returncode = 0
-        stdout = ''
-        stderr = ''
-
-    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
-    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
-    monkeypatch.setattr(builtins, 'input', lambda prompt: 'y')
-    monkeypatch.setattr(
-        'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: P(),
-    )
-
-    mgr = CommandManager.current()
-    monkeypatch.setattr(
-        mgr,
-        '_ensure_compat_sudo_ready',
-        lambda spec, *, within_plan=False: compat_calls.append(within_plan),
-    )
-
-    with PlanScope(mgr, 'Install packages'):
-        mgr.submit(
-            ['apt-get', 'update'],
-            sudo=True,
-            role='modify',
-            summary='Refresh apt metadata',
-        )
-
-    assert compat_calls == [True]
+    assert calls[2][0][:2] == ['sudo', 'virsh']
 
 
 def test_command_handle_result_flushes_through_handle(monkeypatch) -> None:
@@ -275,7 +241,7 @@ def test_plan_show_full_commands_then_reprompts(monkeypatch) -> None:
 
 
 def test_run_cmd_compatibility_shim_uses_manager(monkeypatch) -> None:
-    _activate_manager()
+    _activate_manager(yes_sudo=True)
     calls = []
 
     class P:
@@ -290,9 +256,64 @@ def test_run_cmd_compatibility_shim_uses_manager(monkeypatch) -> None:
         lambda cmd, **kwargs: (calls.append(cmd) or P()),
     )
 
-    arm_sudo_intent(yes=True, purpose='compat test', action='modify')
     run_cmd(['virsh', 'dominfo', 'vm'], sudo=True, check=True, capture=True)
     assert calls == [['sudo', 'virsh', 'dominfo', 'vm']]
+
+
+def test_confirm_sudo_scope_prompts_for_read_auth_even_with_autoapprove(
+    monkeypatch,
+) -> None:
+    mgr = _activate_manager(auto_approve_readonly_sudo=True)
+    prompts = []
+    messages = []
+    auth_cmds = []
+
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    class _FakeLog:
+        def info(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def debug(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def trace(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+    def fake_run(cmd, **kwargs):
+        auth_cmds.append(cmd)
+        if cmd == ['sudo', '-n', 'true']:
+            return P(returncode=1, stderr='sudo: a password is required')
+        if cmd == ['sudo', '-v']:
+            return P(returncode=0)
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        builtins,
+        'input',
+        lambda prompt: (prompts.append(prompt) or 'y'),
+    )
+    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_run)
+
+    mgr.confirm_sudo_scope(
+        purpose='Read nftables firewall status.',
+        role='read',
+        yes=False,
+    )
+
+    assert prompts == ['Continue? [y]es/[a]ll/[N]o: ']
+    assert auth_cmds == [['sudo', '-n', 'true'], ['sudo', '-v']]
+    joined = '\n'.join(messages)
+    assert 'Read nftables firewall status.' in joined
+    assert 'Sudo authentication appears to be required' in joined
+    assert 'Future read-only sudo commands are configured to auto-approve' in joined
 
 
 def test_plan_preview_includes_summary_and_command(monkeypatch) -> None:
@@ -412,7 +433,10 @@ def test_read_only_command_stays_read_inside_modify_intent(
                 summary='Inspect domain state',
             )
 
-    assert calls == [['sudo', '-n', 'virsh', 'dominfo', 'vm']]
+    assert calls == [
+        ['sudo', '-n', 'true'],
+        ['sudo', '-n', 'virsh', 'dominfo', 'vm'],
+    ]
 
 
 def test_noninteractive_sudo_plan_requires_yes() -> None:

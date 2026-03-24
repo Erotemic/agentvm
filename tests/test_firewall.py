@@ -8,8 +8,8 @@ from aivm.firewall import (
     _effective_bridge_and_gateway,
     _nft_script,
     apply_firewall,
+    firewall_status,
 )
-from aivm.util import CmdResult
 
 
 def test_effective_bridge_and_gateway_prefers_live(monkeypatch) -> None:
@@ -18,16 +18,23 @@ def test_effective_bridge_and_gateway_prefers_live(monkeypatch) -> None:
     cfg.network.bridge = 'virbr-aivm'
     cfg.network.gateway_ip = '10.77.0.1'
 
-    def fake_run_cmd(*args, **kwargs):
-        xml = (
+    class P:
+        returncode = 0
+        stdout = (
             '<network>'
             "<bridge name='virbr-live'/>"
             "<ip address='10.99.0.1'/>"
             '</network>'
         )
-        return CmdResult(0, xml, '')
+        stderr = ''
 
-    monkeypatch.setattr('aivm.firewall.run_cmd', fake_run_cmd)
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: P(),
+    )
     bridge, gateway = _effective_bridge_and_gateway(cfg)
     assert bridge == 'virbr-live'
     assert gateway == '10.99.0.1'
@@ -80,12 +87,42 @@ def test_nft_script_invalid_port_raises(monkeypatch) -> None:
 def test_apply_firewall_disabled_skips(monkeypatch) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.enabled = False
-    called = []
-    monkeypatch.setattr(
-        'aivm.firewall.run_cmd', lambda *a, **k: called.append((a, k))
-    )
     apply_firewall(cfg, dry_run=False)
-    assert called == []
+
+
+def test_firewall_status_uses_readonly_step(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.firewall.table = 'aivm_fw'
+    calls = []
+
+    class P:
+        returncode = 0
+        stdout = 'table inet aivm_fw {}'
+        stderr = ''
+
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
+    )
+
+    text = firewall_status(cfg)
+
+    assert text == 'table inet aivm_fw {}'
+    assert calls == [
+        (
+            ['sudo', 'nft', 'list', 'table', 'inet', 'aivm_fw'],
+            {
+                'input': None,
+                'capture_output': True,
+                'text': True,
+                'env': None,
+                'timeout': None,
+            },
+        )
+    ]
 
 
 def test_apply_firewall_runs_delete_then_apply(monkeypatch) -> None:

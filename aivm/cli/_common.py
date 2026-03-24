@@ -25,9 +25,6 @@ from ..store import (
     upsert_vm_with_network,
 )
 from ..util import (
-    arm_sudo_intent,
-    clear_sudo_intent,
-    sudo_intent_auto_yes,
     which,
 )
 
@@ -69,7 +66,6 @@ class _BaseCommand(scfg.DataConfig):
 
     @classmethod
     def cli(cls, *args, **kwargs):  # type: ignore[override]
-        clear_sudo_intent()
         parsed = super().cli(*args, **kwargs)
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
         cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
@@ -495,13 +491,12 @@ def _confirm_sudo_block(
     auto_yes_read = mode == 'read' and _CURRENT_AUTO_APPROVE_READONLY_SUDO.get(
         True
     )
-    sticky_all = sudo_intent_auto_yes()
-    eff_yes = bool(
-        yes or _CURRENT_YES_SUDO.get(False) or sticky_all or auto_yes_read
-    )
-    # Preserve "accept all" across later confirm blocks in the same command.
-    arm_sudo_intent(
-        yes=eff_yes, purpose=purpose, action=mode, sticky=sticky_all
+    mgr = CommandManager.current()
+    eff_yes = bool(yes or _CURRENT_YES_SUDO.get(False) or auto_yes_read)
+    mgr.confirm_sudo_scope(
+        yes=eff_yes,
+        purpose=purpose,
+        role=mode,
     )
 
 

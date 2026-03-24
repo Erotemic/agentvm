@@ -117,9 +117,12 @@ def test_plan_includes_nondefault_config_flag(monkeypatch, capsys) -> None:
 
 def test_confirm_sudo_block_arms_intent(monkeypatch) -> None:
     monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
+    mgr = CommandManager()
+    CommandManager.activate(mgr)
     calls = []
     monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
+        mgr,
+        'confirm_sudo_scope',
         lambda **kwargs: calls.append(kwargs),
     )
     _confirm_sudo_block(
@@ -130,17 +133,19 @@ def test_confirm_sudo_block_arms_intent(monkeypatch) -> None:
         {
             'yes': True,
             'purpose': 'test',
-            'action': 'modify',
-            'sticky': False,
+            'role': 'modify',
         }
     ]
 
 
 def test_confirm_sudo_block_noop_when_root(monkeypatch) -> None:
     monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 0)
+    mgr = CommandManager()
+    CommandManager.activate(mgr)
     calls = []
     monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
+        mgr,
+        'confirm_sudo_scope',
         lambda **kwargs: calls.append(kwargs),
     )
     _confirm_sudo_block(yes=False, purpose='test')
@@ -151,9 +156,12 @@ def test_confirm_sudo_block_uses_effective_yes_sudo_context(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
+    mgr = CommandManager()
+    CommandManager.activate(mgr)
     calls = []
     monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
+        mgr,
+        'confirm_sudo_scope',
         lambda **kwargs: calls.append(kwargs),
     )
     token = common_mod._CURRENT_YES_SUDO.set(True)
@@ -165,58 +173,19 @@ def test_confirm_sudo_block_uses_effective_yes_sudo_context(
         {
             'yes': True,
             'purpose': 'test',
-            'action': 'modify',
-            'sticky': False,
-        }
-    ]
-
-
-def test_confirm_sudo_block_honors_sticky_all_choice(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: True)
-    _confirm_sudo_block(yes=False, purpose='test')
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'test',
-            'action': 'modify',
-            'sticky': True,
-        }
-    ]
-
-
-def test_confirm_sudo_block_read_preserves_sticky_all_choice(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: True)
-    _confirm_sudo_block(yes=False, purpose='read check', action='read')
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'read check',
-            'action': 'read',
-            'sticky': True,
+            'role': 'modify',
         }
     ]
 
 
 def test_confirm_sudo_block_read_auto_approved_by_default(monkeypatch) -> None:
     monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: False)
+    mgr = CommandManager()
+    CommandManager.activate(mgr)
     calls = []
     monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
+        mgr,
+        'confirm_sudo_scope',
         lambda **kwargs: calls.append(kwargs),
     )
     _confirm_sudo_block(yes=False, purpose='read check', action='read')
@@ -224,18 +193,19 @@ def test_confirm_sudo_block_read_auto_approved_by_default(monkeypatch) -> None:
         {
             'yes': True,
             'purpose': 'read check',
-            'action': 'read',
-            'sticky': False,
+            'role': 'read',
         }
     ]
 
 
 def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
     monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: False)
+    mgr = CommandManager()
+    CommandManager.activate(mgr)
     calls = []
     monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
+        mgr,
+        'confirm_sudo_scope',
         lambda **kwargs: calls.append(kwargs),
     )
     tok_yes = common_mod._CURRENT_YES_SUDO.set(False)
@@ -249,8 +219,7 @@ def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
         {
             'yes': False,
             'purpose': 'read check',
-            'action': 'read',
-            'sticky': False,
+            'role': 'read',
         }
     ]
 

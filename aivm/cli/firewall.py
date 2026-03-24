@@ -7,7 +7,6 @@ import scriptconfig as scfg
 from ..firewall import apply_firewall, firewall_status, remove_firewall
 from ._common import (
     _BaseCommand,
-    _confirm_sudo_block,
     _resolve_cfg_fallback,
 )
 
@@ -23,10 +22,6 @@ class FirewallApplyCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Apply nftables firewall rules.',
-        )
         apply_firewall(cfg, dry_run=args.dry_run)
         return 0
 
@@ -38,11 +33,6 @@ class FirewallStatusCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Read nftables firewall status.',
-            action='read',
-        )
         print(firewall_status(cfg))
         return 0
 
@@ -58,10 +48,6 @@ class FirewallRemoveCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Remove nftables firewall rules.',
-        )
         remove_firewall(cfg, dry_run=args.dry_run)
         return 0
 

@@ -279,21 +279,6 @@ class CommandPlan:
         return not self.commands
 
 
-@dataclass(frozen=True)
-class CompatSudoIntent:
-    """Compatibility shim for legacy sudo-confirmation flows.
-
-    This stores one active privileged-operation intent used by
-    :meth:`CommandManager._ensure_compat_sudo_ready` when commands are run
-    outside an explicit plan.
-    """
-
-    yes: bool
-    purpose: str
-    action: CommandRole = 'modify'
-    sticky: bool = False
-
-
 class IntentScope:
     """Context manager that temporarily pushes an intent frame.
 
@@ -556,8 +541,8 @@ class CommandManager:
         self.plan_stack: list[CommandPlan] = []
         self._next_command_id = 0
         self._approve_all_remaining = False
-        self._compat_sudo_intent: CompatSudoIntent | None = None
         self._loose_commands: list[PlannedCommand] = []
+        self._sudo_authentication_required: bool | None = None
 
     def push_intent(self, frame: IntentFrame) -> None:
         """Push one intent frame onto the active intent stack."""
@@ -617,44 +602,6 @@ class CommandManager:
     def current_plan(self) -> CommandPlan | None:
         """Return the currently active innermost plan, if any."""
         return self.plan_stack[-1] if self.plan_stack else None
-
-    def compat_arm_sudo_intent(
-        self,
-        *,
-        yes: bool,
-        purpose: str,
-        action: str = 'modify',
-        sticky: bool = False,
-    ) -> None:
-        """Install a legacy sudo-intent hint for loose privileged commands.
-
-        This compatibility layer is useful when old call sites still rely
-        on loose command execution instead of explicit plan previews.
-        """
-        # TODO: remove backwards compatability here by upgrading usage to the
-        # modern one.
-        role = self._normalize_role(action)
-        self._compat_sudo_intent = CompatSudoIntent(
-            yes=bool(yes),
-            purpose=str(purpose),
-            action=role,
-            sticky=bool(sticky),
-        )
-        if sticky:
-            self._approve_all_remaining = True
-
-    def compat_clear_sudo_intent(self) -> None:
-        """Clear any active compatibility sudo intent and sticky approval."""
-        # TODO: remove backwards compatability here by upgrading usage to the
-        # modern one.
-        self._compat_sudo_intent = None
-        self._approve_all_remaining = False
-
-    def compat_auto_yes(self) -> bool:
-        """Return True if compatibility approval is currently sticky."""
-        # TODO: remove backwards compatability here by upgrading usage to the
-        # modern one.
-        return bool(self._approve_all_remaining)
 
     def capture_submitter(self) -> str:
         """Return a best-effort provenance string for the submitter.
@@ -816,9 +763,131 @@ class CommandManager:
             return False
         if self.yes or self.yes_sudo or self._approve_all_remaining:
             return False
+        if self.sudo_authentication_required():
+            return True
         if role == 'read' and self.auto_approve_readonly_sudo:
             return False
         return True
+
+    def sudo_authentication_required(self) -> bool:
+        """Return True when the current user likely needs sudo auth."""
+        if os.geteuid() == 0:
+            self._sudo_authentication_required = False
+            return False
+        if self._sudo_authentication_required is not None:
+            return self._sudo_authentication_required
+        probe = subprocess.run(
+            ['sudo', '-n', 'true'],
+            capture_output=True,
+            text=True,
+        )
+        self._sudo_authentication_required = probe.returncode != 0
+        log.opt(depth=2).trace(
+            'sudo auth probe returncode={} stderr={!r}',
+            probe.returncode,
+            (probe.stderr or '').strip(),
+        )
+        return self._sudo_authentication_required
+
+    def _readonly_sudo_policy_note(self) -> str:
+        if self.auto_approve_readonly_sudo:
+            return (
+                'Future read-only sudo commands are configured to auto-approve '
+                'once authentication is ready.'
+            )
+        return (
+            'Future read-only sudo commands are configured to keep asking for '
+            'approval unless you choose [a]ll or enable auto approval in config.'
+        )
+
+    def _render_sudo_prompt_context(
+        self,
+        *,
+        purpose: str,
+        role: CommandRole,
+        auth_required: bool,
+    ) -> None:
+        local_log = log.opt(depth=3)
+        local_log.info(
+            'About to request sudo for {} host operations:',
+            'read-only' if role == 'read' else 'state-changing',
+        )
+        local_log.info('  {}', purpose)
+        if auth_required:
+            local_log.info(
+                '  Sudo authentication appears to be required before the next command can run.'
+            )
+            local_log.info('  {}', self._readonly_sudo_policy_note())
+
+    def _authenticate_sudo(self) -> None:
+        """Refresh sudo credentials now so later commands do not surprise."""
+        if os.geteuid() == 0:
+            self._sudo_authentication_required = False
+            return
+        cmd = ['sudo', '-v']
+        if not sys.stdin.isatty():
+            cmd = ['sudo', '-n', '-v']
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            res = CommandResult(
+                proc.returncode,
+                proc.stdout or '',
+                proc.stderr or '',
+            )
+            raise CommandError(cmd, res)
+        self._sudo_authentication_required = False
+
+    def confirm_sudo_scope(
+        self,
+        *,
+        purpose: str,
+        role: str = 'modify',
+        yes: bool = False,
+    ) -> None:
+        """Preflight sudo approval/authentication for an upcoming operation."""
+        if os.geteuid() == 0:
+            return
+        eff_role = self._normalize_role(role)
+        auth_required = self.sudo_authentication_required()
+        auto_yes = bool(
+            yes
+            or self.yes
+            or self.yes_sudo
+            or self._approve_all_remaining
+            or (
+                eff_role == 'read'
+                and self.auto_approve_readonly_sudo
+                and not auth_required
+            )
+        )
+        if auth_required:
+            self._render_sudo_prompt_context(
+                purpose=purpose,
+                role=eff_role,
+                auth_required=True,
+            )
+        if auto_yes:
+            if auth_required:
+                self._authenticate_sudo()
+            return
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                'Privileged host operations require confirmation, but stdin is not interactive. '
+                'Re-run with --yes or --yes-sudo.'
+            )
+        if not auth_required:
+            self._render_sudo_prompt_context(
+                purpose=purpose,
+                role=eff_role,
+                auth_required=False,
+            )
+        ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
+        if ans in {'a', 'all'}:
+            self._approve_all_remaining = True
+        elif ans not in {'y', 'yes'}:
+            raise RuntimeError('Aborted by user.')
+        if auth_required:
+            self._authenticate_sudo()
 
     def _plan_needs_approval(self, plan: CommandPlan) -> bool:
         """Return True if any command in ``plan`` requires approval."""
@@ -970,51 +1039,6 @@ class CommandManager:
             return preview_cmd[:max_len]
         return preview_cmd[: max_len - 3] + '...'
 
-    def _ensure_compat_sudo_ready(
-        self, spec: CommandSpec, *, within_plan: bool = False
-    ) -> None:
-        """Ensure loose sudo execution is allowed under compatibility rules."""
-        if not spec.sudo or os.geteuid() == 0:
-            return
-        if within_plan:
-            return
-        intent = self._compat_sudo_intent
-        if intent is None:
-            return
-        role = self._effective_role(spec)
-        auto_yes = bool(
-            self.yes
-            or self.yes_sudo
-            or self._approve_all_remaining
-            or intent.yes
-            or (role == 'read' and self.auto_approve_readonly_sudo)
-        )
-        if auto_yes:
-            return
-        local_log = log.opt(depth=3)
-        local_log.info(
-            'About to run privileged {} host operations via sudo:',
-            'read-only' if role == 'read' else 'state-changing',
-        )
-        local_log.info('  {}', intent.purpose)
-        if not sys.stdin.isatty():
-            raise RuntimeError(
-                'Privileged host operations require confirmation, but stdin is not interactive. '
-                'Re-run with --yes or --yes-sudo.'
-            )
-        ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
-        if ans in {'a', 'all'}:
-            self._approve_all_remaining = True
-            self._compat_sudo_intent = CompatSudoIntent(
-                yes=True,
-                purpose=intent.purpose,
-                action=intent.action,
-                sticky=True,
-            )
-            return
-        if ans not in {'y', 'yes'}:
-            raise RuntimeError('Aborted by user.')
-
     def _execute_one(
         self,
         spec: CommandSpec,
@@ -1025,7 +1049,6 @@ class CommandManager:
         """Execute one command specification and normalize its result."""
         local_log = log.opt(depth=3)
         cmd = list(spec.cmd)
-        self._ensure_compat_sudo_ready(spec, within_plan=within_plan)
         if spec.sudo and os.geteuid() != 0:
             cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
 

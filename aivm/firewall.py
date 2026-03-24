@@ -13,7 +13,6 @@ from loguru import logger
 from .commands import CommandManager, IntentScope, PlanScope
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
-from .util import run_cmd
 
 log = logger
 
@@ -41,11 +40,15 @@ def _effective_bridge_and_gateway(cfg: AgentVMConfig) -> tuple[str, str]:
     """Prefer live libvirt network metadata over potentially stale config."""
     bridge = cfg.network.bridge
     gateway = cfg.network.gateway_ip
-    res = run_cmd(
+    mgr = CommandManager.current()
+    res = mgr.submit(
         virsh_system_cmd('net-dumpxml', cfg.network.name),
         sudo=True,
+        role='read',
         check=False,
         capture=True,
+        eager=True,
+        summary=f'Read live libvirt XML for network {cfg.network.name}',
     )
     if res.code != 0 or not (res.stdout or '').strip():
         return bridge, gateway
@@ -194,13 +197,32 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 
 def firewall_status(cfg: AgentVMConfig) -> str:
     table = cfg.firewall.table
-    res = run_cmd(
-        ['nft', 'list', 'table', 'inet', table],
-        sudo=True,
-        check=False,
-        capture=True,
-    )
-    return res.stdout + (res.stderr or '')
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        f'Inspect firewall table {table}',
+        why='Read the current nftables rules for the managed VM bridge.',
+        role='read',
+    ):
+        with PlanScope(
+            mgr,
+            'Read managed nftables firewall table',
+            why=(
+                'Inspect the current nftables table so firewall diagnostics '
+                'match the live host state.'
+            ),
+            approval_scope=f'firewall-status:{table}',
+        ):
+            res = mgr.submit(
+                ['nft', 'list', 'table', 'inet', table],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                summary=f'Read nftables table inet {table}',
+            )
+    result = res.result()
+    return result.stdout + (result.stderr or '')
 
 
 def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
@@ -208,10 +230,25 @@ def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     if dry_run:
         log.info('DRYRUN: nft delete table inet {}', table)
         return
-    run_cmd(
-        ['nft', 'delete', 'table', 'inet', table],
-        sudo=True,
-        check=False,
-        capture=True,
-    )
+    mgr = CommandManager.current()
+    with IntentScope(
+        mgr,
+        f'Remove firewall table {table}',
+        why='Delete the managed nftables table for this VM network.',
+        role='modify',
+    ):
+        with PlanScope(
+            mgr,
+            'Delete managed nftables firewall table',
+            why='Remove the nftables table created by aivm for this VM bridge.',
+            approval_scope=f'firewall-remove:{table}',
+        ):
+            mgr.submit(
+                ['nft', 'delete', 'table', 'inet', table],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary=f'Remove nftables table inet {table}',
+            )
     log.info('Firewall removed (table=inet {}).', table)
