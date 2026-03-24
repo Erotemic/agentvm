@@ -10,6 +10,7 @@ import sys
 
 import scriptconfig as scfg
 
+from ..commands import CommandManager
 from ..host import (
     check_commands,
     check_commands_with_sudo,
@@ -19,7 +20,6 @@ from ..host import (
 from ..vm import fetch_image
 from ._common import (
     _BaseCommand,
-    _confirm_sudo_block,
     _resolve_cfg_fallback,
 )
 from .firewall import FirewallModalCLI
@@ -76,11 +76,13 @@ class HostInstallDepsCLI(_BaseCommand):
                 file=sys.stderr,
             )
             return 2
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Install host dependencies with apt/libvirt tooling.',
-        )
-        install_deps_debian(assume_yes=True)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            'Prepare host dependencies',
+            why='Install the host packages required for libvirt-managed VM workflows.',
+            role='modify',
+        ):
+            install_deps_debian(assume_yes=True)
         print('✅ Installed host dependencies (best effort).')
         return 0
 
@@ -96,11 +98,13 @@ class ImageFetchCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Download/cache base image under libvirt-managed storage.',
-        )
-        print(str(fetch_image(cfg, dry_run=args.dry_run)))
+        mgr = CommandManager.current()
+        with mgr.intent(
+            'Fetch base image',
+            why='Prepare the Ubuntu cloud image used for later VM creation.',
+            role='modify',
+        ):
+            print(str(fetch_image(cfg, dry_run=args.dry_run)))
         return 0
 
 

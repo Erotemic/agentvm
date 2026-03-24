@@ -262,7 +262,10 @@ def test_manager_run_uses_submit_execution_path(monkeypatch) -> None:
     )
 
     mgr.run(['virsh', 'dominfo', 'vm'], sudo=True, check=True, capture=True)
-    assert calls == [['sudo', 'virsh', 'dominfo', 'vm']]
+    assert calls == [
+        ['sudo', '-n', 'true'],
+        ['sudo', 'virsh', 'dominfo', 'vm'],
+    ]
 
 
 def test_confirm_sudo_scope_prompts_for_read_auth_even_with_autoapprove(

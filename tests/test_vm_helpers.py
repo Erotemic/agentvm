@@ -148,6 +148,8 @@ def test_attach_vm_share_treats_existing_mapping_as_satisfied(
             normalized = normalized[2:]
         elif normalized[:1] == ['sudo']:
             normalized = normalized[1:]
+        if parts[:3] == ['sudo', '-n', 'true']:
+            return _Proc(0, '', '')
         if normalized[:2] == ['virsh', 'domstate']:
             return _Proc(0, 'running\n', '')
         if normalized[:2] == ['virsh', 'attach-device']:
@@ -165,8 +167,17 @@ def test_attach_vm_share_treats_existing_mapping_as_satisfied(
     )
 
     attach_vm_share(cfg, source_dir, tag, dry_run=False)
-    norm0 = calls[0][2:] if calls[0][:2] == ['sudo', '-n'] else calls[0]
-    norm1 = calls[1][2:] if calls[1][:2] == ['sudo', '-n'] else calls[1]
+    command_calls = [c for c in calls if c[:3] != ['sudo', '-n', 'true']]
+    norm0 = (
+        command_calls[0][2:]
+        if command_calls[0][:2] == ['sudo', '-n']
+        else command_calls[0]
+    )
+    norm1 = (
+        command_calls[1][2:]
+        if command_calls[1][:2] == ['sudo', '-n']
+        else command_calls[1]
+    )
     assert norm0[:2] == ['virsh', 'domstate']
     assert norm1[:2] == ['virsh', 'attach-device']
 

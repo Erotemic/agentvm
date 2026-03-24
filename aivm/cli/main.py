@@ -13,6 +13,7 @@ from pathlib import Path
 
 import scriptconfig as scfg
 
+from ..commands import CommandManager
 from ..status import (
     anticipated_status_sudo_commands,
     render_global_status,
@@ -22,7 +23,6 @@ from ..store import load_store
 from ._common import (
     _BaseCommand,
     _cfg_path,
-    _confirm_sudo_block,
     _load_cfg_with_path,
     _resolve_cfg_for_code,
     log,
@@ -148,20 +148,28 @@ class StatusCLI(_BaseCommand):
         if cfg is None or path is None:
             print(render_global_status())
             return 0
-        if args.sudo:
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose=f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'.",
-                action='read',
-                preview_cmds=anticipated_status_sudo_commands(
-                    cfg, detail=bool(args.detail)
-                ),
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f"Inspect status for {cfg.vm.name}",
+            why='Summarize host, network, firewall, VM, and SSH readiness for this managed VM.',
+            role='read',
+        ):
+            if args.sudo:
+                mgr.confirm_sudo_scope(
+                    yes=bool(args.yes),
+                    purpose=(
+                        f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'."
+                    ),
+                    role='read',
+                    preview_cmds=anticipated_status_sudo_commands(
+                        cfg, detail=bool(args.detail)
+                    ),
+                )
+            print(
+                render_status(
+                    cfg, path, detail=args.detail, use_sudo=bool(args.sudo)
+                )
             )
-        print(
-            render_status(
-                cfg, path, detail=args.detail, use_sudo=bool(args.sudo)
-            )
-        )
         return 0
 
 

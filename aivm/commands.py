@@ -1003,6 +1003,32 @@ class CommandManager:
         for idx, item in enumerate(plan.commands, start=1):
             local_log.info('  {}. {}', idx, self._raw_command(item.spec))
 
+    def _confirm_loose_sudo_command(self, spec: CommandSpec) -> None:
+        """Confirm one sudo command that is not grouped into a plan."""
+        if not spec.sudo or os.geteuid() == 0:
+            return
+        role = self._effective_role(spec)
+        purpose = spec.summary.strip()
+        if not purpose:
+            breadcrumb = self.render_breadcrumb().strip()
+            if breadcrumb:
+                purpose = breadcrumb
+            else:
+                purpose = (
+                    'Run a privileged host command without an explicit step.'
+                )
+        if not spec.summary.strip():
+            log.opt(depth=3).info(
+                '  This sudo command is not grouped into an explicit step. '
+                'Wrap related work in mgr.intent(...) / mgr.step(...) for clearer previews and fewer prompts.'
+            )
+        self.confirm_sudo_scope(
+            yes=False,
+            purpose=purpose,
+            role=role,
+            preview_cmds=[list(spec.cmd)],
+        )
+
     def _flush_plan(
         self,
         plan: CommandPlan,
@@ -1088,6 +1114,8 @@ class CommandManager:
     ) -> CommandResult:
         """Execute one command specification and normalize its result."""
         local_log = log.opt(depth=3)
+        if spec.sudo and not within_plan:
+            self._confirm_loose_sudo_command(spec)
         cmd = list(spec.cmd)
         if spec.sudo and os.geteuid() != 0:
             cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]

@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 from loguru import logger
 
-from .commands import CommandManager, IntentScope, PlanScope
+from .commands import CommandManager
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
 
@@ -157,8 +157,7 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         log.info('DRYRUN: nft -f - <<EOF\\n{}\\nEOF', script.rstrip())
         return
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         f'Apply firewall table {table}',
         why=(
             'The VM bridge firewall step enforces the configured host/guest '
@@ -166,8 +165,7 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         ),
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Replace nftables rules for managed VM bridge',
             why=(
                 'Clear the previous managed nftables table if present, then '
@@ -198,14 +196,12 @@ def apply_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 def firewall_status(cfg: AgentVMConfig) -> str:
     table = cfg.firewall.table
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         f'Inspect firewall table {table}',
         why='Read the current nftables rules for the managed VM bridge.',
         role='read',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Read managed nftables firewall table',
             why=(
                 'Inspect the current nftables table so firewall diagnostics '
@@ -231,14 +227,12 @@ def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         log.info('DRYRUN: nft delete table inet {}', table)
         return
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         f'Remove firewall table {table}',
         why='Delete the managed nftables table for this VM network.',
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Delete managed nftables firewall table',
             why='Remove the nftables table created by aivm for this VM bridge.',
             approval_scope=f'firewall-remove:{table}',

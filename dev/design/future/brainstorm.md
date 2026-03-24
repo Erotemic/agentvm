@@ -64,3 +64,8 @@ the code is structured so this is expressed naturally.
 
 
 
+
+* Maybe the intent context manager has a way to specify what it thinks the role
+  is likely to be, or even have it guarantee that a role will be read-only or
+  that sudo will not be necessary, and that can prevent us from using
+  privileged commands in some sections.

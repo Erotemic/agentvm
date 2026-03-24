@@ -229,12 +229,6 @@ def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(
         'aivm.cli.vm._resolve_attachment',
         lambda *a, **k: attachment,
     )
-    sudo_calls: list[dict] = []
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block',
-        lambda **kwargs: sudo_calls.append(kwargs),
-    )
-
     states = [
         (ProbeOutcome(None, 'probe inconclusive without sudo'), False),
         (ProbeOutcome(True, 'vm-needs-sudo state=running'), True),
@@ -271,7 +265,6 @@ def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(
         yes=False,
     )
     assert rc == 0
-    assert sudo_calls
     assert attached
     assert mounted
 

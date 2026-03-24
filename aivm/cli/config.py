@@ -47,7 +47,6 @@ from ..util import which
 from ._common import (
     _BaseCommand,
     _cfg_path,
-    _confirm_sudo_block,
     _load_cfg_with_path,
     _maybe_offer_create_ssh_identity,
     _resolve_cfg_for_code,
@@ -388,17 +387,13 @@ class ConfigDiscoverCLI(_BaseCommand):
         )
         used_sudo = False
         if names_res.code != 0:
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose='Discover existing libvirt VMs via system virsh.',
-                action='read',
-            )
             used_sudo = True
             names_res = mgr.run(
                 virsh_system_cmd('list', '--all', '--name'),
                 sudo=True,
                 check=True,
                 capture=True,
+                summary='List libvirt VMs with system privileges',
             )
 
         vm_names = [

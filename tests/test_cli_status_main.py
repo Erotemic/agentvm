@@ -35,9 +35,9 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(main_mod, '_cfg_path', lambda _: cfg_path)
     monkeypatch.setattr(
-        main_mod,
-        '_confirm_sudo_block',
-        lambda **k: called.setdefault('sudo', k),
+        main_mod.CommandManager,
+        'confirm_sudo_scope',
+        lambda self, **k: called.setdefault('sudo', k),
     )
     monkeypatch.setattr(
         main_mod,

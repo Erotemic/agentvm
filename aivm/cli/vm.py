@@ -89,7 +89,6 @@ from ._common import (
     _BaseCommand,
     _cfg_path,
     _confirm_external_file_update,
-    _confirm_sudo_block,
     _load_cfg,
     _load_cfg_with_path,
     _maybe_offer_create_ssh_identity,
@@ -138,11 +137,15 @@ class VMUpCLI(_BaseCommand):
         _maybe_install_missing_host_deps(
             yes=bool(args.yes), dry_run=bool(args.dry_run)
         )
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Create/start/redefine VM '{cfg.vm.name}' and libvirt resources.",
-        )
-        create_or_start_vm(cfg, dry_run=args.dry_run, recreate=args.recreate)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Create/start VM {cfg.vm.name}',
+            why='Ensure the managed VM exists and is running with the configured resources.',
+            role='modify',
+        ):
+            create_or_start_vm(
+                cfg, dry_run=args.dry_run, recreate=args.recreate
+            )
         if not args.dry_run and not args.recreate:
             _maybe_warn_hardware_drift(cfg)
         if not args.dry_run:
@@ -235,18 +238,20 @@ class VMCreateCLI(_BaseCommand):
         _maybe_install_missing_host_deps(
             yes=bool(args.yes), dry_run=bool(args.dry_run)
         )
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Create/start VM '{cfg.vm.name}' from config defaults.",
-        )
-        ensure_network(cfg, recreate=False, dry_run=bool(args.dry_run))
-        if cfg.firewall.enabled:
-            apply_firewall(cfg, dry_run=bool(args.dry_run))
-        create_or_start_vm(
-            cfg,
-            dry_run=bool(args.dry_run),
-            recreate=bool(args.force and existing is not None),
-        )
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Create VM {cfg.vm.name}',
+            why='Provision the managed network, firewall, and VM definition from config defaults.',
+            role='modify',
+        ):
+            ensure_network(cfg, recreate=False, dry_run=bool(args.dry_run))
+            if cfg.firewall.enabled:
+                apply_firewall(cfg, dry_run=bool(args.dry_run))
+            create_or_start_vm(
+                cfg,
+                dry_run=bool(args.dry_run),
+                recreate=bool(args.force and existing is not None),
+            )
         if not args.dry_run:
             prev_active_vm = reg.active_vm
             upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
@@ -374,18 +379,19 @@ class VMWaitIPCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Query VM networking state via virsh to resolve VM IP.',
-            action='read',
-        )
-        print(
-            wait_for_ip(
-                cfg,
-                timeout_s=args.timeout,
-                dry_run=args.dry_run,
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Wait for IP for {cfg.vm.name}',
+            why='Inspect the VM networking state until an IPv4 address is available.',
+            role='read',
+        ):
+            print(
+                wait_for_ip(
+                    cfg,
+                    timeout_s=args.timeout,
+                    dry_run=args.dry_run,
+                )
             )
-        )
         return 0
 
 
@@ -396,12 +402,13 @@ class VMStatusCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Inspect VM state via virsh.',
-            action='read',
-        )
-        print(vm_status(cfg))
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Inspect VM {cfg.vm.name}',
+            why='Read the live libvirt state and cached IP for this managed VM.',
+            role='read',
+        ):
+            print(vm_status(cfg))
         return 0
 
 
@@ -421,14 +428,15 @@ class VMDestroyCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=(
-                'Destroy/undefine VM domain and detach its libvirt disks/share mappings '
-                '(host shared directories are not deleted).'
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Destroy VM {cfg.vm.name}',
+            why=(
+                'Remove the managed VM domain while leaving host project directories intact.'
             ),
-        )
-        destroy_vm(cfg, dry_run=args.dry_run)
+            role='modify',
+        ):
+            destroy_vm(cfg, dry_run=args.dry_run)
         if not args.dry_run:
             reg = load_store(cfg_path)
             remove_vm(reg, cfg.vm.name, remove_attachments=True)
@@ -863,11 +871,6 @@ class VMAttachCLI(_BaseCommand):
         vm_running_probe = vm_out.ok
         vm_defined = vm_defined_probe
         if not vm_defined:
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose=f"Inspect VM '{cfg.vm.name}' share mappings and attach folder if needed.",
-                action='read',
-            )
             sudo_confirmed = True
             vm_out, vm_defined_probe = probe_vm_state(cfg, use_sudo=True)
             vm_running_probe = vm_out.ok
@@ -876,21 +879,12 @@ class VMAttachCLI(_BaseCommand):
             vm_running = vm_running_probe is True
             if attachment.mode == ATTACHMENT_MODE_SHARED:
                 if not sudo_confirmed:
-                    _confirm_sudo_block(
-                        yes=bool(args.yes),
-                        purpose=f"Inspect VM '{cfg.vm.name}' share mappings and attach folder if needed.",
-                        action='read',
-                    )
                     sudo_confirmed = True
                 mappings = vm_share_mappings(cfg)
                 attachment = drift_align_attachment_tag_with_mappings(
                     attachment, host_src, mappings
                 )
                 if not drift_attachment_has_mapping(cfg, attachment, mappings):
-                    _confirm_sudo_block(
-                        yes=bool(args.yes),
-                        purpose=f"Attach this folder to existing VM '{cfg.vm.name}'.",
-                    )
                     attach_vm_share(
                         cfg,
                         attachment.source_dir,
@@ -1028,11 +1022,6 @@ class VMDetachCLI(_BaseCommand):
         vm_out, vm_defined = probe_vm_state(cfg, use_sudo=False)
         vm_defined_probe = vm_defined
         if vm_defined_probe is False:
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose=f"Inspect VM '{cfg.vm.name}' share mappings for detach.",
-                action='read',
-            )
             vm_out, vm_defined = probe_vm_state(cfg, use_sudo=True)
             vm_defined_probe = vm_defined
         vm_running = bool(vm_out.ok)
@@ -1054,10 +1043,6 @@ class VMDetachCLI(_BaseCommand):
             and vm_defined_probe is True
             and att.tag
         ):
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose=f"Detach shared folder mapping from VM '{cfg.vm.name}'.",
-            )
             detached_share = detach_vm_share(
                 cfg, att.host_path, att.tag, dry_run=False
             )
@@ -1194,13 +1179,15 @@ class VMUpdateCLI(_BaseCommand):
             print(f'VM {cfg.vm.name} is already in sync with config.')
             return 0
         _print_vm_update_plan(cfg, drift)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Update VM '{cfg.vm.name}' to match config drift.",
-        )
-        changed, restart_required = _apply_vm_update(
-            cfg, drift, dry_run=bool(args.dry_run)
-        )
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Update VM {cfg.vm.name}',
+            why='Apply editable libvirt hardware changes so the VM matches config.',
+            role='modify',
+        ):
+            changed, restart_required = _apply_vm_update(
+                cfg, drift, dry_run=bool(args.dry_run)
+            )
         if changed and restart_required and vm_running:
             _maybe_restart_vm_after_update(
                 cfg,
@@ -1307,11 +1294,13 @@ def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
     do_install = ans in {'', 'y', 'yes'}
     if not do_install:
         raise RuntimeError('Aborted by user.')
-    _confirm_sudo_block(
-        yes=bool(yes),
-        purpose='Install host dependencies with apt/libvirt tooling.',
-    )
-    install_deps_debian(assume_yes=True)
+    mgr = CommandManager.current()
+    with mgr.intent(
+        'Prepare host dependencies',
+        why='Install the host packages required before VM lifecycle work can proceed.',
+        role='modify',
+    ):
+        install_deps_debian(assume_yes=True)
     missing_after, _ = check_commands()
     if missing_after:
         raise RuntimeError(
@@ -1460,18 +1449,15 @@ def _vm_update_drift(
         sudo=False,
         check=False,
         capture=True,
+        summary=f'Inspect VM definition {cfg.vm.name} for update planning',
     )
     if dominfo.code != 0:
-        _confirm_sudo_block(
-            yes=bool(yes),
-            purpose=f"Inspect VM '{cfg.vm.name}' state/config for update planning.",
-            action='read',
-        )
         dominfo = mgr.run(
             virsh_system_cmd('dominfo', cfg.vm.name),
             sudo=True,
             check=False,
             capture=True,
+            summary=f'Inspect VM definition {cfg.vm.name} with sudo for update planning',
         )
     if dominfo.code != 0:
         raise RuntimeError(
@@ -1515,11 +1501,6 @@ def _vm_update_drift(
         any('Could not read domain XML' in note for note in disk_notes)
         and not sudo_confirmed
     ):
-        _confirm_sudo_block(
-            yes=bool(yes),
-            purpose=f"Inspect VM '{cfg.vm.name}' disk/network details via libvirt.",
-            action='read',
-        )
         sudo_confirmed = True
         disk_path, disk_notes = _resolve_vm_disk_path(cfg, use_sudo=True)
     notes.extend(disk_notes)
@@ -1527,13 +1508,7 @@ def _vm_update_drift(
         disk_path, use_sudo=False
     )
     if cur_disk is None:
-        if not sudo_confirmed:
-            _confirm_sudo_block(
-                yes=bool(yes),
-                purpose=f"Inspect VM '{cfg.vm.name}' disk image size via qemu-img.",
-                action='read',
-            )
-            sudo_confirmed = True
+        sudo_confirmed = True
         cur_disk, qemu_img_err = _qemu_img_virtual_size_bytes(
             disk_path, use_sudo=True
         )
@@ -1549,11 +1524,6 @@ def _vm_update_drift(
             cfg, str(disk_path), use_sudo=bool(sudo_confirmed)
         )
         if domblk is None and not sudo_confirmed:
-            _confirm_sudo_block(
-                yes=bool(yes),
-                purpose=f"Inspect VM '{cfg.vm.name}' disk capacity via virsh domblkinfo.",
-                action='read',
-            )
             sudo_confirmed = True
             domblk = _virsh_domblk_capacity_bytes(
                 cfg, str(disk_path), use_sudo=True
@@ -1573,20 +1543,16 @@ def _vm_update_drift(
         sudo=False,
         check=False,
         capture=True,
+        summary=f'Inspect VM XML for {cfg.vm.name} network details',
     )
     if xml.code != 0:
-        if not sudo_confirmed:
-            _confirm_sudo_block(
-                yes=bool(yes),
-                purpose=f"Inspect VM '{cfg.vm.name}' network details via libvirt.",
-                action='read',
-            )
-            sudo_confirmed = True
+        sudo_confirmed = True
         xml = mgr.run(
             virsh_system_cmd('dumpxml', cfg.vm.name),
             sudo=True,
             check=False,
             capture=True,
+            summary=f'Inspect VM XML for {cfg.vm.name} network details with sudo',
         )
     if xml.code == 0:
         live_network = _parse_vm_network_from_dumpxml(xml.stdout)
@@ -2172,33 +2138,42 @@ def _detach_shared_root_host_bind(
     dry_run: bool,
 ) -> None:
     target = _shared_root_host_target(cfg, attachment.tag)
-    _confirm_sudo_block(
-        yes=bool(yes),
-        purpose=f"Detach host bind mount for shared-root attachment on VM '{cfg.vm.name}' (target={target}).",
-    )
     if dry_run:
         print(f'DRYRUN: would unmount shared-root host bind target {target}')
         return
     mgr = CommandManager.current()
-    mounted = (
+    with mgr.intent(
+        'Detach shared-root host bind mount',
+        why='Remove the host-side bind target used for the shared-root attachment.',
+        role='modify',
+    ):
+        mounted = (
+            mgr.run(
+                ['mountpoint', '-q', str(target)],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                summary=f'Inspect shared-root bind target {target}',
+            ).code
+            == 0
+        )
+        if mounted:
+            mgr.run(
+                ['umount', str(target)],
+                sudo=True,
+                check=True,
+                capture=True,
+                summary=f'Unmount shared-root bind target {target}',
+            )
         mgr.run(
-            ['mountpoint', '-q', str(target)],
+            ['rmdir', str(target)],
             sudo=True,
-            role='read',
+            role='modify',
             check=False,
             capture=True,
-        ).code
-        == 0
-    )
-    if mounted:
-        mgr.run(['umount', str(target)], sudo=True, check=True, capture=True)
-    mgr.run(
-        ['rmdir', str(target)],
-        sudo=True,
-        role='modify',
-        check=False,
-        capture=True,
-    )
+            summary=f'Remove shared-root bind target directory {target}',
+        )
 
 
 def _detach_shared_root_guest_bind(
@@ -2386,14 +2361,15 @@ def _resolve_ip_for_ssh_ops(
         ssh_ok = bool(probe_ssh_ready(cfg, ip).ok)
         if ssh_ok:
             return ip
-    _confirm_sudo_block(
-        yes=bool(yes),
-        purpose=purpose,
-        action='read',
-    )
-    ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
-    wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
-    return ip
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Resolve IP for VM {cfg.vm.name}',
+        why=purpose,
+        role='read',
+    ):
+        ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
+        wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
+        return ip
 
 
 def _record_attachment(
@@ -2600,11 +2576,6 @@ def _restore_saved_vm_attachments(
                 break
 
         if needs_privileged_probe:
-            _confirm_sudo_block(
-                yes=bool(yes),
-                purpose=f"Inspect and restore saved folder attachments for VM '{cfg.vm.name}'.",
-                action='read',
-            )
             mappings = vm_share_mappings(cfg, use_sudo=True)
 
     restored = 0
@@ -2661,10 +2632,6 @@ def _restore_saved_vm_attachments(
             att, Path(att.source_dir), mappings
         )
         if not drift_attachment_has_mapping(cfg, aligned, mappings):
-            _confirm_sudo_block(
-                yes=bool(yes),
-                purpose=f"Restore saved shared folder attachment on VM '{cfg.vm.name}'.",
-            )
             try:
                 attach_vm_share(
                     cfg,
@@ -2798,10 +2765,6 @@ def _reconcile_attached_vm(
     net_probe = probe_network(cfg, use_sudo=False).ok
     need_network_ensure = (net_probe is False) and (not cached_ssh_ok)
     if need_network_ensure:
-        _confirm_sudo_block(
-            yes=bool(policy.yes),
-            purpose=f"Ensure libvirt network '{cfg.network.name}'.",
-        )
         ensure_network(cfg, recreate=False, dry_run=policy.dry_run)
 
     need_firewall_apply = False
@@ -2812,18 +2775,9 @@ def _reconcile_attached_vm(
     ):
         fw_probe = probe_firewall(cfg, use_sudo=False).ok
         if fw_probe is None:
-            _confirm_sudo_block(
-                yes=bool(policy.yes),
-                purpose=f"Inspect firewall table '{cfg.firewall.table}'.",
-                action='read',
-            )
             fw_probe = probe_firewall(cfg, use_sudo=True).ok
         need_firewall_apply = fw_probe is not True
     if need_firewall_apply:
-        _confirm_sudo_block(
-            yes=bool(policy.yes),
-            purpose=f"Apply/update firewall table '{cfg.firewall.table}'.",
-        )
         apply_firewall(cfg, dry_run=policy.dry_run)
 
     recreate = False
@@ -2859,10 +2813,6 @@ def _reconcile_attached_vm(
         if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
             if not policy.dry_run:
                 _ensure_shared_root_parent_dir(cfg, dry_run=False)
-        _confirm_sudo_block(
-            yes=bool(policy.yes),
-            purpose=f"Create/start VM '{cfg.vm.name}' or update VM definition.",
-        )
         try:
             create_or_start_vm(
                 cfg,
@@ -2880,10 +2830,6 @@ def _reconcile_attached_vm(
                     'VM {} has stale virtiofs source {}; recreating VM definition',
                     cfg.vm.name,
                     missing_virtiofs_dir,
-                )
-                _confirm_sudo_block(
-                    yes=bool(policy.yes),
-                    purpose=f"Recreate VM '{cfg.vm.name}' to repair stale virtiofs mapping.",
                 )
                 create_or_start_vm(
                     cfg,
@@ -2962,12 +2908,6 @@ def _reconcile_attached_vm(
                         )
                     shared_root_host_side_ready = True
                 else:
-                    _confirm_sudo_block(
-                        yes=bool(policy.yes),
-                        purpose=(
-                            f"Attach this folder to existing VM '{cfg.vm.name}'."
-                        ),
-                    )
                     attach_vm_share(
                         cfg,
                         virtiofs_mapping[0],
@@ -3001,10 +2941,6 @@ def _reconcile_attached_vm(
                 )
 
     if recreate:
-        _confirm_sudo_block(
-            yes=bool(policy.yes),
-            purpose=f"Recreate VM '{cfg.vm.name}' to apply new share mapping.",
-        )
         create_or_start_vm(
             cfg,
             dry_run=policy.dry_run,
@@ -3171,11 +3107,6 @@ def _prepare_attached_session(
     else:
         ssh_ok = False
     if not ssh_ok:
-        _confirm_sudo_block(
-            yes=bool(yes),
-            purpose='Query VM network state via virsh to discover VM IP.',
-            action='read',
-        )
         ip = wait_for_ip(cfg, timeout_s=360, dry_run=False)
         wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
     if not ip:

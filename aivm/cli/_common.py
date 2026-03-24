@@ -11,7 +11,7 @@ from pathlib import Path
 import scriptconfig as scfg
 from loguru import logger
 
-from ..commands import CommandManager, IntentScope, PlanScope
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..detect import detect_ssh_identity
 from ..store import (
@@ -260,14 +260,12 @@ def _maybe_offer_create_ssh_identity(
 
     mgr = CommandManager.current()
     comment = f'aivm@{os.uname().nodename}'
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         'Create SSH identity',
         why='A VM SSH keypair is required for guest access and provisioning.',
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Create dedicated aivm SSH keypair',
             why=prompt_reason,
             approval_scope='aivm-ssh-identity',
@@ -469,37 +467,6 @@ def _record_vm(cfg: AgentVMConfig, store_file: Path | None = None) -> Path:
     upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
     upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
     return save_store(reg, target)
-
-
-def _confirm_sudo_block(
-    *,
-    yes: bool,
-    purpose: str,
-    action: str = 'modify',
-    preview_cmds: list[list[str]] | None = None,
-) -> None:
-    mode = str(action or 'modify').strip().lower()
-    if mode not in {'read', 'modify'}:
-        raise RuntimeError("--action must be either 'read' or 'modify'")
-    log.trace(
-        'Confirm sudo block yes={} action={} purpose={!r}',
-        yes,
-        mode,
-        purpose,
-    )
-    if os.geteuid() == 0:
-        return
-    auto_yes_read = mode == 'read' and _CURRENT_AUTO_APPROVE_READONLY_SUDO.get(
-        True
-    )
-    mgr = CommandManager.current()
-    eff_yes = bool(yes or _CURRENT_YES_SUDO.get(False) or auto_yes_read)
-    mgr.confirm_sudo_scope(
-        yes=eff_yes,
-        purpose=purpose,
-        role=mode,
-        preview_cmds=preview_cmds,
-    )
 
 
 def _confirm_external_file_update(

@@ -145,6 +145,7 @@ def probe_network(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
         sudo=use_sudo,
         check=False,
         capture=True,
+        summary=f'Inspect libvirt network {cfg.network.name}',
     )
     if info.code != 0:
         raw_detail = (info.stderr or info.stdout or '').strip()
@@ -187,6 +188,7 @@ def probe_firewall(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
         sudo=use_sudo,
         check=False,
         capture=True,
+        summary=f'Inspect nftables table inet {cfg.firewall.table}',
     )
     if res.code == 0:
         return ProbeOutcome(True, f'table inet {cfg.firewall.table} present')
@@ -208,6 +210,7 @@ def probe_vm_state(
         sudo=use_sudo,
         check=False,
         capture=True,
+        summary=f'Inspect VM definition {cfg.vm.name}',
     )
     if dom.code != 0:
         raw_detail = (dom.stderr or dom.stdout or '').strip()
@@ -234,6 +237,7 @@ def probe_vm_state(
         sudo=use_sudo,
         check=False,
         capture=True,
+        summary=f'Inspect VM runtime state {cfg.vm.name}',
     ).stdout.strip()
     return ProbeOutcome(
         'running' in state.lower(), f'{cfg.vm.name} state={state}'

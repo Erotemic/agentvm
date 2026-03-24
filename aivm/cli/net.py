@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import scriptconfig as scfg
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig, FirewallConfig, NetworkConfig
 from ..net import destroy_network, ensure_network, network_status
 from ..store import (
@@ -16,7 +17,6 @@ from ..store import (
 from ._common import (
     _BaseCommand,
     _cfg_path,
-    _confirm_sudo_block,
 )
 
 
@@ -39,11 +39,13 @@ class NetCreateCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Create/update libvirt network '{cfg.network.name}'.",
-        )
-        ensure_network(cfg, recreate=args.recreate, dry_run=args.dry_run)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Create/update network {cfg.network.name}',
+            why='Prepare the managed libvirt network used by aivm VMs.',
+            role='modify',
+        ):
+            ensure_network(cfg, recreate=args.recreate, dry_run=args.dry_run)
         return 0
 
 
@@ -60,12 +62,13 @@ class NetStatusCLI(_BaseCommand):
     def main(cls, argv=True, **kwargs):
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Inspect libvirt network status via virsh.',
-            action='read',
-        )
-        print(network_status(cfg))
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Inspect network {cfg.network.name}',
+            why='Read the live libvirt network state for the managed bridge.',
+            role='read',
+        ):
+            print(network_status(cfg))
         return 0
 
 
@@ -101,11 +104,13 @@ class NetDestroyCLI(_BaseCommand):
                 f"Network '{cfg.network.name}' is referenced by managed VMs: {names}. "
                 'Detach or destroy those VMs first, or use --force.'
             )
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Destroy/undefine libvirt network.',
-        )
-        destroy_network(cfg, dry_run=args.dry_run)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Destroy network {cfg.network.name}',
+            why='Remove the managed libvirt network when it is no longer needed.',
+            role='modify',
+        ):
+            destroy_network(cfg, dry_run=args.dry_run)
         if not args.dry_run:
             remove_network(reg, cfg.network.name)
             save_store(reg, _cfg_path(args.config))

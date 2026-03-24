@@ -1084,123 +1084,131 @@ def wait_for_ip(
     last_lease_count = 0
     last_domif_count = 0
     warned_about_possible_hang = False
-    while time.time() < deadline:
-        ip = ''
-        lease_text = ''
-        domif_text = ''
-        mgr = CommandManager.current()
-        if mac:
-            lease_text = mgr.run(
-                ['virsh', 'net-dhcp-leases', cfg.network.name],
-                sudo=True,
-                role='read',
-                check=False,
-                capture=True,
-            ).stdout
-            for line in lease_text.splitlines():
-                if mac.lower() in line.lower():
-                    parts = line.split()
-                    for part in parts:
-                        if '/' in part and '.' in part:
-                            ip = part.split('/')[0]
-                            break
-                if ip:
-                    break
-        if not ip:
-            domif_text = mgr.run(
-                ['virsh', 'domifaddr', cfg.vm.name],
-                sudo=True,
-                role='read',
-                check=False,
-                capture=True,
-            ).stdout
-            for line in domif_text.splitlines():
-                if 'ipv4' in line.lower():
-                    parts = line.split()
-                    for part in parts:
-                        if '/' in part and '.' in part:
-                            ip = part.split('/')[0]
-                            break
-                if ip:
-                    break
-        if ip:
-            log.info('Writing VM IP cache to {}', ip_file)
-            ip_file.write_text(ip + '\n', encoding='utf-8')
-            log.info('VM IP: {} (saved to {})', ip, ip_file)
-            return ip
-        if cached_ip:
-            ssh_probe = mgr.run(
-                [
-                    'ssh',
-                    *ssh_base_args(
-                        ident,
-                        batch_mode=True,
-                        connect_timeout=3,
-                        strict_host_key_checking='accept-new',
-                    ),
-                    f'{cfg.vm.user}@{cached_ip}',
-                    'true',
-                ],
-                sudo=False,
-                check=False,
-                capture=True,
-            )
-            if ssh_probe.code == 0:
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Wait for IP for {cfg.vm.name}',
+        why='Poll libvirt lease/interface state until the guest IP is discoverable.',
+        role='read',
+    ):
+        while time.time() < deadline:
+            ip = ''
+            lease_text = ''
+            domif_text = ''
+            if mac:
+                lease_text = mgr.run(
+                    ['virsh', 'net-dhcp-leases', cfg.network.name],
+                    sudo=True,
+                    role='read',
+                    check=False,
+                    capture=True,
+                    summary=f'Inspect DHCP leases for network {cfg.network.name}',
+                ).stdout
+                for line in lease_text.splitlines():
+                    if mac.lower() in line.lower():
+                        parts = line.split()
+                        for part in parts:
+                            if '/' in part and '.' in part:
+                                ip = part.split('/')[0]
+                                break
+                    if ip:
+                        break
+            if not ip:
+                domif_text = mgr.run(
+                    ['virsh', 'domifaddr', cfg.vm.name],
+                    sudo=True,
+                    role='read',
+                    check=False,
+                    capture=True,
+                    summary=f'Inspect interface addresses for VM {cfg.vm.name}',
+                ).stdout
+                for line in domif_text.splitlines():
+                    if 'ipv4' in line.lower():
+                        parts = line.split()
+                        for part in parts:
+                            if '/' in part and '.' in part:
+                                ip = part.split('/')[0]
+                                break
+                    if ip:
+                        break
+            if ip:
                 log.info('Writing VM IP cache to {}', ip_file)
-                ip_file.write_text(cached_ip + '\n', encoding='utf-8')
+                ip_file.write_text(ip + '\n', encoding='utf-8')
+                log.info('VM IP: {} (saved to {})', ip, ip_file)
+                return ip
+            if cached_ip:
+                ssh_probe = mgr.run(
+                    [
+                        'ssh',
+                        *ssh_base_args(
+                            ident,
+                            batch_mode=True,
+                            connect_timeout=3,
+                            strict_host_key_checking='accept-new',
+                        ),
+                        f'{cfg.vm.user}@{cached_ip}',
+                        'true',
+                    ],
+                    sudo=False,
+                    check=False,
+                    capture=True,
+                )
+                if ssh_probe.code == 0:
+                    log.info('Writing VM IP cache to {}', ip_file)
+                    ip_file.write_text(cached_ip + '\n', encoding='utf-8')
+                    log.info(
+                        'VM reachable via cached IP fallback: {} (saved to {})',
+                        cached_ip,
+                        ip_file,
+                    )
+                    return cached_ip
+            now = time.time()
+            if now >= next_status_at:
+                st = mgr.run(
+                    ['virsh', 'domstate', cfg.vm.name],
+                    sudo=True,
+                    role='read',
+                    check=False,
+                    capture=True,
+                    summary=f'Inspect runtime state for VM {cfg.vm.name}',
+                ).stdout.strip()
+                if st:
+                    last_state = st
+                lease_lines = [
+                    line
+                    for line in lease_text.splitlines()
+                    if line.strip() and not set(line.strip()) <= {'-'}
+                ]
+                last_lease_count = max(0, len(lease_lines) - 1)
+                domif_lines = [
+                    line
+                    for line in domif_text.splitlines()
+                    if line.strip() and not set(line.strip()) <= {'-'}
+                ]
+                last_domif_count = max(0, len(domif_lines) - 1)
+                elapsed = max(0, int(now - start))
                 log.info(
-                    'VM reachable via cached IP fallback: {} (saved to {})',
-                    cached_ip,
-                    ip_file,
-                )
-                return cached_ip
-        now = time.time()
-        if now >= next_status_at:
-            st = mgr.run(
-                ['virsh', 'domstate', cfg.vm.name],
-                sudo=True,
-                role='read',
-                check=False,
-                capture=True,
-            ).stdout.strip()
-            if st:
-                last_state = st
-            lease_lines = [
-                line
-                for line in lease_text.splitlines()
-                if line.strip() and not set(line.strip()) <= {'-'}
-            ]
-            last_lease_count = max(0, len(lease_lines) - 1)
-            domif_lines = [
-                line
-                for line in domif_text.splitlines()
-                if line.strip() and not set(line.strip()) <= {'-'}
-            ]
-            last_domif_count = max(0, len(domif_lines) - 1)
-            elapsed = max(0, int(now - start))
-            log.info(
-                'Waiting for VM network: vm={} elapsed={}s state={} leases_seen={} domifaddr_ipv4_rows={} mac={}',
-                cfg.vm.name,
-                elapsed,
-                last_state,
-                last_lease_count,
-                last_domif_count,
-                mac or 'unknown',
-            )
-            if elapsed >= 45 and not warned_about_possible_hang:
-                warned_about_possible_hang = True
-                log.warning(
-                    'VM network still not ready after {}s. VM may still be booting, or hung. '
-                    'Quick checks: `virsh console {}` and `aivm status --sudo --detail`.',
-                    elapsed,
+                    'Waiting for VM network: vm={} elapsed={}s state={} leases_seen={} domifaddr_ipv4_rows={} mac={}',
                     cfg.vm.name,
+                    elapsed,
+                    last_state,
+                    last_lease_count,
+                    last_domif_count,
+                    mac or 'unknown',
                 )
-            if 'running' not in last_state.lower():
-                raise RuntimeError(
-                    f'VM {cfg.vm.name} is not running while waiting for IP (state={last_state!r}).'
-                )
-            next_status_at = now + 10
-        time.sleep(2)
+                if elapsed >= 45 and not warned_about_possible_hang:
+                    warned_about_possible_hang = True
+                    log.warning(
+                        'VM network still not ready after {}s. VM may still be booting, or hung. '
+                        'Quick checks: `virsh console {}` and `aivm status --sudo --detail`.',
+                        elapsed,
+                        cfg.vm.name,
+                    )
+                if 'running' not in last_state.lower():
+                    raise RuntimeError(
+                        f'VM {cfg.vm.name} is not running while waiting for IP (state={last_state!r}).'
+                    )
+                next_status_at = now + 10
+            time.sleep(2)
     raise TimeoutError(
         'Timed out waiting for VM IP '
         f'(vm={cfg.vm.name}, state={last_state!r}, leases_seen={last_lease_count}, domifaddr_ipv4_rows={last_domif_count}, cached_ip={cached_ip or "none"}). '
@@ -1213,33 +1221,48 @@ def destroy_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     if dry_run:
         log.info('DRYRUN: virsh destroy/undefine {}', name)
         return
-    _destroy_and_undefine_vm(name)
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Destroy VM {name}',
+        why='Remove the libvirt domain and its related managed definition state.',
+        role='modify',
+    ):
+        _destroy_and_undefine_vm(name)
     log.info('VM removed: {}', name)
 
 
 def vm_status(cfg: AgentVMConfig) -> str:
     name = cfg.vm.name
     mgr = CommandManager.current()
-    dom = mgr.run(
-        ['virsh', 'dominfo', name],
-        sudo=True,
+    with mgr.intent(
+        f'Inspect VM {name}',
+        why='Read the live libvirt domain details and cached IP for this VM.',
         role='read',
-        check=False,
-        capture=True,
-    )
-    if dom.code != 0:
-        return f'VM not found: {name}\n'
-    state = mgr.run(
-        ['virsh', 'domstate', name],
-        sudo=True,
-        role='read',
-        check=False,
-        capture=True,
-    ).stdout.strip()
-    ip = get_ip_cached(cfg) or ''
-    return (
-        dom.stdout + f'\nstate={state}\n' + (f'cached_ip={ip}\n' if ip else '')
-    )
+    ):
+        dom = mgr.run(
+            ['virsh', 'dominfo', name],
+            sudo=True,
+            role='read',
+            check=False,
+            capture=True,
+            summary=f'Inspect VM definition {name}',
+        )
+        if dom.code != 0:
+            return f'VM not found: {name}\n'
+        state = mgr.run(
+            ['virsh', 'domstate', name],
+            sudo=True,
+            role='read',
+            check=False,
+            capture=True,
+            summary=f'Inspect VM runtime state {name}',
+        ).stdout.strip()
+        ip = get_ip_cached(cfg) or ''
+        return (
+            dom.stdout
+            + f'\nstate={state}\n'
+            + (f'cached_ip={ip}\n' if ip else '')
+        )
 
 
 def ssh_config(cfg: AgentVMConfig) -> str:
