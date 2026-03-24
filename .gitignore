@@ -96,3 +96,6 @@ pip-wheel-metadata/
 
 wheelhouse
 .aivm-dir.toml
+.vscode
+.venv
+.local
