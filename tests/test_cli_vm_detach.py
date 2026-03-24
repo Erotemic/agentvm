@@ -47,7 +47,7 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
     saved: list[Path] = []
     monkeypatch.setattr(
         'aivm.cli.vm.save_store',
-        lambda reg, path: (saved.append(path) or path),
+        lambda reg, path, **kwargs: (saved.append(path) or path),
     )
 
     rc = VMDetachCLI.main(
@@ -98,7 +98,7 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
     saved: list[Path] = []
     monkeypatch.setattr(
         'aivm.cli.vm.save_store',
-        lambda reg, path: (saved.append(path) or path),
+        lambda reg, path, **kwargs: (saved.append(path) or path),
     )
 
     rc = VMDetachCLI.main(
@@ -166,7 +166,7 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     saved: list[Path] = []
     monkeypatch.setattr(
         'aivm.cli.vm.save_store',
-        lambda reg, path: (saved.append(path) or path),
+        lambda reg, path, **kwargs: (saved.append(path) or path),
     )
 
     rc = VMDetachCLI.main(

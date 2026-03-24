@@ -807,6 +807,55 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
     assert all(not line.startswith('mount --bind') for line in command_text)
 
 
+def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-root-not-mounted'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    source_dir = tmp_path / 'source'
+    source_dir.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED_ROOT,
+        source_dir=str(source_dir.resolve()),
+        guest_dst='/workspace/source',
+        tag='hostcode-source',
+    )
+
+    _activate_manager(monkeypatch)
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        parts = [str(part) for part in cmd]
+        normalized = parts[2:] if parts[:2] == ['sudo', '-n'] else parts
+        calls.append(normalized)
+        if normalized[:2] == ['findmnt', '-n']:
+            return _Proc(0, '/dev/nvme0n1p1\n', '')
+        if normalized[:2] == ['mkdir', '-p']:
+            return _Proc(0, '', '')
+        if normalized[:2] == ['bash', '-lc']:
+            script = normalized[2]
+            assert '"not mounted"' in script
+            assert 'mount --bind' in script
+            return _Proc(0, '', '')
+        raise AssertionError(f'unexpected command: {cmd}')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    target = _ensure_shared_root_host_bind(
+        cfg,
+        attachment,
+        yes=True,
+        dry_run=False,
+    )
+
+    assert target.name == attachment.tag
+    command_text = [' '.join(c) for c in calls]
+    assert any(line.startswith('bash -lc ') for line in command_text)
+
+
 def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1383,3 +1432,39 @@ def test_record_attachment_skips_save_when_unchanged(
     )
     assert out == cfg_path
     assert save_calls == []
+
+
+def test_record_attachment_passes_reason_to_save_store(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'repo'
+    host_src.mkdir()
+
+    save_kwargs: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm.save_store',
+        lambda *a, **k: save_kwargs.append(dict(k)) or cfg_path,
+    )
+
+    out = _record_attachment(
+        cfg,
+        cfg_path,
+        host_src=host_src,
+        mode='git',
+        access=AttachmentAccess.RW,
+        guest_dst='/workspace/repo',
+        tag='',
+    )
+
+    assert out == cfg_path
+    assert save_kwargs == [
+        {
+            'reason': (
+                f'Persist attachment record for {host_src} on VM vm-git '
+                '(mode=git, access=rw, guest_dst=/workspace/repo).'
+            )
+        }
+    ]

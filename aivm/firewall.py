@@ -41,15 +41,34 @@ def _effective_bridge_and_gateway(cfg: AgentVMConfig) -> tuple[str, str]:
     bridge = cfg.network.bridge
     gateway = cfg.network.gateway_ip
     mgr = CommandManager.current()
-    res = mgr.submit(
-        virsh_system_cmd('net-dumpxml', cfg.network.name),
-        sudo=True,
-        role='read',
-        check=False,
-        capture=True,
-        eager=True,
-        summary=f'Read live libvirt XML for network {cfg.network.name}',
-    )
+    if mgr.current_plan() is None:
+        with mgr.step(
+            'Inspect live libvirt network metadata',
+            why=(
+                'Read the current libvirt network XML so firewall rules use '
+                'the live bridge and gateway even if config is stale.'
+            ),
+            approval_scope=f'network-xml:{cfg.network.name}',
+        ):
+            res = mgr.submit(
+                virsh_system_cmd('net-dumpxml', cfg.network.name),
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                eager=True,
+                summary=f'Read live libvirt XML for network {cfg.network.name}',
+            )
+    else:
+        res = mgr.submit(
+            virsh_system_cmd('net-dumpxml', cfg.network.name),
+            sudo=True,
+            role='read',
+            check=False,
+            capture=True,
+            eager=True,
+            summary=f'Read live libvirt XML for network {cfg.network.name}',
+        )
     if res.code != 0 or not (res.stdout or '').strip():
         return bridge, gateway
     try:

@@ -183,13 +183,33 @@ def probe_firewall(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
     """Check whether the expected nftables table exists."""
     if not cfg.firewall.enabled:
         return ProbeOutcome(None, 'disabled in config')
-    res = CommandManager.current().run(
-        ['nft', 'list', 'table', 'inet', cfg.firewall.table],
-        sudo=use_sudo,
-        check=False,
-        capture=True,
-        summary=f'Inspect nftables table inet {cfg.firewall.table}',
-    )
+    mgr = CommandManager.current()
+    if use_sudo and mgr.current_plan() is None:
+        with mgr.step(
+            'Inspect firewall status',
+            why=(
+                'Check whether the managed nftables table already exists '
+                'before deciding whether firewall repair is needed.'
+            ),
+            approval_scope=f'firewall-probe:{cfg.firewall.table}',
+        ):
+            res = mgr.submit(
+                ['nft', 'list', 'table', 'inet', cfg.firewall.table],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                eager=True,
+                summary=f'Inspect nftables table inet {cfg.firewall.table}',
+            ).result()
+    else:
+        res = mgr.run(
+            ['nft', 'list', 'table', 'inet', cfg.firewall.table],
+            sudo=use_sudo,
+            check=False,
+            capture=True,
+            summary=f'Inspect nftables table inet {cfg.firewall.table}',
+        )
     if res.code == 0:
         return ProbeOutcome(True, f'table inet {cfg.firewall.table} present')
     detail = (res.stderr or res.stdout or '').strip().lower()

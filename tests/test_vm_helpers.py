@@ -51,8 +51,45 @@ def test_mac_for_vm_parsing(monkeypatch) -> None:
         'aivm.vm.lifecycle.CommandManager.run',
         lambda self, *a, **k: CmdResult(0, stdout, ''),
     )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.CommandManager.current_plan',
+        lambda self: object(),
+    )
     cfg = AgentVMConfig()
     assert _mac_for_vm(cfg) == '52:54:00:12:34:56'
+
+
+def test_mac_for_vm_uses_step_when_ungrouped(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-mac'
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
+
+    step_titles: list[str] = []
+    orig_step = CommandManager.step
+
+    def track_step(self, title, **kwargs):
+        step_titles.append(title)
+        return orig_step(self, title, **kwargs)
+
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.step', track_step)
+
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(
+            0,
+            (
+                ' Interface   Type      Source     Model    MAC\n'
+                '---------------------------------------------------------------\n'
+                ' vnet0       network   default    virtio   52:54:00:12:34:56\n'
+            ),
+            '',
+        ),
+    )
+
+    assert _mac_for_vm(cfg) == '52:54:00:12:34:56'
+    assert step_titles == ['Inspect VM network interfaces']
 
 
 def test_get_ip_cached(tmp_path: Path) -> None:
@@ -370,6 +407,61 @@ def test_create_vm_prefers_uefi_even_when_host_looks_nested(
     assert 'none' in virt_calls[0]
     assert '--boot' in virt_calls[0]
     assert 'uefi,loader.secure=no,bios.useserial=on' in virt_calls[0]
+
+
+def test_create_or_start_existing_vm_uses_step_for_state_and_start(
+    monkeypatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-existing'
+    monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: True)
+
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
+
+    step_titles: list[str] = []
+    orig_step = CommandManager.step
+
+    def track_step(self, title, **kwargs):
+        step_titles.append(title)
+        return orig_step(self, title, **kwargs)
+
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.step', track_step)
+
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        parts = list(cmd)
+        calls.append(parts)
+        normalized = parts
+        if normalized[:2] == ['sudo', '-n']:
+            normalized = normalized[2:]
+        elif normalized[:1] == ['sudo']:
+            normalized = normalized[1:]
+        if normalized[:2] == ['virsh', 'domstate']:
+            return _Proc(0, 'shut off\n', '')
+        if normalized[:2] == ['virsh', 'start']:
+            return _Proc(0, '', '')
+        raise AssertionError(f'unexpected command: {cmd!r}')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+    create_or_start_vm(cfg, dry_run=False, recreate=False)
+
+    assert step_titles == ['Ensure existing VM is running']
+    normalized_calls = []
+    for call in calls:
+        if call[:2] == ['sudo', '-n']:
+            normalized_calls.append(call[2:])
+        elif call[:1] == ['sudo']:
+            normalized_calls.append(call[1:])
+        else:
+            normalized_calls.append(call)
+    assert normalized_calls == [
+        ['virsh', 'domstate', 'vm-existing'],
+        ['virsh', 'start', 'vm-existing'],
+    ]
 
 
 def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(

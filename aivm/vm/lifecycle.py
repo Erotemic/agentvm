@@ -118,16 +118,34 @@ def _sudo_file_exists(path: Path) -> bool:
 
 def _vm_defined(name: str) -> bool:
     mgr = CommandManager.current()
-    return (
-        mgr.run(
+    if mgr.current_plan() is None:
+        with mgr.step(
+            'Inspect VM definition',
+            why=(
+                'Check whether the libvirt domain already exists before '
+                'deciding whether create, recreate, or cleanup work is needed.'
+            ),
+            approval_scope=f'vm-defined:{name}',
+        ):
+            res = mgr.submit(
+                ['virsh', 'dominfo', name],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                eager=True,
+                summary=f'Inspect VM definition {name}',
+            ).result()
+    else:
+        res = mgr.run(
             ['virsh', 'dominfo', name],
             sudo=True,
             role='read',
             check=False,
             capture=True,
-        ).code
-        == 0
-    )
+            summary=f'Inspect VM definition {name}',
+        )
+    return res.code == 0
 
 
 def _submit_qemu_dir_prepare(
@@ -873,168 +891,215 @@ def create_or_start_vm(
     )
     log.debug('Creating or starting VM {}', cfg.vm.name)
     cfg = cfg.expanded_paths()
+    mgr = CommandManager.current()
 
-    if vm_exists(cfg, dry_run=dry_run):
-        if not recreate:
-            mgr = CommandManager.current()
-            st = (
-                mgr.run(
-                    ['virsh', 'domstate', cfg.vm.name],
-                    sudo=True,
-                    role='read',
-                    check=False,
-                    capture=True,
-                )
-                .stdout.strip()
-                .lower()
-            )
-            if 'running' in st:
-                log.info('VM already running: {}', cfg.vm.name)
+    with mgr.intent(
+        f'Ensure VM {cfg.vm.name} exists and is running',
+        why=(
+            'Reuse an existing VM when possible, otherwise create or '
+            'recreate the libvirt domain and boot it for the requested task.'
+        ),
+        role='modify',
+    ):
+        if vm_exists(cfg, dry_run=dry_run):
+            if not recreate:
+                with mgr.step(
+                    'Ensure existing VM is running',
+                    why=(
+                        'Inspect the current domain state and start the '
+                        'existing VM only if it is defined but stopped.'
+                    ),
+                    approval_scope=f'vm-start:{cfg.vm.name}',
+                ):
+                    st = (
+                        mgr.submit(
+                            ['virsh', 'domstate', cfg.vm.name],
+                            sudo=True,
+                            role='read',
+                            check=False,
+                            capture=True,
+                            eager=True,
+                            summary=f'Inspect runtime state for VM {cfg.vm.name}',
+                        )
+                        .stdout.strip()
+                        .lower()
+                    )
+                    if 'running' in st:
+                        log.info('VM already running: {}', cfg.vm.name)
+                        return
+                    if dry_run:
+                        log.info('DRYRUN: virsh start {}', cfg.vm.name)
+                        return
+                    mgr.submit(
+                        ['virsh', 'start', cfg.vm.name],
+                        sudo=True,
+                        role='modify',
+                        check=True,
+                        capture=True,
+                        summary=f'Start existing VM {cfg.vm.name}',
+                    )
+                log.info('VM started: {}', cfg.vm.name)
                 return
             if dry_run:
-                log.info('DRYRUN: virsh start {}', cfg.vm.name)
-                return
-            mgr.run(
-                ['virsh', 'start', cfg.vm.name],
+                log.info('DRYRUN: virsh destroy/undefine {}', cfg.vm.name)
+            else:
+                _destroy_and_undefine_vm(cfg.vm.name)
+
+        base_img = fetch_image(cfg, dry_run=dry_run)
+        try:
+            ci = _write_cloud_init(cfg, dry_run=dry_run)
+        except Exception as ex:
+            if _is_missing_command_error(ex):
+                missing = _failed_command_name(ex)
+                hint = (
+                    f'Missing required host command: `{missing}`. '
+                    if missing
+                    else ''
+                )
+                raise RuntimeError(
+                    f'Failed to build cloud-init artifacts for VM `{cfg.vm.name}`. '
+                    f'{hint}Run `aivm host install_deps` and retry.'
+                ) from ex
+            raise
+
+        vm_disk = _ensure_disk(
+            cfg, base_img, dry_run=dry_run, recreate=recreate
+        )
+        seed_iso = ci['seed_iso']
+
+        # Always define VMs with shared memory backing so virtiofs can be attached
+        # later without requiring a VM recreate.
+        extra = ['--memorybacking', 'source.type=memfd,access.mode=shared']
+        source_dir = str(share_source_dir or '').strip()
+        tag = str(share_tag or '').strip()
+        if source_dir:
+            if not tag:
+                raise RuntimeError(
+                    'share_tag is required when share_source_dir is provided.'
+                )
+            extra += [
+                '--filesystem',
+                f'source={source_dir},target={tag},driver.type=virtiofs',
+            ]
+
+        # These VMs are for agent development workflows, not secure-boot or TPM
+        # validation. Keep UEFI for modern Ubuntu boot, but make the firmware
+        # profile explicit so nested hosts do not inherit heavier defaults that
+        # have proven flaky and so serial console output is more useful.
+        boot_opts = 'uefi,loader.secure=no,bios.useserial=on'
+        cmd = [
+            'virt-install',
+            '--name',
+            cfg.vm.name,
+            '--memory',
+            str(cfg.vm.ram_mb),
+            '--vcpus',
+            str(cfg.vm.cpus),
+            '--cpu',
+            'host-passthrough',
+            '--import',
+            '--os-variant',
+            'ubuntu24.04',
+            '--disk',
+            f'path={vm_disk},format=qcow2,bus=virtio',
+            '--disk',
+            f'path={seed_iso},device=cdrom',
+            '--network',
+            f'network={cfg.network.name},model=virtio',
+            '--graphics',
+            'none',
+            '--noautoconsole',
+            '--rng',
+            '/dev/urandom',
+            '--tpm',
+            'none',
+            *extra,
+        ]
+        # Prefer UEFI consistently, but do not let libvirt auto-enable secure-boot
+        # related firmware features for general-purpose development guests.
+        cmd += ['--boot', boot_opts]
+        if dry_run:
+            log.info('DRYRUN: {}', ' '.join(cmd))
+            return
+        try:
+            first = CommandManager.current().run(
+                cmd,
                 sudo=True,
-                check=True,
+                role='modify',
+                check=False,
                 capture=True,
             )
-            log.info('VM started: {}', cfg.vm.name)
-            return
-        if dry_run:
-            log.info('DRYRUN: virsh destroy/undefine {}', cfg.vm.name)
-        else:
-            _destroy_and_undefine_vm(cfg.vm.name)
-
-    base_img = fetch_image(cfg, dry_run=dry_run)
-    try:
-        ci = _write_cloud_init(cfg, dry_run=dry_run)
-    except Exception as ex:
-        if _is_missing_command_error(ex):
-            missing = _failed_command_name(ex)
-            hint = (
-                f'Missing required host command: `{missing}`. '
-                if missing
-                else ''
-            )
-            raise RuntimeError(
-                f'Failed to build cloud-init artifacts for VM `{cfg.vm.name}`. '
-                f'{hint}Run `aivm host install_deps` and retry.'
-            ) from ex
-        raise
-
-    vm_disk = _ensure_disk(cfg, base_img, dry_run=dry_run, recreate=recreate)
-    seed_iso = ci['seed_iso']
-
-    # Always define VMs with shared memory backing so virtiofs can be attached
-    # later without requiring a VM recreate.
-    extra = ['--memorybacking', 'source.type=memfd,access.mode=shared']
-    source_dir = str(share_source_dir or '').strip()
-    tag = str(share_tag or '').strip()
-    if source_dir:
-        if not tag:
-            raise RuntimeError(
-                'share_tag is required when share_source_dir is provided.'
-            )
-        extra += [
-            '--filesystem',
-            f'source={source_dir},target={tag},driver.type=virtiofs',
-        ]
-
-    # These VMs are for agent development workflows, not secure-boot or TPM
-    # validation. Keep UEFI for modern Ubuntu boot, but make the firmware
-    # profile explicit so nested hosts do not inherit heavier defaults that
-    # have proven flaky and so serial console output is more useful.
-    boot_opts = 'uefi,loader.secure=no,bios.useserial=on'
-    cmd = [
-        'virt-install',
-        '--name',
-        cfg.vm.name,
-        '--memory',
-        str(cfg.vm.ram_mb),
-        '--vcpus',
-        str(cfg.vm.cpus),
-        '--cpu',
-        'host-passthrough',
-        '--import',
-        '--os-variant',
-        'ubuntu24.04',
-        '--disk',
-        f'path={vm_disk},format=qcow2,bus=virtio',
-        '--disk',
-        f'path={seed_iso},device=cdrom',
-        '--network',
-        f'network={cfg.network.name},model=virtio',
-        '--graphics',
-        'none',
-        '--noautoconsole',
-        '--rng',
-        '/dev/urandom',
-        '--tpm',
-        'none',
-        *extra,
-    ]
-    # Prefer UEFI consistently, but do not let libvirt auto-enable secure-boot
-    # related firmware features for general-purpose development guests.
-    cmd += ['--boot', boot_opts]
-    if dry_run:
-        log.info('DRYRUN: {}', ' '.join(cmd))
-        return
-    try:
-        first = CommandManager.current().run(
-            cmd,
-            sudo=True,
-            role='modify',
-            check=False,
-            capture=True,
-        )
-    except CmdError as ex:
-        # Some call sites/tests may still raise even when check=False.
-        first = ex.result
-    if first.code != 0:
-        err = CmdError(cmd, first)
-        if source_dir and _is_missing_virtiofsd_error(err):
-            raise RuntimeError(_virtiofsd_failure_message(source_dir)) from err
-        if _is_guest_memory_allocation_error(err):
-            raise RuntimeError(_memory_allocation_failure_message(cfg)) from err
-        if _is_missing_uefi_firmware_error(err):
-            log.warning(
-                'UEFI firmware not available on host. Retrying VM create with non-UEFI boot.'
-            )
-            cmd_no_uefi = list(cmd)
-            try:
-                idx = cmd_no_uefi.index('--boot')
-                del cmd_no_uefi[idx : idx + 2]
-            except ValueError:
-                pass
-            try:
-                CommandManager.current().run(
-                    cmd_no_uefi, sudo=True, check=True, capture=True
+        except CmdError as ex:
+            # Some call sites/tests may still raise even when check=False.
+            first = ex.result
+        if first.code != 0:
+            err = CmdError(cmd, first)
+            if source_dir and _is_missing_virtiofsd_error(err):
+                raise RuntimeError(
+                    _virtiofsd_failure_message(source_dir)
+                ) from err
+            if _is_guest_memory_allocation_error(err):
+                raise RuntimeError(
+                    _memory_allocation_failure_message(cfg)
+                ) from err
+            if _is_missing_uefi_firmware_error(err):
+                log.warning(
+                    'UEFI firmware not available on host. Retrying VM create with non-UEFI boot.'
                 )
-            except CmdError as ex2:
-                if source_dir and _is_missing_virtiofsd_error(ex2):
-                    raise RuntimeError(
-                        _virtiofsd_failure_message(source_dir)
-                    ) from ex2
-                if _is_guest_memory_allocation_error(ex2):
-                    raise RuntimeError(
-                        _memory_allocation_failure_message(cfg)
-                    ) from ex2
-                raise
-        else:
-            raise err
-    log.info('VM created: {}', cfg.vm.name)
+                cmd_no_uefi = list(cmd)
+                try:
+                    idx = cmd_no_uefi.index('--boot')
+                    del cmd_no_uefi[idx : idx + 2]
+                except ValueError:
+                    pass
+                try:
+                    CommandManager.current().run(
+                        cmd_no_uefi, sudo=True, check=True, capture=True
+                    )
+                except CmdError as ex2:
+                    if source_dir and _is_missing_virtiofsd_error(ex2):
+                        raise RuntimeError(
+                            _virtiofsd_failure_message(source_dir)
+                        ) from ex2
+                    if _is_guest_memory_allocation_error(ex2):
+                        raise RuntimeError(
+                            _memory_allocation_failure_message(cfg)
+                        ) from ex2
+                    raise
+            else:
+                raise err
+        log.info('VM created: {}', cfg.vm.name)
 
 
 def _mac_for_vm(cfg: AgentVMConfig) -> str:
-    res = CommandManager.current().run(
-        ['virsh', 'domiflist', cfg.vm.name],
-        sudo=True,
-        role='read',
-        check=False,
-        capture=True,
-    )
+    mgr = CommandManager.current()
+    if mgr.current_plan() is None:
+        with mgr.step(
+            'Inspect VM network interfaces',
+            why=(
+                'Read the VM interface list so later IP discovery can match '
+                'DHCP leases against the guest MAC address.'
+            ),
+            approval_scope=f'vm-network-interfaces:{cfg.vm.name}',
+        ):
+            res = mgr.submit(
+                ['virsh', 'domiflist', cfg.vm.name],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                eager=True,
+                summary=f'Inspect network interfaces for VM {cfg.vm.name}',
+            ).result()
+    else:
+        res = mgr.run(
+            ['virsh', 'domiflist', cfg.vm.name],
+            sudo=True,
+            role='read',
+            check=False,
+            capture=True,
+            summary=f'Inspect network interfaces for VM {cfg.vm.name}',
+        )
     for line in res.stdout.splitlines():
         if (
             'network' in line.lower()

@@ -184,7 +184,9 @@ def load_store(path: Path | None = None) -> Store:
     return reg
 
 
-def save_store(reg: Store, path: Path | None = None) -> Path:
+def save_store(
+    reg: Store, path: Path | None = None, *, reason: str = ''
+) -> Path:
     fpath = path or store_path()
     fpath.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [f'schema_version = {reg.schema_version}']
@@ -267,6 +269,8 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
         lines.append('')
 
     log.info('Writing config store to {}', fpath)
+    if reason.strip():
+        log.info('  Reason: {}', reason.strip())
     fpath.write_text('\n'.join(lines).rstrip() + '\n', encoding='utf-8')
     return fpath
 

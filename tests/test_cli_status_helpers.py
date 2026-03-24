@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.status import (
     ProbeOutcome,
@@ -60,9 +61,47 @@ def test_check_firewall_branches(monkeypatch) -> None:
         'aivm.status.CommandManager.run',
         lambda self, *a, **k: CmdResult(0, '', ''),
     )
+    monkeypatch.setattr(
+        'aivm.status.CommandManager.current_plan',
+        lambda self: object(),
+    )
     out = probe_firewall(cfg, use_sudo=True)
     assert out.ok is True
     assert 'present' in out.detail
+
+
+def test_probe_firewall_privileged_probe_uses_step(monkeypatch) -> None:
+    cfg = AgentVMConfig()
+    cfg.firewall.enabled = True
+    cfg.firewall.table = 'aivm_sandbox'
+
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
+
+    step_titles: list[str] = []
+    orig_step = CommandManager.step
+
+    def track_step(self, title, **kwargs):
+        step_titles.append(title)
+        return orig_step(self, title, **kwargs)
+
+    monkeypatch.setattr('aivm.status.CommandManager.step', track_step)
+
+    class _Proc:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: _Proc(0, '', ''),
+    )
+
+    out = probe_firewall(cfg, use_sudo=True)
+    assert out.ok is True
+    assert step_titles == ['Inspect firewall status']
 
 
 def test_check_vm_state_branches(monkeypatch) -> None:

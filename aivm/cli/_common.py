@@ -442,7 +442,14 @@ def _load_cfg_with_path(
     if changed and persist_runtime_defaults:
         upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
         upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
-        save_store(reg, store_path)
+        save_store(
+            reg,
+            store_path,
+            reason=(
+                f'Persist hydrated runtime defaults discovered while loading '
+                f'VM {cfg.vm.name}.'
+            ),
+        )
     return cfg, store_path
 
 
@@ -465,12 +472,18 @@ def _resolve_cfg_fallback(
     )
 
 
-def _record_vm(cfg: AgentVMConfig, store_file: Path | None = None) -> Path:
+def _record_vm(
+    cfg: AgentVMConfig,
+    store_file: Path | None = None,
+    *,
+    reason: str = '',
+) -> Path:
     target = store_file or store_path()
     reg = load_store(target)
     upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
     upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
-    return save_store(reg, target)
+    why = reason.strip() or f'Persist managed VM record for {cfg.vm.name}.'
+    return save_store(reg, target, reason=why)
 
 def _resolve_cfg_for_code(
     *,

@@ -263,7 +263,14 @@ class VMCreateCLI(_BaseCommand):
                 set_active = _prompt_set_created_vm_default(cfg.vm.name)
             if not set_active:
                 reg.active_vm = prev_active_vm
-            save_store(reg, cfg_path)
+            save_store(
+                reg,
+                cfg_path,
+                reason=(
+                    f'Persist created VM record for {cfg.vm.name} and update '
+                    'the active default selection.'
+                ),
+            )
         return 0
 
 
@@ -439,7 +446,14 @@ class VMDestroyCLI(_BaseCommand):
         if not args.dry_run:
             reg = load_store(cfg_path)
             remove_vm(reg, cfg.vm.name, remove_attachments=True)
-            save_store(reg, cfg_path)
+            save_store(
+                reg,
+                cfg_path,
+                reason=(
+                    f'Remove VM record for {cfg.vm.name} after destroying the '
+                    'managed libvirt domain.'
+                ),
+            )
             net_name = (cfg.network.name or '').strip()
             if net_name:
                 net = find_network(reg, net_name)
@@ -862,7 +876,14 @@ class VMAttachCLI(_BaseCommand):
             )
             return 0
 
-        _record_vm(cfg, cfg_path)
+        _record_vm(
+            cfg,
+            cfg_path,
+            reason=(
+                f'Persist resolved VM/network metadata before attaching '
+                f'{host_src} to {cfg.vm.name}.'
+            ),
+        )
         vm_running = False
         vm_defined = False
         sudo_confirmed = False
@@ -929,7 +950,14 @@ class VMAttachCLI(_BaseCommand):
                     'the running VM guest attachment state.'
                 ),
             ):
-                _record_vm(cfg, cfg_path)
+                _record_vm(
+                    cfg,
+                    cfg_path,
+                    reason=(
+                        f'Persist newly generated SSH identity paths for VM '
+                        f'{cfg.vm.name} before guest attachment reconciliation.'
+                    ),
+                )
             log.info(
                 'VM {} is running; reconciling attachment in guest: {} (mode={} access={})',
                 cfg.vm.name,
@@ -1097,7 +1125,14 @@ class VMDetachCLI(_BaseCommand):
             reg, host_path=host_src, vm_name=cfg.vm.name
         )
         if removed:
-            save_store(reg, cfg_path)
+            save_store(
+                reg,
+                cfg_path,
+                reason=(
+                    f'Remove attachment record for {host_src} from VM '
+                    f'{cfg.vm.name}.'
+                ),
+            )
 
         print(f'Detached {host_src} from VM {cfg.vm.name} ({mode} mode)')
         if mode == ATTACHMENT_MODE_SHARED and vm_defined_probe is True:
@@ -1888,8 +1923,12 @@ def _ensure_shared_root_host_bind(
                 'if [ -n "$msg" ]; then '
                 'msg_lc="$(printf "%s" "$msg" | tr "[:upper:]" "[:lower:]")"; '
                 'case "$msg_lc" in '
-                '*"target is busy"*|*"transport endpoint is not connected"*) '
-                f'umount -l {shlex.quote(str(target))} ;; '
+                '*"not mounted"*|*"target is busy"*|*"transport endpoint is not connected"*) '
+                'if printf "%s" "$msg_lc" | grep -q "not mounted"; then '
+                ':; '
+                'else '
+                f'umount -l {shlex.quote(str(target))}; '
+                'fi ;; '
                 '*) printf "%s\\n" "$msg" >&2; exit 1 ;; '
                 'esac; '
                 'fi; '
@@ -2404,7 +2443,14 @@ def _record_attachment(
             cfg_path,
         )
         return cfg_path
-    return save_store(reg, cfg_path)
+    return save_store(
+        reg,
+        cfg_path,
+        reason=(
+            f'Persist attachment record for {host_src} on VM {cfg.vm.name} '
+            f'(mode={mode}, access={access}, guest_dst={guest_dst}).'
+        ),
+    )
 
 
 def _resolve_attachment(
@@ -2753,97 +2799,51 @@ def _reconcile_attached_vm(
     preserve an existing running VM when safe, and only escalates to recreate or
     privileged host changes when required for correctness.
     """
-    cached_ip = get_ip_cached(cfg) if not policy.dry_run else None
-    cached_ssh_ok = False
-    if cached_ip:
-        cached_ssh_ok = bool(probe_ssh_ready(cfg, cached_ip).ok)
-    vm_running_probe = (
-        _probe_vm_running_nonsudo(cfg.vm.name) if not policy.dry_run else None
-    )
-
-    net_probe = probe_network(cfg, use_sudo=False).ok
-    need_network_ensure = (net_probe is False) and (not cached_ssh_ok)
-    if need_network_ensure:
-        ensure_network(cfg, recreate=False, dry_run=policy.dry_run)
-
-    need_firewall_apply = False
-    if (
-        cfg.firewall.enabled
-        and policy.ensure_firewall_opt
-        and (not cached_ssh_ok)
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Prepare attached session for VM {cfg.vm.name}',
+        why=(
+            'Reconcile network, firewall, VM power state, and host-share '
+            'availability before opening an attached SSH or editor session.'
+        ),
+        role='modify',
     ):
-        fw_probe = probe_firewall(cfg, use_sudo=False).ok
-        if fw_probe is None:
-            fw_probe = probe_firewall(cfg, use_sudo=True).ok
-        need_firewall_apply = fw_probe is not True
-    if need_firewall_apply:
-        apply_firewall(cfg, dry_run=policy.dry_run)
-
-    recreate = False
-    vm_running = vm_running_probe
-    mappings: list[tuple[str, str]] = []
-    has_share = False
-    shared_root_host_side_ready = False
-    virtiofs_mapping = _virtiofs_mapping_for_attachment(cfg, attachment)
-    if vm_running is None and cached_ssh_ok:
-        vm_running = True
-    if (
-        virtiofs_mapping is not None
-        and not policy.dry_run
-        and vm_running is True
-    ):
-        mappings = vm_share_mappings(cfg, use_sudo=False)
-        if attachment.mode == ATTACHMENT_MODE_SHARED:
-            attachment = drift_align_attachment_tag_with_mappings(
-                attachment, host_src, mappings
-            )
-            virtiofs_mapping = _virtiofs_mapping_for_attachment(cfg, attachment)
-        if virtiofs_mapping is not None:
-            req_src, req_tag = virtiofs_mapping
-            has_share = any(
-                src == req_src and tag == req_tag for src, tag in mappings
-            )
-
-    need_vm_start_or_create = policy.dry_run or (vm_running is not True)
-    if need_vm_start_or_create:
-        _maybe_install_missing_host_deps(
-            yes=bool(policy.yes), dry_run=bool(policy.dry_run)
+        cached_ip = get_ip_cached(cfg) if not policy.dry_run else None
+        cached_ssh_ok = False
+        if cached_ip:
+            cached_ssh_ok = bool(probe_ssh_ready(cfg, cached_ip).ok)
+        vm_running_probe = (
+            _probe_vm_running_nonsudo(cfg.vm.name)
+            if not policy.dry_run
+            else None
         )
-        if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
-            if not policy.dry_run:
-                _ensure_shared_root_parent_dir(cfg, dry_run=False)
-        try:
-            create_or_start_vm(
-                cfg,
-                dry_run=policy.dry_run,
-                recreate=False,
-                share_source_dir=(
-                    virtiofs_mapping[0] if virtiofs_mapping else ''
-                ),
-                share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
-            )
-        except Exception as ex:
-            missing_virtiofs_dir = _missing_virtiofs_dir_from_error(ex)
-            if not policy.dry_run and missing_virtiofs_dir is not None:
-                log.warning(
-                    'VM {} has stale virtiofs source {}; recreating VM definition',
-                    cfg.vm.name,
-                    missing_virtiofs_dir,
-                )
-                create_or_start_vm(
-                    cfg,
-                    dry_run=False,
-                    recreate=True,
-                    share_source_dir=(
-                        virtiofs_mapping[0] if virtiofs_mapping else ''
-                    ),
-                    share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
-                )
-            else:
-                raise
-        vm_running = (
-            True if policy.dry_run else _probe_vm_running_nonsudo(cfg.vm.name)
-        )
+
+        net_probe = probe_network(cfg, use_sudo=False).ok
+        need_network_ensure = (net_probe is False) and (not cached_ssh_ok)
+        if need_network_ensure:
+            ensure_network(cfg, recreate=False, dry_run=policy.dry_run)
+
+        need_firewall_apply = False
+        if (
+            cfg.firewall.enabled
+            and policy.ensure_firewall_opt
+            and (not cached_ssh_ok)
+        ):
+            fw_probe = probe_firewall(cfg, use_sudo=False).ok
+            if fw_probe is None:
+                fw_probe = probe_firewall(cfg, use_sudo=True).ok
+            need_firewall_apply = fw_probe is not True
+        if need_firewall_apply:
+            apply_firewall(cfg, dry_run=policy.dry_run)
+
+        recreate = False
+        vm_running = vm_running_probe
+        mappings: list[tuple[str, str]] = []
+        has_share = False
+        shared_root_host_side_ready = False
+        virtiofs_mapping = _virtiofs_mapping_for_attachment(cfg, attachment)
+        if vm_running is None and cached_ssh_ok:
+            vm_running = True
         if (
             virtiofs_mapping is not None
             and not policy.dry_run
@@ -2863,97 +2863,164 @@ def _reconcile_attached_vm(
                     src == req_src and tag == req_tag for src, tag in mappings
                 )
 
-    if (
-        virtiofs_mapping is not None
-        and not policy.dry_run
-        and vm_running is True
-        and not has_share
-    ):
-        vm_has_shared_mem = vm_has_virtiofs_shared_memory(cfg, use_sudo=False)
-        if vm_has_shared_mem is False and not policy.recreate_if_needed:
-            raise RuntimeError(
-                'Existing VM cannot accept virtiofs attachments because its domain '
-                'definition lacks required shared-memory backing (memfd/shared).\n'
-                f'VM: {cfg.vm.name}\n'
-                f'Requested: source={virtiofs_mapping[0]} tag={virtiofs_mapping[1]} '
-                f'guest_dst={attachment.guest_dst}\n'
-                'Next steps:\n'
-                '  - Re-run with --recreate_if_needed to rebuild the VM definition '
-                'with virtiofs shared-memory support.\n'
-                '  - Or destroy and recreate the VM with the desired share mapping.'
+        need_vm_start_or_create = policy.dry_run or (vm_running is not True)
+        if need_vm_start_or_create:
+            _maybe_install_missing_host_deps(
+                yes=bool(policy.yes), dry_run=bool(policy.dry_run)
             )
-        if policy.recreate_if_needed:
-            recreate = True
-        else:
+            if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+                if not policy.dry_run:
+                    _ensure_shared_root_parent_dir(cfg, dry_run=False)
             try:
-                if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
-                    mgr = CommandManager.current()
-                    with mgr.intent(
-                        'Attach and reconcile shared-root mapping',
-                        why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
-                        role='modify',
-                    ):
-                        _ensure_shared_root_host_bind(
+                create_or_start_vm(
+                    cfg,
+                    dry_run=policy.dry_run,
+                    recreate=False,
+                    share_source_dir=(
+                        virtiofs_mapping[0] if virtiofs_mapping else ''
+                    ),
+                    share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
+                )
+            except Exception as ex:
+                missing_virtiofs_dir = _missing_virtiofs_dir_from_error(ex)
+                if not policy.dry_run and missing_virtiofs_dir is not None:
+                    log.warning(
+                        'VM {} has stale virtiofs source {}; recreating VM definition',
+                        cfg.vm.name,
+                        missing_virtiofs_dir,
+                    )
+                    create_or_start_vm(
+                        cfg,
+                        dry_run=False,
+                        recreate=True,
+                        share_source_dir=(
+                            virtiofs_mapping[0] if virtiofs_mapping else ''
+                        ),
+                        share_tag=(
+                            virtiofs_mapping[1] if virtiofs_mapping else ''
+                        ),
+                    )
+                else:
+                    raise
+            vm_running = (
+                True
+                if policy.dry_run
+                else _probe_vm_running_nonsudo(cfg.vm.name)
+            )
+            if (
+                virtiofs_mapping is not None
+                and not policy.dry_run
+                and vm_running is True
+            ):
+                mappings = vm_share_mappings(cfg, use_sudo=False)
+                if attachment.mode == ATTACHMENT_MODE_SHARED:
+                    attachment = drift_align_attachment_tag_with_mappings(
+                        attachment, host_src, mappings
+                    )
+                    virtiofs_mapping = _virtiofs_mapping_for_attachment(
+                        cfg, attachment
+                    )
+                if virtiofs_mapping is not None:
+                    req_src, req_tag = virtiofs_mapping
+                    has_share = any(
+                        src == req_src and tag == req_tag
+                        for src, tag in mappings
+                    )
+
+        if (
+            virtiofs_mapping is not None
+            and not policy.dry_run
+            and vm_running is True
+            and not has_share
+        ):
+            vm_has_shared_mem = vm_has_virtiofs_shared_memory(
+                cfg, use_sudo=False
+            )
+            if vm_has_shared_mem is False and not policy.recreate_if_needed:
+                raise RuntimeError(
+                    'Existing VM cannot accept virtiofs attachments because its domain '
+                    'definition lacks required shared-memory backing (memfd/shared).\n'
+                    f'VM: {cfg.vm.name}\n'
+                    f'Requested: source={virtiofs_mapping[0]} tag={virtiofs_mapping[1]} '
+                    f'guest_dst={attachment.guest_dst}\n'
+                    'Next steps:\n'
+                    '  - Re-run with --recreate_if_needed to rebuild the VM definition '
+                    'with virtiofs shared-memory support.\n'
+                    '  - Or destroy and recreate the VM with the desired share mapping.'
+                )
+            if policy.recreate_if_needed:
+                recreate = True
+            else:
+                try:
+                    if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+                        with mgr.intent(
+                            'Attach and reconcile shared-root mapping',
+                            why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
+                            role='modify',
+                        ):
+                            _ensure_shared_root_host_bind(
+                                cfg,
+                                attachment,
+                                yes=bool(policy.yes),
+                                dry_run=False,
+                            )
+                            _ensure_shared_root_vm_mapping(
+                                cfg,
+                                yes=bool(policy.yes),
+                                dry_run=False,
+                                vm_running=True,
+                            )
+                        shared_root_host_side_ready = True
+                    else:
+                        attach_vm_share(
                             cfg,
-                            attachment,
-                            yes=bool(policy.yes),
-                            dry_run=False,
-                        )
-                        _ensure_shared_root_vm_mapping(
-                            cfg,
-                            yes=bool(policy.yes),
+                            virtiofs_mapping[0],
+                            virtiofs_mapping[1],
                             dry_run=False,
                             vm_running=True,
                         )
-                    shared_root_host_side_ready = True
-                else:
-                    attach_vm_share(
-                        cfg,
-                        virtiofs_mapping[0],
-                        virtiofs_mapping[1],
-                        dry_run=False,
-                        vm_running=True,
+                    has_share = True
+                except Exception as ex:
+                    current_maps = mappings or vm_share_mappings(
+                        cfg, use_sudo=False
                     )
-                has_share = True
-            except Exception as ex:
-                current_maps = mappings or vm_share_mappings(
-                    cfg, use_sudo=False
-                )
-                requested_tag = virtiofs_mapping[1]
-                if current_maps:
-                    found = '\n'.join(
-                        f'  - source={src or "(none)"} tag={tag or "(none)"}'
-                        for src, tag in current_maps
+                    requested_tag = virtiofs_mapping[1]
+                    if current_maps:
+                        found = '\n'.join(
+                            f'  - source={src or "(none)"} tag={tag or "(none)"}'
+                            for src, tag in current_maps
+                        )
+                    else:
+                        found = '  - (no filesystem mappings found)'
+                    raise RuntimeError(
+                        'Existing VM does not include requested share mapping, and live attach failed.\n'
+                        f'VM: {cfg.vm.name}\n'
+                        f'Requested: source={virtiofs_mapping[0]} tag={requested_tag} guest_dst={attachment.guest_dst}\n'
+                        'Current VM filesystem mappings:\n'
+                        f'{found}\n'
+                        f'Live attach error: {ex}\n'
+                        'Next steps:\n'
+                        '  - Re-run with --recreate_if_needed to rebuild the VM definition with the new share.\n'
+                        '  - Or use a VM already defined with this share mapping.'
                     )
-                else:
-                    found = '  - (no filesystem mappings found)'
-                raise RuntimeError(
-                    'Existing VM does not include requested share mapping, and live attach failed.\n'
-                    f'VM: {cfg.vm.name}\n'
-                    f'Requested: source={virtiofs_mapping[0]} tag={requested_tag} guest_dst={attachment.guest_dst}\n'
-                    'Current VM filesystem mappings:\n'
-                    f'{found}\n'
-                    f'Live attach error: {ex}\n'
-                    'Next steps:\n'
-                    '  - Re-run with --recreate_if_needed to rebuild the VM definition with the new share.\n'
-                    '  - Or use a VM already defined with this share mapping.'
-                )
 
-    if recreate:
-        create_or_start_vm(
-            cfg,
-            dry_run=policy.dry_run,
-            recreate=True,
-            share_source_dir=(virtiofs_mapping[0] if virtiofs_mapping else ''),
-            share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
+        if recreate:
+            create_or_start_vm(
+                cfg,
+                dry_run=policy.dry_run,
+                recreate=True,
+                share_source_dir=(
+                    virtiofs_mapping[0] if virtiofs_mapping else ''
+                ),
+                share_tag=(virtiofs_mapping[1] if virtiofs_mapping else ''),
+            )
+
+        return ReconcileResult(
+            attachment=attachment,
+            cached_ip=cached_ip,
+            cached_ssh_ok=cached_ssh_ok,
+            shared_root_host_side_ready=shared_root_host_side_ready,
         )
-
-    return ReconcileResult(
-        attachment=attachment,
-        cached_ip=cached_ip,
-        cached_ssh_ok=cached_ssh_ok,
-        shared_root_host_side_ready=shared_root_host_side_ready,
-    )
 
 
 def _prepare_attached_session(
@@ -3073,7 +3140,14 @@ def _prepare_attached_session(
             'sessions and provision the guest.'
         ),
     ):
-        _record_vm(cfg, cfg_path)
+        _record_vm(
+            cfg,
+            cfg_path,
+            reason=(
+                f'Persist newly generated SSH identity paths for VM '
+                f'{cfg.vm.name} before preparing the attached session.'
+            ),
+        )
 
     if dry_run:
         return PreparedSession(
