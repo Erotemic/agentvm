@@ -129,7 +129,7 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
         del yes, kwargs
         sudo_prompts.append(purpose)
 
-    def fake_run_cmd(cmd, *, sudo=False, **kwargs):
+    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs):
         del kwargs
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -179,7 +179,7 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
     monkeypatch.setattr(
         'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
     )
-    monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.cli.vm.CommandManager.run', fake_run_cmd)
     drift, running = _vm_update_drift(cfg, yes=False)
     assert running is True
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
@@ -194,7 +194,7 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
     def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
         del yes, purpose, kwargs
 
-    def fake_run_cmd(cmd, *, sudo=False, **kwargs):
+    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs):
         del kwargs, sudo
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -237,7 +237,7 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
     monkeypatch.setattr(
         'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
     )
-    monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.cli.vm.CommandManager.run', fake_run_cmd)
     drift, _running = _vm_update_drift(cfg, yes=True)
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
     assert any('falling back to virsh domblkinfo' in n for n in drift.notes)

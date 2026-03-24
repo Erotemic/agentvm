@@ -20,7 +20,7 @@ def test_existing_ipv4_routes_parsing(monkeypatch) -> None:
     def fake_which(cmd: str):
         return '/usr/sbin/ip' if cmd == 'ip' else None
 
-    def fake_run_cmd(*args, **kwargs):
+    def fake_run_cmd(self, *args, **kwargs):
         return CmdResult(
             0,
             'default via 192.168.1.1 dev wlp2s0\n'
@@ -30,7 +30,7 @@ def test_existing_ipv4_routes_parsing(monkeypatch) -> None:
         )
 
     monkeypatch.setattr('aivm.detect.which', fake_which)
-    monkeypatch.setattr('aivm.detect.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.detect.CommandManager.run', fake_run_cmd)
     got = existing_ipv4_routes()
     assert ipaddress.ip_network('10.77.0.0/24') in got
     assert ipaddress.ip_network('172.17.0.0/16') in got

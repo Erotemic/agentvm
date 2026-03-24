@@ -1,84 +1,20 @@
-"""Shared utility helpers and compatibility wrappers.
-
-``run_cmd`` remains the compatibility seam for older call sites, but real
-subprocess orchestration now lives in :mod:`aivm.commands`.
-"""
+"""Shared utility re-exports and small filesystem/path helpers."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional
 
 from . import commands as _commands
-from .commands import (
-    CommandManager,
-    shell_join,
-)
-from .commands import CommandError as CmdError  # used for backwards compat. TODO: remove # NOQA
-from .commands import (
-    CommandResult as CmdResult,
-)
+from .commands import CommandError as CmdError
+from .commands import CommandResult as CmdResult
+from .commands import shell_join
 
-# Keep these module aliases for compatibility with older tests/helpers that
-# monkeypatch ``aivm.util.os`` / ``sys`` / ``subprocess`` directly.
+# Keep these aliases so existing tests/helpers can still monkeypatch the
+# underlying runtime modules through ``aivm.util`` when needed.
 os = _commands.os
 sys = _commands.sys
 subprocess = _commands.subprocess
-
-
-def arm_sudo_intent(
-    *,
-    yes: bool,
-    purpose: str,
-    action: str = 'modify',
-    sticky: bool = False,
-) -> None:
-    CommandManager.current().compat_arm_sudo_intent(
-        yes=bool(yes),
-        purpose=str(purpose),
-        action=action,
-        sticky=bool(sticky),
-    )
-
-
-def clear_sudo_intent() -> None:
-    CommandManager.current().compat_clear_sudo_intent()
-
-
-def sudo_intent_auto_yes() -> bool:
-    return CommandManager.current().compat_auto_yes()
-
-
-def run_cmd(
-    cmd: Sequence[str],
-    *,
-    sudo: bool = False,
-    sudo_action: str | None = None,
-    check: bool = True,
-    capture: bool = True,
-    text: bool = True,
-    input_text: Optional[str] = None,
-    env: Optional[dict[str, str]] = None,
-    timeout: float | None = None,
-) -> CmdResult:
-    """Compatibility wrapper around the centralized command manager."""
-    return (
-        CommandManager.current()
-        .submit(
-            cmd,
-            sudo=sudo,
-            role=sudo_action,  # type: ignore[arg-type]
-            check=check,
-            capture=capture,
-            text=text,
-            input_text=input_text,
-            env=env,
-            timeout=timeout,
-            eager=True,
-            summary=shell_join(cmd),
-        )
-        .result()
-    )
 
 
 def which(cmd: str) -> Optional[str]:

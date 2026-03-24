@@ -11,11 +11,10 @@ from pathlib import Path
 
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..results import SyncSettingsResult
 from ..runtime import require_ssh_identity, ssh_base_args
-from ..util import run_cmd
-
 log = logger
 
 
@@ -33,6 +32,7 @@ def sync_settings(
     wanted = list(paths if paths is not None else cfg.sync.paths)
     host_home = Path.home()
     result = SyncSettingsResult()
+    mgr = CommandManager.current()
 
     for raw in wanted:
         src_abs = Path(raw).expanduser()
@@ -58,7 +58,7 @@ def sync_settings(
         ]
         if not overwrite and not dry_run:
             exists = (
-                run_cmd(check_cmd, sudo=False, check=False, capture=True).code
+                mgr.run(check_cmd, sudo=False, check=False, capture=True).code
                 == 0
             )
             if exists:
@@ -86,8 +86,8 @@ def sync_settings(
             log.info('DRYRUN: {}', ' '.join(scp_cmd))
             result.copied.append(f'{src_abs} -> {remote_path}')
             continue
-        run_cmd(mkdir_cmd, sudo=False, check=True, capture=True)
-        res = run_cmd(scp_cmd, sudo=False, check=False, capture=True)
+        mgr.run(mkdir_cmd, sudo=False, check=True, capture=True)
+        res = mgr.run(scp_cmd, sudo=False, check=False, capture=True)
         if res.code == 0:
             result.copied.append(f'{src_abs} -> {remote_path}')
         else:

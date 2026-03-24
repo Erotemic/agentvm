@@ -1190,8 +1190,8 @@ def test_git_current_branch_returns_named_branch(
     repo.mkdir()
 
     monkeypatch.setattr(
-        'aivm.cli.vm.run_cmd',
-        lambda *a, **k: CmdResult(0, 'feature-x\n', ''),
+        'aivm.cli.vm.CommandManager.run',
+        lambda self, *a, **k: CmdResult(0, 'feature-x\n', ''),
     )
 
     branch = _git_current_branch(repo)
@@ -1205,8 +1205,10 @@ def test_git_current_branch_raises_on_git_error(
     repo.mkdir()
 
     monkeypatch.setattr(
-        'aivm.cli.vm.run_cmd',
-        lambda *a, **k: CmdResult(128, '', 'fatal: not a git repository'),
+        'aivm.cli.vm.CommandManager.run',
+        lambda self, *a, **k: CmdResult(
+            128, '', 'fatal: not a git repository'
+        ),
     )
 
     with pytest.raises(

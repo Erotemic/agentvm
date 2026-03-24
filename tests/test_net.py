@@ -23,8 +23,8 @@ def test_route_overlap_none_without_ip(monkeypatch) -> None:
 def test_route_overlap_detects_conflict(monkeypatch) -> None:
     monkeypatch.setattr('aivm.net.which', lambda cmd: '/usr/sbin/ip')
     monkeypatch.setattr(
-        'aivm.net.run_cmd',
-        lambda *a, **k: CmdResult(
+        'aivm.net.CommandManager.run',
+        lambda self, *a, **k: CmdResult(
             0,
             '10.77.0.0/24 dev virbr0\n10.78.0.0/24 dev virbr1\n',
             '',
@@ -70,7 +70,7 @@ def test_network_status_and_destroy(monkeypatch) -> None:
     cfg = AgentVMConfig()
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         calls.append(cmd)
         if cmd[1] == 'net-info':
             return CmdResult(0, 'INFO', '')
@@ -78,7 +78,7 @@ def test_network_status_and_destroy(monkeypatch) -> None:
             return CmdResult(0, '<network/>', '')
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.net.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.net.CommandManager.run', fake_run_cmd)
     out = network_status(cfg)
     assert 'INFO' in out
     assert '<network/>' in out

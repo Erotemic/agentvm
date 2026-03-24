@@ -11,8 +11,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from .commands import CommandManager, IntentScope, PlanScope
-from .util import run_cmd, which
+from .commands import CommandManager
+from .util import which
 
 log = logger
 
@@ -36,7 +36,8 @@ def check_commands() -> tuple[list[str], list[str]]:
 
 def check_commands_with_sudo() -> tuple[list[str], str | None]:
     """Check required commands in a non-interactive sudo environment."""
-    sudo_probe = run_cmd(
+    mgr = CommandManager.current()
+    sudo_probe = mgr.run(
         ['sudo', '-n', 'true'], check=False, capture=True, text=True
     )
     if sudo_probe.code != 0:
@@ -47,7 +48,7 @@ def check_commands_with_sudo() -> tuple[list[str], str | None]:
     missing = []
     for cmd in REQUIRED_CMDS:
         # Match sudo's effective PATH and shell command lookup behavior.
-        probe = run_cmd(
+        probe = mgr.run(
             ['sudo', '-n', 'sh', '-lc', f'command -v {shlex.quote(cmd)}'],
             check=False,
             capture=True,
@@ -105,8 +106,7 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
     ]
     del assume_yes
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         'Prepare host libvirt dependencies',
         why=(
             'Fresh-machine VM workflows need libvirt, qemu, cloud-init tools, '
@@ -114,8 +114,7 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
         ),
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Install Debian/Ubuntu host dependencies',
             why=(
                 'Refresh apt metadata, install required VM host packages, '

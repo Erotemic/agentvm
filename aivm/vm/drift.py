@@ -19,10 +19,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..runtime import virsh_system_cmd
 from ..store import find_attachments_for_vm
-from ..util import run_cmd
 from .share import (
     SHARED_ROOT_VIRTIOFS_TAG,
     AttachmentMode,
@@ -141,7 +141,9 @@ def read_actual_vm_hardware(
         error_detail contains the raw error message.
     """
     cmd = virsh_system_cmd('dominfo', cfg.vm.name)
-    res = run_cmd(cmd, sudo=use_sudo, check=False, capture=True)
+    res = CommandManager.current().run(
+        cmd, sudo=use_sudo, check=False, capture=True
+    )
     if res.code != 0:
         # Check both stderr and stdout for error messages
         raw = (res.stderr or res.stdout or 'virsh dominfo failed').strip()

@@ -26,8 +26,8 @@ def test_probe_runtime_environment_from_systemd_detect_virt_guest(
 ) -> None:
     monkeypatch.setattr('aivm.status.which', lambda cmd: '/usr/bin/' + cmd)
     monkeypatch.setattr(
-        'aivm.status.run_cmd',
-        lambda *a, **k: CmdResult(0, 'kvm\n', ''),
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(0, 'kvm\n', ''),
     )
     out = probe_runtime_environment()
     assert out.ok is True
@@ -40,8 +40,8 @@ def test_probe_runtime_environment_from_systemd_detect_virt_host(
 ) -> None:
     monkeypatch.setattr('aivm.status.which', lambda cmd: '/usr/bin/' + cmd)
     monkeypatch.setattr(
-        'aivm.status.run_cmd',
-        lambda *a, **k: CmdResult(0, 'none\n', ''),
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(0, 'none\n', ''),
     )
     out = probe_runtime_environment()
     assert out.ok is True

@@ -48,7 +48,8 @@ def test_mac_for_vm_parsing(monkeypatch) -> None:
  vnet0       network   default    virtio   52:54:00:12:34:56
 """
     monkeypatch.setattr(
-        'aivm.vm.lifecycle.run_cmd', lambda *a, **k: CmdResult(0, stdout, '')
+        'aivm.vm.lifecycle.CommandManager.run',
+        lambda self, *a, **k: CmdResult(0, stdout, ''),
     )
     cfg = AgentVMConfig()
     assert _mac_for_vm(cfg) == '52:54:00:12:34:56'
@@ -184,7 +185,7 @@ def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:
         'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
     )
 
-    def fake_run_cmd(*a, **k):
+    def fake_run_cmd(self, *a, **k):
         del a, k
         calls['n'] += 1
         if calls['n'] == 1:
@@ -195,7 +196,7 @@ def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:
             )
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.share.CommandManager.run', fake_run_cmd)
     monkeypatch.setattr('aivm.vm.share.time.sleep', lambda s: sleeps.append(s))
     ensure_share_mounted(
         cfg,
@@ -222,8 +223,8 @@ def test_ensure_share_mounted_raises_after_retries(monkeypatch) -> None:
         'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
     )
     monkeypatch.setattr(
-        'aivm.vm.share.run_cmd',
-        lambda *a, **k: CmdResult(
+        'aivm.vm.share.CommandManager.run',
+        lambda self, *a, **k: CmdResult(
             32,
             '',
             'mount: /workspace: wrong fs type, bad option',
@@ -258,12 +259,12 @@ def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
         'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         cmds.append([str(c) for c in cmd])
         run_kwargs.append(dict(kwargs))
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.share.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.share.CommandManager.run', fake_run_cmd)
 
     ensure_share_mounted(
         cfg,
@@ -297,7 +298,7 @@ def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
 
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         calls.append(cmd)
         if cmd[0] == 'virt-install' and '--boot' in cmd:
             raise CmdError(
@@ -310,7 +311,7 @@ def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
             )
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
     create_or_start_vm(cfg, dry_run=False, recreate=False)
 
     virt_calls = [c for c in calls if c and c[0] == 'virt-install']
@@ -344,11 +345,11 @@ def test_create_vm_prefers_uefi_even_when_host_looks_nested(
 
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         calls.append(cmd)
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
     create_or_start_vm(cfg, dry_run=False, recreate=False)
 
     virt_calls = [c for c in calls if c and c[0] == 'virt-install']
@@ -740,7 +741,7 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
     )
     calls: list[list[str]] = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         del kwargs
         calls.append([str(part) for part in cmd])
         if cmd[:2] == ['getent', 'group']:
@@ -757,7 +758,7 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
             return _Proc(1, '', '')
         return _Proc(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
     monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
 
     _ensure_shared_root_host_bind(
@@ -812,7 +813,7 @@ def test_wait_for_ssh_uses_generous_probe_timeout(monkeypatch) -> None:
     )
     monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda s: None)
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         del cmd
         calls['n'] += 1
         timeouts.append(kwargs.get('timeout'))
@@ -820,7 +821,7 @@ def test_wait_for_ssh_uses_generous_probe_timeout(monkeypatch) -> None:
             return CmdResult(124, '', 'command timed out')
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
     wait_for_ssh(cfg, '10.0.0.2', timeout_s=60, dry_run=False)
     assert calls['n'] == 2
     assert all(timeout == 30 for timeout in timeouts)
@@ -844,7 +845,7 @@ def test_create_vm_raises_clear_error_when_virtiofsd_missing(
         'aivm.vm.lifecycle._ensure_disk', lambda *a, **k: Path('/tmp/vm.qcow2')
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         if cmd and cmd[0] == 'virt-install':
             raise CmdError(
                 cmd,
@@ -856,7 +857,7 @@ def test_create_vm_raises_clear_error_when_virtiofsd_missing(
             )
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
     with pytest.raises(RuntimeError, match='virtiofsd is not available'):
         create_or_start_vm(
             cfg,
@@ -888,7 +889,7 @@ def test_create_vm_raises_clear_error_when_guest_memory_unavailable(
 
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         calls.append(cmd)
         if cmd and cmd[0] == 'virt-install' and '--boot' in cmd:
             raise CmdError(
@@ -910,6 +911,6 @@ def test_create_vm_raises_clear_error_when_guest_memory_unavailable(
             )
         return CmdResult(0, '', '')
 
-    monkeypatch.setattr('aivm.vm.lifecycle.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
     with pytest.raises(RuntimeError, match='could not allocate guest RAM'):
         create_or_start_vm(cfg, dry_run=False, recreate=False)

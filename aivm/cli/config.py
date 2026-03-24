@@ -20,6 +20,7 @@ from typing import cast
 import scriptconfig as scfg
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import (
     AgentVMConfig,
     FirewallConfig,
@@ -42,7 +43,7 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import run_cmd, which
+from ..util import which
 from ._common import (
     _BaseCommand,
     _cfg_path,
@@ -312,7 +313,9 @@ class ConfigEditCLI(_BaseCommand):
         if not editor_cmd:
             raise RuntimeError('No editor found. Set $EDITOR or pass --editor.')
         parts = shlex.split(editor_cmd) + [str(path)]
-        run_cmd(parts, sudo=False, check=True, capture=False)
+        CommandManager.current().run(
+            parts, sudo=False, check=True, capture=False
+        )
         return 0
 
 
@@ -376,7 +379,8 @@ class ConfigDiscoverCLI(_BaseCommand):
         # Discover is intentionally conservative: unmanaged VMs require explicit
         # import confirmation (unless --yes) to avoid surprising ownership grabs.
         args = cls.cli(argv=argv, data=kwargs)
-        names_res = run_cmd(
+        mgr = CommandManager.current()
+        names_res = mgr.run(
             virsh_system_cmd('list', '--all', '--name'),
             sudo=False,
             check=False,
@@ -390,7 +394,7 @@ class ConfigDiscoverCLI(_BaseCommand):
                 action='read',
             )
             used_sudo = True
-            names_res = run_cmd(
+            names_res = mgr.run(
                 virsh_system_cmd('list', '--all', '--name'),
                 sudo=True,
                 check=True,
@@ -657,6 +661,7 @@ class ConfigModalCLI(scfg.ModalCLI):
 
 def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
     """Collect a minimal VM summary used for discover/import prompts."""
+    mgr = CommandManager.current()
     info: dict[str, object] = {
         'name': vm_name,
         'state': 'unknown',
@@ -666,7 +671,7 @@ def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
         'memory_mib': 'unknown',
         'shares': [],
     }
-    dominfo = run_cmd(
+    dominfo = mgr.run(
         virsh_system_cmd('dominfo', vm_name),
         sudo=use_sudo,
         check=False,
@@ -689,7 +694,7 @@ def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
                 if m:
                     kib = int(m.group(1))
                     info['memory_mib'] = str(kib // 1024)
-    xml = run_cmd(
+    xml = mgr.run(
         virsh_system_cmd('dumpxml', vm_name),
         sudo=use_sudo,
         check=False,

@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 
 import scriptconfig as scfg
 
-from ..commands import CommandManager, IntentScope, PlanScope
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
 from ..host import check_commands, host_is_debian_like, install_deps_debian
@@ -45,7 +45,7 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import CmdError, ensure_dir, run_cmd, which
+from ..util import CmdError, ensure_dir, which
 from ..vm import (
     attach_vm_share,
     create_or_start_vm,
@@ -662,7 +662,7 @@ class VMCodeCLI(_BaseCommand):
                 'VS Code CLI `code` not found in PATH. Install VS Code and enable the shell command.'
             )
         remote_target = f'ssh-remote+{cfg.vm.name}'
-        run_cmd(
+        CommandManager.current().run(
             ['code', '--remote', remote_target, session.share_guest_dst],
             sudo=False,
             check=True,
@@ -764,7 +764,7 @@ class VMSSHCLI(_BaseCommand):
         remote_cmd = (
             f'cd {shlex.quote(session.share_guest_dst)} && exec $SHELL -l'
         )
-        ssh_result = run_cmd(
+        ssh_result = CommandManager.current().run(
             [
                 'ssh',
                 '-t',
@@ -899,8 +899,8 @@ class VMAttachCLI(_BaseCommand):
                     )
             elif attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
                 if not vm_running:
-                    with IntentScope(
-                        CommandManager.current(),
+                    mgr = CommandManager.current()
+                    with mgr.intent(
                         'Attach and reconcile shared-root mapping',
                         why='Ensure the requested host folder is exposed to the VM before the next guest session uses it.',
                         role='modify',
@@ -1381,7 +1381,7 @@ def _resolve_vm_disk_path(
         / 'images'
         / f'{cfg.vm.name}.qcow2'
     )
-    res = run_cmd(
+    res = CommandManager.current().run(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=use_sudo,
         check=False,
@@ -1404,7 +1404,7 @@ def _resolve_vm_disk_path(
 def _qemu_img_virtual_size_bytes(
     path: Path, *, use_sudo: bool
 ) -> tuple[int | None, str]:
-    res = run_cmd(
+    res = CommandManager.current().run(
         ['qemu-img', 'info', '--output=json', str(path)],
         sudo=use_sudo,
         check=False,
@@ -1431,7 +1431,7 @@ def _parse_domblkinfo_capacity(domblkinfo_text: str) -> int | None:
 def _virsh_domblk_capacity_bytes(
     cfg: AgentVMConfig, path_or_target: str, *, use_sudo: bool
 ) -> int | None:
-    res = run_cmd(
+    res = CommandManager.current().run(
         virsh_system_cmd('domblkinfo', cfg.vm.name, path_or_target),
         sudo=use_sudo,
         check=False,
@@ -1454,7 +1454,8 @@ def _vm_update_drift(
       inconclusive (for example qemu-img lock contention on running VMs).
     """
     notes: list[str] = []
-    dominfo = run_cmd(
+    mgr = CommandManager.current()
+    dominfo = mgr.run(
         virsh_system_cmd('dominfo', cfg.vm.name),
         sudo=False,
         check=False,
@@ -1466,7 +1467,7 @@ def _vm_update_drift(
             purpose=f"Inspect VM '{cfg.vm.name}' state/config for update planning.",
             action='read',
         )
-        dominfo = run_cmd(
+        dominfo = mgr.run(
             virsh_system_cmd('dominfo', cfg.vm.name),
             sudo=True,
             check=False,
@@ -1489,14 +1490,14 @@ def _vm_update_drift(
         else None
     )
 
-    state_res = run_cmd(
+    state_res = mgr.run(
         virsh_system_cmd('domstate', cfg.vm.name),
         sudo=False,
         check=False,
         capture=True,
     )
     if state_res.code != 0:
-        state_res = run_cmd(
+        state_res = mgr.run(
             virsh_system_cmd('domstate', cfg.vm.name),
             sudo=True,
             check=False,
@@ -1567,7 +1568,7 @@ def _vm_update_drift(
     if cur_disk is None:
         notes.append(f'Could not determine disk size from {disk_path}.')
 
-    xml = run_cmd(
+    xml = mgr.run(
         virsh_system_cmd('dumpxml', cfg.vm.name),
         sudo=False,
         check=False,
@@ -1581,7 +1582,7 @@ def _vm_update_drift(
                 action='read',
             )
             sudo_confirmed = True
-        xml = run_cmd(
+        xml = mgr.run(
             virsh_system_cmd('dumpxml', cfg.vm.name),
             sudo=True,
             check=False,
@@ -1633,7 +1634,9 @@ def _apply_vm_update(
         if dry_run:
             print(f'DRYRUN: {" ".join(cmd)}')
         else:
-            run_cmd(cmd, sudo=True, check=True, capture=True)
+            CommandManager.current().run(
+                cmd, sudo=True, check=True, capture=True
+            )
             print(f'Updated CPU count to {want}.')
         changed = True
         restart_required = True
@@ -1648,8 +1651,9 @@ def _apply_vm_update(
             print(f'DRYRUN: {" ".join(max_cmd)}')
             print(f'DRYRUN: {" ".join(mem_cmd)}')
         else:
-            run_cmd(max_cmd, sudo=True, check=True, capture=True)
-            run_cmd(mem_cmd, sudo=True, check=True, capture=True)
+            mgr = CommandManager.current()
+            mgr.run(max_cmd, sudo=True, check=True, capture=True)
+            mgr.run(mem_cmd, sudo=True, check=True, capture=True)
             print(f'Updated RAM to {want} MiB.')
         changed = True
         restart_required = True
@@ -1664,7 +1668,9 @@ def _apply_vm_update(
             if dry_run:
                 print(f'DRYRUN: {" ".join(cmd)}')
             else:
-                run_cmd(cmd, sudo=True, check=True, capture=True)
+                CommandManager.current().run(
+                    cmd, sudo=True, check=True, capture=True
+                )
                 print(
                     f'Expanded disk to {_bytes_to_gib(want):.2f} GiB at {drift.disk_path}.'
                 )
@@ -1701,7 +1707,9 @@ def _maybe_restart_vm_after_update(
     if dry_run:
         print(f'DRYRUN: {" ".join(cmd)}')
     else:
-        run_cmd(cmd, sudo=True, check=True, capture=True)
+        CommandManager.current().run(
+            cmd, sudo=True, check=True, capture=True
+        )
         print(f'Restarted VM {cfg.vm.name}.')
 
 
@@ -1794,14 +1802,12 @@ def _ensure_shared_root_parent_dir(
         )
         return
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         'Prepare shared-root mapping',
         why='libvirt needs the shared-root export directory to exist before the VM definition can use it.',
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Prepare shared-root parent directory',
             why='Create the host-side shared-root export directory used by virtiofs.',
             approval_scope=f'shared-root-parent:{cfg.vm.name}',
@@ -1856,8 +1862,7 @@ def _ensure_shared_root_host_bind(
             f'DRYRUN: would bind-mount {source_dir} -> {target} for shared-root mode'
         )
         return target
-    with PlanScope(
-        mgr,
+    with mgr.step(
         'Inspect shared-root host bind state',
         why='Determine whether the VM-specific bind target already points at the requested host folder.',
         approval_scope=f'shared-root-host-inspect:{cfg.vm.name}:{attachment.tag}',
@@ -1892,8 +1897,7 @@ def _ensure_shared_root_host_bind(
                 f'(target={target}, expected_source={source_dir}, actual_source={current or "unknown"}). '
                 'Use an explicit attach/detach command to reconcile this mount.'
             )
-    with PlanScope(
-        mgr,
+    with mgr.step(
         'Prepare host bind targets',
         why='Ensure the shared-root export directories exist and the VM-specific bind target points at the requested host folder.',
         approval_scope=f'shared-root-host-bind:{cfg.vm.name}:{attachment.tag}',
@@ -1958,8 +1962,7 @@ def _ensure_shared_root_vm_mapping(
     mgr = CommandManager.current()
     source = str(_shared_root_host_dir(cfg))
     tag = SHARED_ROOT_VIRTIOFS_TAG
-    with PlanScope(
-        mgr,
+    with mgr.step(
         'Inspect shared-root VM mapping',
         why='Check whether the current VM definition already includes the shared-root virtiofs device.',
         approval_scope=f'shared-root-vm-inspect:{cfg.vm.name}',
@@ -1967,8 +1970,7 @@ def _ensure_shared_root_vm_mapping(
         mappings = vm_share_mappings(cfg, use_sudo=False)
     if any(src == source and t == tag for src, t in mappings):
         return
-    with PlanScope(
-        mgr,
+    with mgr.step(
         'Inspect shared-root VM mapping with libvirt privileges',
         why='Some hosts require privileged libvirt access to read the effective filesystem mapping state.',
         approval_scope=f'shared-root-vm-inspect-sudo:{cfg.vm.name}',
@@ -1976,8 +1978,7 @@ def _ensure_shared_root_vm_mapping(
         mappings = vm_share_mappings(cfg, use_sudo=True)
     if any(src == source and t == tag for src, t in mappings):
         return
-    with PlanScope(
-        mgr,
+    with mgr.step(
         'Ensure VM virtiofs mapping',
         why='Attach the shared-root virtiofs device so the guest can reach the shared-root export.',
         approval_scope=f'shared-root-vm-map:{cfg.vm.name}',
@@ -2119,8 +2120,7 @@ def _ensure_shared_root_guest_bind(
         ip,
         read_only=(attachment.access == ATTACHMENT_ACCESS_RO),
     )
-    with PlanScope(
-        mgr,
+    with mgr.step(
         'Mount and verify inside guest',
         why='Mount the shared-root export inside the guest, bind it to the requested destination, and verify the resulting source and access mode.',
         approval_scope=(
@@ -2179,22 +2179,23 @@ def _detach_shared_root_host_bind(
     if dry_run:
         print(f'DRYRUN: would unmount shared-root host bind target {target}')
         return
+    mgr = CommandManager.current()
     mounted = (
-        run_cmd(
+        mgr.run(
             ['mountpoint', '-q', str(target)],
             sudo=True,
-            sudo_action='read',
+            role='read',
             check=False,
             capture=True,
         ).code
         == 0
     )
     if mounted:
-        run_cmd(['umount', str(target)], sudo=True, check=True, capture=True)
-    run_cmd(
+        mgr.run(['umount', str(target)], sudo=True, check=True, capture=True)
+    mgr.run(
         ['rmdir', str(target)],
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
     )
@@ -2223,7 +2224,9 @@ def _detach_shared_root_guest_bind(
     if dry_run:
         log.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
-    run_cmd(cmd, sudo=False, check=False, capture=True)
+    CommandManager.current().run(
+        cmd, sudo=False, check=False, capture=True
+    )
 
 
 def _ensure_attachment_available_in_guest(
@@ -2250,8 +2253,7 @@ def _ensure_attachment_available_in_guest(
         )
         return
     if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
-        with IntentScope(
-            mgr,
+        with mgr.intent(
             'Attach and reconcile shared-root mapping',
             why='Ensure the requested host folder is exposed to the VM and bound to the requested guest destination.',
             role='modify',
@@ -2753,9 +2755,8 @@ def _probe_vm_running_nonsudo(vm_name: str) -> bool | None:
         None if the probe is inconclusive (e.g., permission denied).
     """
     from ..runtime import virsh_system_cmd
-    from ..util import run_cmd
 
-    res = run_cmd(
+    res = CommandManager.current().run(
         virsh_system_cmd('domstate', vm_name),
         sudo=False,
         check=False,
@@ -2941,8 +2942,8 @@ def _reconcile_attached_vm(
         else:
             try:
                 if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
-                    with IntentScope(
-                        CommandManager.current(),
+                    mgr = CommandManager.current()
+                    with mgr.intent(
                         'Attach and reconcile shared-root mapping',
                         why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
                         role='modify',
@@ -3273,7 +3274,7 @@ def _normalize_attachment_access(access: str) -> str:
 
 
 def _git_repo_context(host_src: Path) -> tuple[Path, Path]:
-    probe = run_cmd(
+    probe = CommandManager.current().run(
         ['git', '-C', str(host_src), 'rev-parse', '--show-toplevel'],
         sudo=False,
         check=False,
@@ -3318,7 +3319,8 @@ def _upsert_host_git_remote(
     ``changed`` is ``True`` only when this function adds or updates the remote
     entry.
     """
-    git_dir_probe = run_cmd(
+    mgr = CommandManager.current()
+    git_dir_probe = mgr.run(
         [
             'git',
             '-C',
@@ -3339,7 +3341,7 @@ def _upsert_host_git_remote(
             f'Git said: {msg}'
         )
     git_cfg = Path((git_dir_probe.stdout or '').strip()) / 'config'
-    probe = run_cmd(
+    probe = mgr.run(
         ['git', '-C', str(repo_root), 'remote', 'get-url', remote_name],
         sudo=False,
         check=False,
@@ -3380,12 +3382,12 @@ def _upsert_host_git_remote(
         path=git_cfg,
         purpose=purpose,
     )
-    run_cmd(cmd, sudo=False, check=True, capture=True)
+    mgr.run(cmd, sudo=False, check=True, capture=True)
     return git_cfg, True
 
 
 def _warn_if_git_repo_dirty(repo_root: Path) -> None:
-    dirty = run_cmd(
+    dirty = CommandManager.current().run(
         ['git', '-C', str(repo_root), 'status', '--porcelain'],
         sudo=False,
         check=False,
@@ -3398,7 +3400,7 @@ def _warn_if_git_repo_dirty(repo_root: Path) -> None:
 
 
 def _git_current_branch(repo_root: Path) -> str:
-    branch = run_cmd(
+    branch = CommandManager.current().run(
         ['git', '-C', str(repo_root), 'rev-parse', '--abbrev-ref', 'HEAD'],
         sudo=False,
         check=False,
@@ -3437,7 +3439,7 @@ def _ensure_guest_git_repo(
         f'git -C {shlex.quote(guest_repo_root)} config receive.denyCurrentBranch updateInstead && '
         f'git -C {shlex.quote(guest_repo_root)} symbolic-ref HEAD refs/heads/{shlex.quote(branch)}'
     )
-    res = run_cmd(
+    res = CommandManager.current().run(
         [
             'ssh',
             *ssh_base_args(ident, strict_host_key_checking='accept-new'),
@@ -3462,7 +3464,7 @@ def _push_host_repo_to_guest(
     remote_name: str,
     branch: str,
 ) -> None:
-    push = run_cmd(
+    push = CommandManager.current().run(
         [
             'git',
             '-C',
@@ -3525,7 +3527,7 @@ def _ensure_git_clone_attachment(
         branch=branch,
     )
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
-    final_probe = run_cmd(
+    final_probe = CommandManager.current().run(
         [
             'ssh',
             *ssh_base_args(ident, strict_host_key_checking='accept-new'),

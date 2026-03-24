@@ -21,7 +21,7 @@ from loguru import logger
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
-from ..util import CmdError, run_cmd
+from ..util import CmdError
 
 log = logger
 
@@ -369,11 +369,12 @@ def detach_vm_share(
     with tempfile.NamedTemporaryFile('w', delete=False) as f:
         f.write(xml)
         tmp = f.name
+    mgr = CommandManager.current()
     state = (
-        run_cmd(
+        mgr.run(
             ['virsh', 'domstate', cfg.vm.name],
             sudo=True,
-            sudo_action='read',
+            role='read',
             check=False,
             capture=True,
         )
@@ -386,10 +387,10 @@ def detach_vm_share(
         if is_running
         else ['virsh', 'detach-device', cfg.vm.name, tmp, '--config']
     )
-    res = run_cmd(
+    res = mgr.run(
         detach_cmd,
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
     )
@@ -450,10 +451,13 @@ def ensure_share_mounted(
     if dry_run:
         log.info('DRYRUN: {}', ' '.join(cmd))
         return
+    mgr = CommandManager.current()
     max_attempts = 12
     retry_sleep_s = 2.0
     for attempt in range(1, max_attempts + 1):
-        res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=20)
+        res = mgr.run(
+            cmd, sudo=False, check=False, capture=True, timeout=20
+        )
         if res.code == 0:
             if attempt > 1:
                 log.info(

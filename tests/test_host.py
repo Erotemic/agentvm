@@ -29,7 +29,7 @@ def test_check_commands(monkeypatch) -> None:
 def test_check_commands_with_sudo(monkeypatch) -> None:
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         calls.append(cmd)
         if cmd[:3] == ['sudo', '-n', 'true']:
             return CmdResult(0, '', '')
@@ -37,7 +37,7 @@ def test_check_commands_with_sudo(monkeypatch) -> None:
             return CmdResult(1, '', '')
         return CmdResult(0, '/usr/bin/whatever\n', '')
 
-    monkeypatch.setattr('aivm.host.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.host.CommandManager.run', fake_run_cmd)
     missing, err = check_commands_with_sudo()
     assert err is None
     assert 'virt-install' in missing
@@ -46,8 +46,10 @@ def test_check_commands_with_sudo(monkeypatch) -> None:
 
 def test_check_commands_with_sudo_no_passwordless(monkeypatch) -> None:
     monkeypatch.setattr(
-        'aivm.host.run_cmd',
-        lambda cmd, **kwargs: CmdResult(1, '', 'sudo: a password is required'),
+        'aivm.host.CommandManager.run',
+        lambda self, cmd, **kwargs: CmdResult(
+            1, '', 'sudo: a password is required'
+        ),
     )
     missing, err = check_commands_with_sudo()
     assert missing == []

@@ -11,11 +11,12 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+from .commands import CommandManager
 from .config import AgentVMConfig
 from .host import check_commands
 from .runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
 from .store import load_store, store_path
-from .util import run_cmd, which
+from .util import which
 from .vm import get_ip_cached, vm_share_mappings
 from .vm.drift import saved_vm_drift_report
 
@@ -55,8 +56,9 @@ def clip(text: str, *, max_lines: int = 60) -> str:
 def probe_runtime_environment() -> ProbeOutcome:
     """Best-effort detection of whether we are on bare metal or in a VM."""
     diag_lines: list[str] = []
+    mgr = CommandManager.current()
     if which('systemd-detect-virt'):
-        det = run_cmd(
+        det = mgr.run(
             ['systemd-detect-virt'], sudo=False, check=False, capture=True
         )
         raw = (det.stdout or det.stderr).strip()
@@ -138,7 +140,7 @@ def probe_runtime_environment() -> ProbeOutcome:
 
 def probe_network(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
     """Inspect libvirt network state for the configured network name."""
-    info = run_cmd(
+    info = CommandManager.current().run(
         virsh_system_cmd('net-info', cfg.network.name),
         sudo=use_sudo,
         check=False,
@@ -180,7 +182,7 @@ def probe_firewall(cfg: AgentVMConfig, *, use_sudo: bool) -> ProbeOutcome:
     """Check whether the expected nftables table exists."""
     if not cfg.firewall.enabled:
         return ProbeOutcome(None, 'disabled in config')
-    res = run_cmd(
+    res = CommandManager.current().run(
         ['nft', 'list', 'table', 'inet', cfg.firewall.table],
         sudo=use_sudo,
         check=False,
@@ -200,7 +202,8 @@ def probe_vm_state(
     cfg: AgentVMConfig, *, use_sudo: bool
 ) -> tuple[ProbeOutcome, bool | None]:
     """Return VM run-state probe plus explicit domain-defined flag."""
-    dom = run_cmd(
+    mgr = CommandManager.current()
+    dom = mgr.run(
         virsh_system_cmd('dominfo', cfg.vm.name),
         sudo=use_sudo,
         check=False,
@@ -226,7 +229,7 @@ def probe_vm_state(
                 None,
             )
         return ProbeOutcome(False, f'{cfg.vm.name} not defined'), False
-    state = run_cmd(
+    state = mgr.run(
         virsh_system_cmd('domstate', cfg.vm.name),
         sudo=use_sudo,
         check=False,
@@ -255,7 +258,9 @@ def probe_ssh_ready(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
         f'{cfg.vm.user}@{ip}',
         'true',
     ]
-    res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=5)
+    res = CommandManager.current().run(
+        cmd, sudo=False, check=False, capture=True, timeout=5
+    )
     detail = 'ready' if res.code == 0 else 'not ready'
     diag = (res.stdout + '\n' + res.stderr).strip()
     return ProbeOutcome(res.code == 0, detail, diag)
@@ -291,7 +296,9 @@ def probe_provisioned(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
         f'{cfg.vm.user}@{ip}',
         remote,
     ]
-    res = run_cmd(cmd, sudo=False, check=False, capture=True)
+    res = CommandManager.current().run(
+        cmd, sudo=False, check=False, capture=True
+    )
     if res.code == 0:
         return ProbeOutcome(True, 'configured packages appear present', '')
     diag = (res.stdout + '\n' + res.stderr).strip()
@@ -389,7 +396,7 @@ def render_status(
     # TODO(design): once digest-addressable image cache fallback exists,
     # surface both named-path and digest-path resolution in status.
     img_ok = (
-        run_cmd(
+        CommandManager.current().run(
             ['test', '-f', str(base_img)],
             sudo=use_sudo,
             check=False,
@@ -568,13 +575,14 @@ def render_status(
             lines.append('```')
         lines.append('')
 
-        net_info = run_cmd(
+        mgr = CommandManager.current()
+        net_info = mgr.run(
             virsh_system_cmd('net-info', cfg.network.name),
             sudo=use_sudo,
             check=False,
             capture=True,
         )
-        net_xml = run_cmd(
+        net_xml = mgr.run(
             virsh_system_cmd('net-dumpxml', cfg.network.name),
             sudo=use_sudo,
             check=False,
@@ -597,7 +605,7 @@ def render_status(
 
         lines.append(f'Firewall (inet {cfg.firewall.table})')
         if cfg.firewall.enabled:
-            fw_raw = run_cmd(
+            fw_raw = mgr.run(
                 ['nft', 'list', 'table', 'inet', cfg.firewall.table],
                 sudo=use_sudo,
                 check=False,
@@ -616,7 +624,7 @@ def render_status(
         lines.append('')
 
         lines.append('Image')
-        img_stat = run_cmd(
+        img_stat = mgr.run(
             ['bash', '-lc', f'ls -lh {base_img} 2>&1'],
             sudo=use_sudo,
             check=False,
@@ -640,7 +648,9 @@ def render_status(
             virsh_system_cmd('domifaddr', cfg.vm.name),
             virsh_system_cmd('net-dhcp-leases', cfg.network.name),
         ):
-            vm_raw = run_cmd(cmd, sudo=use_sudo, check=False, capture=True)
+            vm_raw = mgr.run(
+                cmd, sudo=use_sudo, check=False, capture=True
+            )
             lines.append(f'`{" ".join(cmd)}`')
             lines.append('```text')
             lines.append(

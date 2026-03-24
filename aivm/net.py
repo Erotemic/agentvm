@@ -12,9 +12,9 @@ import textwrap
 
 from loguru import logger
 
-from .commands import CommandManager, IntentScope, PlanScope
+from .commands import CommandManager
 from .config import AgentVMConfig
-from .util import run_cmd, which
+from .util import which
 
 log = logger
 
@@ -25,7 +25,9 @@ def _route_overlap(target_cidr: str) -> str | None:
         log.warning('ip command not found; skipping route overlap check')
         return None
     try:
-        res = run_cmd(['ip', '-4', 'route', 'show'], check=True, capture=True)
+        res = CommandManager.current().run(
+            ['ip', '-4', 'route', 'show'], check=True, capture=True
+        )
     except Exception as ex:
         log.warning('Unable to inspect routes for overlap checks: {}', ex)
         return None
@@ -67,8 +69,7 @@ def ensure_network(
         )
 
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         f'Ensure libvirt network {name}',
         why=(
             'Managed VMs rely on a known NAT bridge, gateway, and DHCP range '
@@ -79,8 +80,7 @@ def ensure_network(
         if dry_run:
             exists = False
         else:
-            with PlanScope(
-                mgr,
+            with mgr.step(
                 'Inspect managed network state',
                 why='Check whether the target libvirt network already exists.',
                 approval_scope=f'network-probe:{name}',
@@ -124,8 +124,7 @@ def ensure_network(
         with tempfile.NamedTemporaryFile('w', delete=False) as f:
             f.write(xml)
             tmp = f.name
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Define and start managed libvirt network',
             why=(
                 'Create the configured NAT network definition, enable autostart, '
@@ -180,17 +179,18 @@ def ensure_network(
 
 def network_status(cfg: AgentVMConfig) -> str:
     name = cfg.network.name
-    info = run_cmd(
+    mgr = CommandManager.current()
+    info = mgr.run(
         ['virsh', 'net-info', name],
         sudo=True,
-        sudo_action='read',
+        role='read',
         check=False,
         capture=True,
     )
-    dump = run_cmd(
+    dump = mgr.run(
         ['virsh', 'net-dumpxml', name],
         sudo=True,
-        sudo_action='read',
+        role='read',
         check=False,
         capture=True,
     )
@@ -204,17 +204,18 @@ def destroy_network(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
             'DRYRUN: virsh net-destroy {}; virsh net-undefine {}', name, name
         )
         return
-    run_cmd(
+    mgr = CommandManager.current()
+    mgr.run(
         ['virsh', 'net-destroy', name],
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
     )
-    run_cmd(
+    mgr.run(
         ['virsh', 'net-undefine', name],
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
     )

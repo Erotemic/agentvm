@@ -704,6 +704,37 @@ class CommandManager:
             self.flush_through(planned.command_id)
         return handle
 
+    def run(
+        self,
+        cmd: Sequence[str],
+        *,
+        sudo: bool = False,
+        role: CommandRole | None = None,
+        check: bool = True,
+        capture: bool = True,
+        text: bool = True,
+        input_text: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout: float | None = None,
+        summary: str = '',
+        detail: str = '',
+    ) -> CommandResult:
+        """Submit one command and return its result immediately."""
+        return self.submit(
+            cmd,
+            sudo=sudo,
+            role=role,
+            check=check,
+            capture=capture,
+            text=text,
+            input_text=input_text,
+            env=env,
+            timeout=timeout,
+            summary=summary,
+            detail=detail,
+            eager=True,
+        ).result()
+
     def flush(self) -> None:
         """Flush pending execution for the current plan or loose queue."""
         # TODO: does this need to be public?

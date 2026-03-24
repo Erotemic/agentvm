@@ -14,14 +14,14 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
-from ..commands import CommandManager, IntentScope, PlanScope
+from ..commands import CommandManager
 from ..config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     SUPPORTED_IMAGE_SHA256,
     AgentVMConfig,
 )
 from ..runtime import require_ssh_identity, ssh_base_args
-from ..util import CmdError, ensure_dir, run_cmd
+from ..util import CmdError, ensure_dir
 
 log = logger
 
@@ -89,11 +89,12 @@ def _is_missing_command_error(ex: Exception) -> bool:
 
 
 def _sudo_path_exists(path: Path) -> bool:
+    mgr = CommandManager.current()
     return (
-        run_cmd(
+        mgr.run(
             ['test', '-e', str(path)],
             sudo=True,
-            sudo_action='read',
+            role='read',
             check=False,
             capture=True,
         ).code
@@ -102,11 +103,12 @@ def _sudo_path_exists(path: Path) -> bool:
 
 
 def _sudo_file_exists(path: Path) -> bool:
+    mgr = CommandManager.current()
     return (
-        run_cmd(
+        mgr.run(
             ['test', '-f', str(path)],
             sudo=True,
-            sudo_action='read',
+            role='read',
             check=False,
             capture=True,
         ).code
@@ -115,11 +117,12 @@ def _sudo_file_exists(path: Path) -> bool:
 
 
 def _vm_defined(name: str) -> bool:
+    mgr = CommandManager.current()
     return (
-        run_cmd(
+        mgr.run(
             ['virsh', 'dominfo', name],
             sudo=True,
-            sudo_action='read',
+            role='read',
             check=False,
             capture=True,
         ).code
@@ -163,10 +166,11 @@ def _submit_qemu_dir_prepare(
 
 
 def _destroy_and_undefine_vm(name: str) -> None:
-    run_cmd(
+    mgr = CommandManager.current()
+    mgr.run(
         ['virsh', 'destroy', name],
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
     )
@@ -196,10 +200,10 @@ def _destroy_and_undefine_vm(name: str) -> None:
     ]
     errs: list[str] = []
     for cmd in attempts:
-        res = run_cmd(
+        res = mgr.run(
             cmd,
             sudo=True,
-            sudo_action='modify',
+            role='modify',
             check=False,
             capture=True,
         )
@@ -244,7 +248,7 @@ def _resolve_expected_image_sha256(*, image_url: str) -> tuple[str | None, str]:
                 f'Requested URL: {image_url}\n'
                 f'Path: {file_path}'
             )
-        out = run_cmd(
+        out = CommandManager.current().run(
             ['sha256sum', str(file_path)],
             check=True,
             capture=True,
@@ -340,8 +344,7 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
         # Re-verify named cache hits so interrupted downloads or stale local
         # files do not silently poison later VM creation runs.
         try:
-            with IntentScope(
-                mgr,
+            with mgr.intent(
                 'Fetch base image',
                 why=(
                     'VM creation needs a verified Ubuntu cloud image cached on '
@@ -349,8 +352,7 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
                 ),
                 role='modify',
             ):
-                with PlanScope(
-                    mgr,
+                with mgr.step(
                     'Verify cached base image',
                     why=(
                         'Revalidate the cached image so interrupted downloads or '
@@ -395,8 +397,7 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
         )
     else:
         log.info('Downloading base image to {} (showing progress)', base_img)
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         'Fetch base image',
         why=(
             'VM creation needs a verified Ubuntu cloud image cached on the '
@@ -404,8 +405,7 @@ def fetch_image(cfg: AgentVMConfig, *, dry_run: bool = False) -> Path:
         ),
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Fetch and verify base image',
             why=(
                 'Prepare the image directory, refresh any stale partial file, '
@@ -528,7 +528,7 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     base_root = Path(cfg.paths.base_dir) / cfg.vm.name
     grp = 'libvirt-qemu'
     if (
-        run_cmd(
+        CommandManager.current().run(
             ['getent', 'group', 'libvirt-qemu'], check=False, capture=True
         ).code
         != 0
@@ -540,8 +540,7 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         )
         return
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         'Prepare VM storage',
         why=(
             'libvirt/qemu need host directories with predictable ownership and '
@@ -549,8 +548,7 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         ),
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Prepare qemu-accessible VM directories',
             why=(
                 'Create the VM root plus image and cloud-init directories with '
@@ -719,8 +717,7 @@ def _write_cloud_init(
 
     _ensure_qemu_access(cfg, dry_run=False)
     mgr = CommandManager.current()
-    with IntentScope(
-        mgr,
+    with mgr.intent(
         'Generate cloud-init artifacts',
         why=(
             'VM creation needs cloud-init user-data, metadata, network config, '
@@ -728,8 +725,7 @@ def _write_cloud_init(
         ),
         role='modify',
     ):
-        with PlanScope(
-            mgr,
+        with mgr.step(
             'Write cloud-init files and build seed ISO',
             why=(
                 'Materialize the rendered cloud-init files on the host and pack '
@@ -806,11 +802,12 @@ def _ensure_disk(
 ) -> Path:
     p = _paths(cfg, dry_run=dry_run)
     vm_disk = p['img_dir'] / f'{cfg.vm.name}.qcow2'
+    mgr = CommandManager.current()
     if _sudo_path_exists(vm_disk) and recreate:
         if dry_run:
             log.info('DRYRUN: rm -f {}', vm_disk)
         else:
-            run_cmd(
+            mgr.run(
                 ['rm', '-f', str(vm_disk)], sudo=True, check=True, capture=True
             )
     if _sudo_path_exists(vm_disk):
@@ -824,7 +821,7 @@ def _ensure_disk(
             cfg.vm.disk_gb,
         )
         return vm_disk
-    run_cmd(
+    mgr.run(
         [
             'qemu-img',
             'create',
@@ -879,11 +876,12 @@ def create_or_start_vm(
 
     if vm_exists(cfg, dry_run=dry_run):
         if not recreate:
+            mgr = CommandManager.current()
             st = (
-                run_cmd(
+                mgr.run(
                     ['virsh', 'domstate', cfg.vm.name],
                     sudo=True,
-                    sudo_action='read',
+                    role='read',
                     check=False,
                     capture=True,
                 )
@@ -896,7 +894,7 @@ def create_or_start_vm(
             if dry_run:
                 log.info('DRYRUN: virsh start {}', cfg.vm.name)
                 return
-            run_cmd(
+            mgr.run(
                 ['virsh', 'start', cfg.vm.name],
                 sudo=True,
                 check=True,
@@ -984,10 +982,10 @@ def create_or_start_vm(
         log.info('DRYRUN: {}', ' '.join(cmd))
         return
     try:
-        first = run_cmd(
+        first = CommandManager.current().run(
             cmd,
             sudo=True,
-            sudo_action='modify',
+            role='modify',
             check=False,
             capture=True,
         )
@@ -1011,7 +1009,9 @@ def create_or_start_vm(
             except ValueError:
                 pass
             try:
-                run_cmd(cmd_no_uefi, sudo=True, check=True, capture=True)
+                CommandManager.current().run(
+                    cmd_no_uefi, sudo=True, check=True, capture=True
+                )
             except CmdError as ex2:
                 if source_dir and _is_missing_virtiofsd_error(ex2):
                     raise RuntimeError(
@@ -1028,10 +1028,10 @@ def create_or_start_vm(
 
 
 def _mac_for_vm(cfg: AgentVMConfig) -> str:
-    res = run_cmd(
+    res = CommandManager.current().run(
         ['virsh', 'domiflist', cfg.vm.name],
         sudo=True,
-        sudo_action='read',
+        role='read',
         check=False,
         capture=True,
     )
@@ -1088,11 +1088,12 @@ def wait_for_ip(
         ip = ''
         lease_text = ''
         domif_text = ''
+        mgr = CommandManager.current()
         if mac:
-            lease_text = run_cmd(
+            lease_text = mgr.run(
                 ['virsh', 'net-dhcp-leases', cfg.network.name],
                 sudo=True,
-                sudo_action='read',
+                role='read',
                 check=False,
                 capture=True,
             ).stdout
@@ -1106,10 +1107,10 @@ def wait_for_ip(
                 if ip:
                     break
         if not ip:
-            domif_text = run_cmd(
+            domif_text = mgr.run(
                 ['virsh', 'domifaddr', cfg.vm.name],
                 sudo=True,
-                sudo_action='read',
+                role='read',
                 check=False,
                 capture=True,
             ).stdout
@@ -1128,7 +1129,7 @@ def wait_for_ip(
             log.info('VM IP: {} (saved to {})', ip, ip_file)
             return ip
         if cached_ip:
-            ssh_probe = run_cmd(
+            ssh_probe = mgr.run(
                 [
                     'ssh',
                     *ssh_base_args(
@@ -1155,10 +1156,10 @@ def wait_for_ip(
                 return cached_ip
         now = time.time()
         if now >= next_status_at:
-            st = run_cmd(
+            st = mgr.run(
                 ['virsh', 'domstate', cfg.vm.name],
                 sudo=True,
-                sudo_action='read',
+                role='read',
                 check=False,
                 capture=True,
             ).stdout.strip()
@@ -1218,19 +1219,20 @@ def destroy_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
 
 def vm_status(cfg: AgentVMConfig) -> str:
     name = cfg.vm.name
-    dom = run_cmd(
+    mgr = CommandManager.current()
+    dom = mgr.run(
         ['virsh', 'dominfo', name],
         sudo=True,
-        sudo_action='read',
+        role='read',
         check=False,
         capture=True,
     )
     if dom.code != 0:
         return f'VM not found: {name}\n'
-    state = run_cmd(
+    state = mgr.run(
         ['virsh', 'domstate', name],
         sudo=True,
-        sudo_action='read',
+        role='read',
         check=False,
         capture=True,
     ).stdout.strip()
@@ -1284,7 +1286,7 @@ def wait_for_ssh(
             f'{cfg.vm.user}@{ip}',
             'true',
         ]
-        res = run_cmd(
+        res = CommandManager.current().run(
             cmd,
             sudo=False,
             check=False,
@@ -1345,5 +1347,7 @@ def provision(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         return
     wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
     log.info('Running provisioning apt installs (showing progress)')
-    run_cmd(cmd, sudo=False, check=True, capture=False)
+    CommandManager.current().run(
+        cmd, sudo=False, check=True, capture=False
+    )
     log.info('Provisioning complete.')

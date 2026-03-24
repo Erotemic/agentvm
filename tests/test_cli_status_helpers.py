@@ -24,16 +24,16 @@ def test_check_network_parsing_and_permission(monkeypatch) -> None:
     cfg.network.name = 'aivm-net'
 
     monkeypatch.setattr(
-        'aivm.status.run_cmd',
-        lambda *a, **k: CmdResult(1, '', 'permission denied'),
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(1, '', 'permission denied'),
     )
     out = probe_network(cfg, use_sudo=False)
     assert out.ok is None
     assert 'status --sudo' in out.detail
 
     monkeypatch.setattr(
-        'aivm.status.run_cmd',
-        lambda *a, **k: CmdResult(0, 'Active: yes\nAutostart: no\n', ''),
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(0, 'Active: yes\nAutostart: no\n', ''),
     )
     out = probe_network(cfg, use_sudo=True)
     assert out.ok is True
@@ -49,15 +49,16 @@ def test_check_firewall_branches(monkeypatch) -> None:
 
     cfg.firewall.enabled = True
     monkeypatch.setattr(
-        'aivm.status.run_cmd',
-        lambda *a, **k: CmdResult(1, '', 'operation not permitted'),
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(1, '', 'operation not permitted'),
     )
     out = probe_firewall(cfg, use_sudo=False)
     assert out.ok is None
     assert 'status --sudo' in out.detail
 
     monkeypatch.setattr(
-        'aivm.status.run_cmd', lambda *a, **k: CmdResult(0, '', '')
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(0, '', ''),
     )
     out = probe_firewall(cfg, use_sudo=True)
     assert out.ok is True
@@ -68,8 +69,8 @@ def test_check_vm_state_branches(monkeypatch) -> None:
     cfg = AgentVMConfig()
 
     monkeypatch.setattr(
-        'aivm.status.run_cmd',
-        lambda *a, **k: CmdResult(1, '', 'authentication failed'),
+        'aivm.status.CommandManager.run',
+        lambda self, *a, **k: CmdResult(1, '', 'authentication failed'),
     )
     out, defined = probe_vm_state(cfg, use_sudo=False)
     assert out.ok is None
@@ -78,13 +79,13 @@ def test_check_vm_state_branches(monkeypatch) -> None:
 
     calls = []
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         calls.append(cmd)
         if cmd[3] == 'dominfo':
             return CmdResult(0, 'ok', '')
         return CmdResult(0, 'running', '')
 
-    monkeypatch.setattr('aivm.status.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.status.CommandManager.run', fake_run_cmd)
     out, defined = probe_vm_state(cfg, use_sudo=True)
     assert out.ok is True
     assert defined is True
@@ -127,13 +128,13 @@ def test_render_status_non_sudo_keeps_vm_unknown_distinct_from_missing(
         ),
     )
 
-    def fake_run_cmd(cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):
         del kwargs
         if cmd[:2] == ['test', '-f']:
             return CmdResult(1, '', '')
         raise AssertionError(f'unexpected command: {cmd}')
 
-    monkeypatch.setattr('aivm.status.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.status.CommandManager.run', fake_run_cmd)
     monkeypatch.setattr(
         'aivm.status.probe_vm_state',
         lambda *a, **k: (
@@ -186,8 +187,8 @@ def test_vm_hardware_drift(monkeypatch) -> None:
     cfg.vm.cpus = 4
     cfg.vm.ram_mb = 8192
     monkeypatch.setattr(
-        'aivm.vm.drift.run_cmd',
-        lambda *a, **k: CmdResult(
+        'aivm.vm.drift.CommandManager.run',
+        lambda self, *a, **k: CmdResult(
             0, 'CPU(s): 2\nMax memory: 4194304 KiB\n', ''
         ),
     )
