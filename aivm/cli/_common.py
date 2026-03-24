@@ -476,6 +476,7 @@ def _confirm_sudo_block(
     yes: bool,
     purpose: str,
     action: str = 'modify',
+    preview_cmds: list[list[str]] | None = None,
 ) -> None:
     mode = str(action or 'modify').strip().lower()
     if mode not in {'read', 'modify'}:
@@ -497,6 +498,7 @@ def _confirm_sudo_block(
         yes=eff_yes,
         purpose=purpose,
         role=mode,
+        preview_cmds=preview_cmds,
     )
 
 

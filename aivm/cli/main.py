@@ -14,6 +14,7 @@ from pathlib import Path
 import scriptconfig as scfg
 
 from ..status import (
+    anticipated_status_sudo_commands,
     render_global_status,
     render_status,
 )
@@ -152,6 +153,9 @@ class StatusCLI(_BaseCommand):
                 yes=bool(args.yes),
                 purpose=f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'.",
                 action='read',
+                preview_cmds=anticipated_status_sudo_commands(
+                    cfg, detail=bool(args.detail)
+                ),
             )
         print(
             render_status(

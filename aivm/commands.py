@@ -806,6 +806,7 @@ class CommandManager:
         purpose: str,
         role: CommandRole,
         auth_required: bool,
+        preview_cmds: Sequence[Sequence[str]] | None = None,
     ) -> None:
         local_log = log.opt(depth=3)
         local_log.info(
@@ -813,6 +814,11 @@ class CommandManager:
             'read-only' if role == 'read' else 'state-changing',
         )
         local_log.info('  {}', purpose)
+        if preview_cmds:
+            local_log.info('  Planned sudo commands:')
+            for idx, cmd in enumerate(preview_cmds, start=1):
+                rendered = shell_join(['sudo', *(str(part) for part in cmd)])
+                local_log.info('    {}. {}', idx, rendered)
         if auth_required:
             local_log.info(
                 '  Sudo authentication appears to be required before the next command can run.'
@@ -843,6 +849,7 @@ class CommandManager:
         purpose: str,
         role: str = 'modify',
         yes: bool = False,
+        preview_cmds: Sequence[Sequence[str]] | None = None,
     ) -> None:
         """Preflight sudo approval/authentication for an upcoming operation."""
         if os.geteuid() == 0:
@@ -865,6 +872,7 @@ class CommandManager:
                 purpose=purpose,
                 role=eff_role,
                 auth_required=True,
+                preview_cmds=preview_cmds,
             )
         if auto_yes:
             if auth_required:
@@ -880,6 +888,7 @@ class CommandManager:
                 purpose=purpose,
                 role=eff_role,
                 auth_required=False,
+                preview_cmds=preview_cmds,
             )
         ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
         if ans in {'a', 'all'}:

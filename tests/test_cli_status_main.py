@@ -7,7 +7,11 @@ from pathlib import Path
 
 from aivm.cli.main import StatusCLI
 from aivm.config import AgentVMConfig
-from aivm.status import ProbeOutcome, render_global_status
+from aivm.status import (
+    ProbeOutcome,
+    anticipated_status_sudo_commands,
+    render_global_status,
+)
 from aivm.store import Store
 
 main_mod = importlib.import_module('aivm.cli.main')
@@ -58,6 +62,9 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     assert called['vm_opt'] == 'chosen-vm'
     assert called['sudo']['purpose'].startswith(
         'Inspect host/libvirt/firewall/VM state'
+    )
+    assert called['sudo']['preview_cmds'] == anticipated_status_sudo_commands(
+        cfg, detail=False
     )
     assert called['render'] == ('chosen-vm', cfg_path, False, True)
 

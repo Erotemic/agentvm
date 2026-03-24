@@ -316,6 +316,55 @@ def test_confirm_sudo_scope_prompts_for_read_auth_even_with_autoapprove(
     assert 'Future read-only sudo commands are configured to auto-approve' in joined
 
 
+def test_confirm_sudo_scope_logs_preview_commands(monkeypatch) -> None:
+    mgr = _activate_manager(auto_approve_readonly_sudo=True)
+    messages = []
+
+    class P:
+        def __init__(self, returncode=0, stdout='', stderr=''):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    class _FakeLog:
+        def info(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def debug(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def trace(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ['sudo', '-n', 'true']:
+            return P(returncode=1, stderr='sudo: a password is required')
+        if cmd == ['sudo', '-v']:
+            return P(returncode=0)
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(builtins, 'input', lambda prompt: 'y')
+    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_run)
+
+    mgr.confirm_sudo_scope(
+        purpose='Inspect VM status.',
+        role='read',
+        yes=False,
+        preview_cmds=[
+            ['virsh', '-c', 'qemu:///system', 'dominfo', 'demo-vm'],
+            ['nft', 'list', 'table', 'inet', 'aivm_fw'],
+        ],
+    )
+
+    joined = '\n'.join(messages)
+    assert 'Planned sudo commands:' in joined
+    assert 'sudo virsh -c qemu:///system dominfo demo-vm' in joined
+    assert 'sudo nft list table inet aivm_fw' in joined
+
+
 def test_plan_preview_includes_summary_and_command(monkeypatch) -> None:
     _activate_manager(yes_sudo=True)
     messages = []

@@ -134,6 +134,7 @@ def test_confirm_sudo_block_arms_intent(monkeypatch) -> None:
             'yes': True,
             'purpose': 'test',
             'role': 'modify',
+            'preview_cmds': None,
         }
     ]
 
@@ -174,6 +175,7 @@ def test_confirm_sudo_block_uses_effective_yes_sudo_context(
             'yes': True,
             'purpose': 'test',
             'role': 'modify',
+            'preview_cmds': None,
         }
     ]
 
@@ -194,6 +196,7 @@ def test_confirm_sudo_block_read_auto_approved_by_default(monkeypatch) -> None:
             'yes': True,
             'purpose': 'read check',
             'role': 'read',
+            'preview_cmds': None,
         }
     ]
 
@@ -220,6 +223,7 @@ def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
             'yes': False,
             'purpose': 'read check',
             'role': 'read',
+            'preview_cmds': None,
         }
     ]
 

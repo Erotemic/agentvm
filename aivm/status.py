@@ -298,6 +298,47 @@ def probe_provisioned(cfg: AgentVMConfig, ip: str) -> ProbeOutcome:
     return ProbeOutcome(False, 'one or more configured packages missing', diag)
 
 
+def anticipated_status_sudo_commands(
+    cfg: AgentVMConfig, *, detail: bool = False
+) -> list[list[str]]:
+    """Return the privileged probe commands status may run.
+
+    The status flow is partly data-dependent, so this is a best-effort
+    preview of the sudo-backed probes that may be executed when
+    ``render_status(..., use_sudo=True)`` runs.
+    """
+    base_img = (
+        Path(cfg.paths.base_dir) / cfg.vm.name / 'images' / cfg.image.cache_name
+    )
+    cmds: list[list[str]] = [
+        list(virsh_system_cmd('net-info', cfg.network.name)),
+        ['nft', 'list', 'table', 'inet', cfg.firewall.table],
+        ['test', '-f', str(base_img)],
+        list(virsh_system_cmd('dominfo', cfg.vm.name)),
+        list(virsh_system_cmd('domstate', cfg.vm.name)),
+        list(virsh_system_cmd('dumpxml', cfg.vm.name)),
+    ]
+    if detail:
+        cmds.extend(
+            [
+                list(virsh_system_cmd('net-dumpxml', cfg.network.name)),
+                ['bash', '-lc', f'ls -lh {base_img} 2>&1'],
+                list(virsh_system_cmd('domiflist', cfg.vm.name)),
+                list(virsh_system_cmd('domifaddr', cfg.vm.name)),
+                list(virsh_system_cmd('net-dhcp-leases', cfg.network.name)),
+            ]
+        )
+    deduped: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for cmd in cmds:
+        key = tuple(str(part) for part in cmd)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append([str(part) for part in cmd])
+    return deduped
+
+
 def render_status(
     cfg: AgentVMConfig,
     path: Path,
