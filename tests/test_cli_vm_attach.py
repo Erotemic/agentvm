@@ -890,7 +890,7 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     )
 
 
-def test_shared_root_host_bind_prompts_once_per_prepare_step(
+def test_shared_root_host_bind_prompts_once_per_privileged_step(
     monkeypatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
@@ -919,6 +919,8 @@ def test_shared_root_host_bind_prompts_once_per_prepare_step(
     def fake_subprocess_run(cmd, **kwargs):
         del kwargs
         parts = [str(part) for part in cmd]
+        if parts[:3] == ['sudo', '-n', 'true']:
+            return _Proc(1, '', 'sudo: a password is required')
         normalized = parts[1:] if parts[:1] == ['sudo'] else parts
         if normalized[:2] == ['findmnt', '-n']:
             return _Proc(1, '', '')
@@ -937,7 +939,12 @@ def test_shared_root_host_bind_prompts_once_per_prepare_step(
         dry_run=False,
     )
 
-    assert len(prompts) == 1
+    assert len(prompts) == 2
+    assert prompts == [
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+    ]
+    assert 'Step: Inspect shared-root host bind state' in messages
     assert 'Step: Prepare host bind targets' in messages
     assert '  1. Create shared-root parent directory' in messages
     assert '  2. Create project-specific host bind target' in messages
@@ -950,7 +957,7 @@ def test_shared_root_host_bind_prompts_once_per_prepare_step(
     )
 
 
-def test_shared_root_vm_mapping_uses_named_steps_and_single_prompt(
+def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
     monkeypatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
@@ -970,6 +977,8 @@ def test_shared_root_vm_mapping_uses_named_steps_and_single_prompt(
     def fake_subprocess_run(cmd, **kwargs):
         del kwargs
         parts = [str(part) for part in cmd]
+        if parts[:3] == ['sudo', '-n', 'true']:
+            return _Proc(1, '', 'sudo: a password is required')
         normalized = parts[1:] if parts[:1] == ['sudo'] else parts
         if normalized[:4] == ['virsh', '-c', 'qemu:///system', 'dumpxml']:
             return _Proc(1, '', 'domain not visible')
@@ -988,8 +997,13 @@ def test_shared_root_vm_mapping_uses_named_steps_and_single_prompt(
         vm_running=True,
     )
 
-    assert len(prompts) == 1
+    assert len(prompts) == 2
+    assert prompts == [
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
+    ]
     assert 'Step: Inspect shared-root VM mapping' in messages
+    assert 'Step: Inspect shared-root VM mapping with libvirt privileges' in messages
     assert 'Step: Ensure VM virtiofs mapping' in messages
     assert (
         '  1. Attach virtiofs device to running VM vm-shared-root-map'
