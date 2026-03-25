@@ -813,7 +813,7 @@ class CommandManager:
             text=True,
         )
         self._sudo_authentication_required = probe.returncode != 0
-        log.opt(depth=2).trace(
+        log.opt(depth=0).trace(
             'sudo auth probe returncode={} stderr={!r}',
             probe.returncode,
             (probe.stderr or '').strip(),
@@ -839,7 +839,7 @@ class CommandManager:
         auth_required: bool,
         preview_cmds: Sequence[Sequence[str]] | None = None,
     ) -> None:
-        local_log = log.opt(depth=3)
+        local_log = log.opt(depth=0)
         local_log.info(
             'About to request sudo for {} host operations:',
             'read-only' if role == 'read' else 'state-changing',
@@ -944,7 +944,7 @@ class CommandManager:
                 'External host file updates require confirmation, but stdin is not interactive. '
                 'Re-run with --yes.'
             )
-        local_log = log.opt(depth=3)
+        local_log = log.opt(depth=0)
         local_log.info('About to update a host file not managed by aivm:')
         local_log.info('  {}', os.fspath(path))
         local_log.info('  {}', purpose)
@@ -996,7 +996,7 @@ class CommandManager:
         if plan.rendered_preview:
             return
         breadcrumb = self.render_breadcrumb()
-        local_log = log.opt(depth=2)
+        local_log = log.opt(depth=0)
         local_log.info('Step: {}', plan.title)
         if plan.submitted_by:
             local_log.info('Submitted by: {}', plan.submitted_by)
@@ -1021,7 +1021,7 @@ class CommandManager:
 
     def _render_plan_full_commands(self, plan: CommandPlan) -> None:
         """Log the full raw command lines for every item in ``plan``."""
-        local_log = log.opt(depth=2)
+        local_log = log.opt(depth=0)
         local_log.info('Full commands for step: {}', plan.title)
         for idx, item in enumerate(plan.commands, start=1):
             local_log.info('  {}. {}', idx, self._raw_command(item.spec))
@@ -1041,7 +1041,7 @@ class CommandManager:
                     'Run a privileged host command without an explicit step.'
                 )
         if not spec.summary.strip():
-            log.opt(depth=3).info(
+            log.opt(depth=0).info(
                 '  This sudo command is not grouped into an explicit step. '
                 'Wrap related work in mgr.intent(...) / mgr.step(...) for clearer previews and fewer prompts.'
             )
@@ -1136,7 +1136,7 @@ class CommandManager:
         within_plan: bool = False,
     ) -> CommandResult:
         """Execute one command specification and normalize its result."""
-        local_log = log.opt(depth=3)
+        local_log = log.opt(depth=0)
         if spec.sudo and not within_plan:
             self._confirm_loose_sudo_command(spec)
         cmd = list(spec.cmd)

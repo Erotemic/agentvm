@@ -13,7 +13,9 @@ from aivm.config import (
 )
 from aivm.status import (
     ProbeOutcome,
+    probe_cwd_shared_with_vm,
     probe_runtime_environment,
+    render_status,
     render_global_status,
 )
 from aivm.store import Store, upsert_attachment
@@ -95,6 +97,105 @@ def test_render_global_status_includes_runtime_environment(
     text = render_global_status()
     assert 'Runtime environment' in text
     assert 'virtualized guest (kvm)' in text
+
+
+def test_probe_cwd_shared_with_vm_exact_match(
+    monkeypatch, tmp_path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'test-vm'
+    cfg_path = tmp_path / 'config.toml'
+    project = tmp_path / 'project'
+    project.mkdir()
+
+    reg = Store()
+    upsert_attachment(
+        reg,
+        host_path=project,
+        vm_name='test-vm',
+        mode='shared',
+        access='rw',
+        guest_dst='/guest/project',
+        tag='project',
+    )
+
+    monkeypatch.setattr('aivm.status.load_store', lambda _: reg)
+    monkeypatch.setattr('aivm.status.Path.cwd', lambda: project)
+
+    out = probe_cwd_shared_with_vm(cfg, cfg_path)
+    assert out.ok is True
+    assert 'current directory is shared' in out.detail
+    assert str(project) in out.detail
+
+
+def test_probe_cwd_shared_with_vm_parent_match(
+    monkeypatch, tmp_path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'test-vm'
+    cfg_path = tmp_path / 'config.toml'
+    project = tmp_path / 'project'
+    nested = project / 'src' / 'pkg'
+    nested.mkdir(parents=True)
+
+    reg = Store()
+    upsert_attachment(
+        reg,
+        host_path=project,
+        vm_name='test-vm',
+        mode='shared',
+        access='rw',
+        guest_dst='/guest/project',
+        tag='project',
+    )
+
+    monkeypatch.setattr('aivm.status.load_store', lambda _: reg)
+    monkeypatch.setattr('aivm.status.Path.cwd', lambda: nested)
+
+    out = probe_cwd_shared_with_vm(cfg, cfg_path)
+    assert out.ok is True
+    assert 'parent share covers current directory' in out.detail
+    assert str(project) in out.detail
+    assert 'src/pkg' in out.detail
+
+
+def test_render_status_reports_unshared_cwd(
+    monkeypatch, tmp_path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'test-vm'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.state_dir = str(tmp_path / 'state')
+    cfg.image.cache_name = 'base.img'
+    cfg_path = tmp_path / 'config.toml'
+    cwd = tmp_path / 'unshared'
+    cwd.mkdir()
+
+    reg = Store()
+    monkeypatch.setattr('aivm.status.load_store', lambda _: reg)
+    monkeypatch.setattr('aivm.status.Path.cwd', lambda: cwd)
+    monkeypatch.setattr('aivm.status.check_commands', lambda: ([], []))
+    monkeypatch.setattr(
+        'aivm.status.probe_runtime_environment',
+        lambda: ProbeOutcome(True, 'ok', ''),
+    )
+    monkeypatch.setattr(
+        'aivm.status.probe_network',
+        lambda cfg, use_sudo=False: ProbeOutcome(True, 'ok', ''),
+    )
+    monkeypatch.setattr(
+        'aivm.status.probe_firewall',
+        lambda cfg, use_sudo=False: ProbeOutcome(True, 'ok', ''),
+    )
+    monkeypatch.setattr(
+        'aivm.status.probe_vm_state',
+        lambda cfg, use_sudo=False: (ProbeOutcome(False, 'not defined', ''), False),
+    )
+    monkeypatch.setattr('aivm.status.get_ip_cached', lambda cfg: '')
+
+    text = render_status(cfg, cfg_path, detail=False, use_sudo=False)
+    assert 'Current directory shared' in text
+    assert 'is not covered by a saved VM share' in text
 
 
 def test_saved_vm_drift_report_no_nameerror(

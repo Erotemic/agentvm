@@ -19,6 +19,7 @@ from .store import load_store, store_path
 from .util import which
 from .vm import get_ip_cached, vm_share_mappings
 from .vm.drift import saved_vm_drift_report
+from .store import AttachmentEntry
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,45 @@ def clip(text: str, *, max_lines: int = 60) -> str:
     keep: list[str] = list(lines[:max_lines])
     keep.append(f'... ({len(lines) - max_lines} more lines)')
     return '\n'.join(keep)
+
+
+def probe_cwd_shared_with_vm(cfg: AgentVMConfig, store_cfg_path: Path) -> ProbeOutcome:
+    """Report whether the current working directory is covered by a saved share.
+
+    The status command is often run from inside a project folder, so this probe
+    checks whether that exact directory or one of its parents is registered as a
+    host attachment for the selected VM.
+    """
+    reg = load_store(store_cfg_path)
+    cwd = Path.cwd()
+    try:
+        cwd_norm = cwd.resolve()
+    except Exception:
+        cwd_norm = cwd.absolute()
+
+    matches: list[tuple[Path, AttachmentEntry]] = []
+    for att in reg.attachments:
+        if att.vm_name != cfg.vm.name or not att.host_path:
+            continue
+        share_root = Path(att.host_path)
+        try:
+            share_root = share_root.resolve()
+        except Exception:
+            share_root = share_root.absolute()
+        if cwd_norm == share_root or share_root in cwd_norm.parents:
+            matches.append((share_root, att))
+
+    if not matches:
+        return ProbeOutcome(False, f'{cwd_norm} is not covered by a saved VM share')
+
+    best_match, best_att = max(matches, key=lambda t: len(t[0].parts))
+    if cwd_norm == best_match:
+        return ProbeOutcome(True, f'current directory is shared: {best_att}')
+    rel = cwd_norm.relative_to(best_match)
+    return ProbeOutcome(
+        True,
+        f'parent share covers current directory: {best_match} ({best_att})',
+    )
 
 
 def probe_runtime_environment() -> ProbeOutcome:
@@ -493,6 +533,15 @@ def render_status(
         )
     else:
         lines.append(status_line(None, 'VM shared folders', 'VM not defined'))
+
+    # TODO: we probably want to clean up the detail that is shown here, but do want more than just
+    # the path that is shared. We want what mode it is shared in, which VMs if is shared with, what its access is.
+    # It could be the case that it is shared with more than 1 VM in different modes, maybe we only print the first
+    # and then that there are more, and show them all if --detail is given.  
+    cwd_share = probe_cwd_shared_with_vm(cfg, path)
+    lines.append(
+        status_line(cwd_share.ok, 'Current directory shared', cwd_share.detail)
+    )
 
     # Config drift check: compare saved VM config against actual libvirt state
     if vm_defined is True:
