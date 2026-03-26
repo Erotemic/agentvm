@@ -954,6 +954,8 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
             return _Proc(1, '', 'sudo: a password is required')
+        if parts[:2] == ['sudo', '-v']:
+            return _Proc(0, '', '')
         normalized = parts[1:] if parts[:1] == ['sudo'] else parts
         if normalized[:2] == ['findmnt', '-n']:
             return _Proc(1, '', '')
@@ -972,11 +974,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
         dry_run=False,
     )
 
-    assert len(prompts) == 2
-    assert prompts == [
-        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
-        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
-    ]
+    assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
     assert 'Step: Inspect shared-root host bind state' in messages
     assert 'Step: Prepare host bind targets' in messages
     assert '  1. Create shared-root parent directory' in messages

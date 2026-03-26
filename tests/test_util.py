@@ -268,7 +268,7 @@ def test_manager_run_uses_submit_execution_path(monkeypatch) -> None:
     ]
 
 
-def test_confirm_sudo_scope_prompts_for_read_auth_even_with_autoapprove(
+def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     monkeypatch,
 ) -> None:
     mgr = _activate_manager(auto_approve_readonly_sudo=True)
@@ -316,7 +316,7 @@ def test_confirm_sudo_scope_prompts_for_read_auth_even_with_autoapprove(
         yes=False,
     )
 
-    assert prompts == ['Continue? [y]es/[a]ll/[N]o: ']
+    assert prompts == []
     assert auth_cmds == [['sudo', '-n', 'true'], ['sudo', '-v']]
     joined = '\n'.join(messages)
     assert 'Read nftables firewall status.' in joined

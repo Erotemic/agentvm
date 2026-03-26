@@ -794,10 +794,10 @@ class CommandManager:
             return False
         if self.yes or self.yes_sudo or self._approve_all_remaining:
             return False
-        if self.sudo_authentication_required():
-            return True
         if role == 'read' and self.auto_approve_readonly_sudo:
             return False
+        if self.sudo_authentication_required():
+            return True
         return True
 
     def sudo_authentication_required(self) -> bool:
@@ -892,11 +892,7 @@ class CommandManager:
             or self.yes
             or self.yes_sudo
             or self._approve_all_remaining
-            or (
-                eff_role == 'read'
-                and self.auto_approve_readonly_sudo
-                and not auth_required
-            )
+            or (eff_role == 'read' and self.auto_approve_readonly_sudo)
         )
         if auth_required:
             self._render_sudo_prompt_context(
@@ -965,6 +961,18 @@ class CommandManager:
         if plan.approved:
             return
         self._render_plan_preview(plan)
+        readonly_autoapproved_sudo = [
+            item
+            for item in plan.commands
+            if item.spec.sudo
+            and self._effective_role(item.spec) == 'read'
+            and self.auto_approve_readonly_sudo
+        ]
+        if readonly_autoapproved_sudo and not self._plan_needs_approval(plan):
+            if self.sudo_authentication_required():
+                self._authenticate_sudo()
+            plan.approved = True
+            return
         if not self._plan_needs_approval(plan):
             plan.approved = True
             return
