@@ -45,7 +45,7 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import CmdError, ensure_dir, which
+from ..util import CmdError, CmdResult, ensure_dir, which
 from ..vm import (
     attach_vm_share,
     create_or_start_vm,
@@ -1840,6 +1840,31 @@ def _mount_source_compare_candidates(raw_source: str) -> list[str]:
     return candidates
 
 
+def _probe_findmnt_target_source(target: Path) -> CmdResult:
+    """Read the current source for a mount target via an explicit readonly step."""
+    mgr = CommandManager.current()
+    with mgr.intent(
+        'Inspect mount metadata',
+        why='Read the current mount source before deciding whether host-side repair is needed.',
+        role='read',
+        visible=False,
+    ):
+        with mgr.step(
+            'Inspect shared-root host bind state',
+            why='Determine whether the VM-specific bind target already points at the requested host folder.',
+            approval_scope=f'shared-root-host-findmnt:{target}',
+        ):
+            return mgr.run(
+                ['findmnt', '-n', '-o', 'SOURCE', '--target', str(target)],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                summary='Inspect current source for host bind target',
+                detail=f'target={target}',
+            )
+
+
 def _ensure_shared_root_host_bind(
     cfg: AgentVMConfig,
     attachment: ResolvedAttachment,
@@ -1862,20 +1887,7 @@ def _ensure_shared_root_host_bind(
             f'DRYRUN: would bind-mount {source_dir} -> {target} for shared-root mode'
         )
         return target
-    with mgr.step(
-        'Inspect shared-root host bind state',
-        why='Determine whether the VM-specific bind target already points at the requested host folder.',
-        approval_scope=f'shared-root-host-inspect:{cfg.vm.name}:{attachment.tag}',
-    ):
-        probe = mgr.submit(
-            ['findmnt', '-n', '-o', 'SOURCE', '--target', str(target)],
-            sudo=True,
-            role='read',
-            check=False,
-            capture=True,
-            summary='Inspect current source for host bind target',
-            detail=f'target={target}',
-        ).result()
+    probe = _probe_findmnt_target_source(target)
     mounted_source = (probe.stdout or '').strip().splitlines()
     current = mounted_source[0] if mounted_source else ''
     is_mountpoint = probe.code == 0 and bool(current)

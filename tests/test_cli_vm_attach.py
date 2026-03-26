@@ -990,6 +990,60 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
     )
 
 
+def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-root-readonly'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    source_dir = tmp_path / 'source'
+    source_dir.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED_ROOT,
+        source_dir=str(source_dir.resolve()),
+        guest_dst='/workspace/source',
+        tag='hostcode-source',
+    )
+
+    _activate_manager(monkeypatch, yes_sudo=False)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    messages = _capture_command_logs(monkeypatch)
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        builtins,
+        'input',
+        lambda prompt: (prompts.append(prompt) or 'y'),
+    )
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        parts = [str(part) for part in cmd]
+        if parts[:3] == ['sudo', '-n', 'true']:
+            return _Proc(0, '', '')
+        normalized = parts[1:] if parts[:1] == ['sudo'] else parts
+        if normalized[:2] == ['findmnt', '-n']:
+            return _Proc(1, '', '')
+        if normalized[:2] == ['mkdir', '-p']:
+            return _Proc(0, '', '')
+        if normalized[:2] == ['mount', '--bind']:
+            return _Proc(0, '', '')
+        raise AssertionError(f'unexpected command: {cmd}')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    _ensure_shared_root_host_bind(
+        cfg,
+        attachment,
+        yes=False,
+        dry_run=False,
+    )
+
+    assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
+    assert 'Step: Inspect shared-root host bind state' in messages
+    assert 'Step: Prepare host bind targets' in messages
+
+
 def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
     monkeypatch, tmp_path: Path
 ) -> None:
