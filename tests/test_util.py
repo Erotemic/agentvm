@@ -496,6 +496,49 @@ def test_read_only_command_stays_read_inside_modify_intent(
     ]
 
 
+def test_plan_preview_labels_read_only_commands(monkeypatch) -> None:
+    _activate_manager(yes_sudo=True)
+    messages = []
+
+    class P:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    class _FakeLog:
+        def info(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def debug(self, fmt: str, *args) -> None:
+            messages.append(fmt.format(*args))
+
+        def trace(self, fmt: str, *args) -> None:
+            return None
+
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: P(),
+    )
+
+    mgr = CommandManager.current()
+    with IntentScope(mgr, 'Inspect host', role='read'):
+        with PlanScope(mgr, 'Read mount metadata'):
+            mgr.submit(
+                ['findmnt', '-n', '-o', 'SOURCE', '--target', '/tmp/demo'],
+                sudo=True,
+                role='read',
+                check=False,
+                summary='Inspect mount source',
+            )
+
+    joined = '\n'.join(messages)
+    assert '  1. Inspect mount source' in joined
+    assert 'command (read-only): sudo findmnt -n -o SOURCE --target /tmp/demo' in joined
+
+
 def test_noninteractive_sudo_plan_requires_yes() -> None:
     _activate_manager()
     mgr = CommandManager.current()

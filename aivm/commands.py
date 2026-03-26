@@ -1010,7 +1010,10 @@ class CommandManager:
             role = self._effective_role(item.spec)
             preview_cmd = self._preview_command(item.spec)
             local_log.info('  {}. {}', idx, summary)
-            local_log.info('     command: {}', preview_cmd)
+            command_label = (
+                'command (read-only)' if role == 'read' else 'command'
+            )
+            local_log.info('     {}: {}', command_label, preview_cmd)
             if item.spec.detail:
                 local_log.debug('     detail: {}', item.spec.detail)
             raw_cmd = self._raw_command(item.spec)

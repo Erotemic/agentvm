@@ -1041,6 +1041,12 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
 
     assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
     assert 'Step: Inspect shared-root host bind state' in messages
+    assert any(
+        msg.startswith(
+            '     command (read-only): sudo findmnt -n -o SOURCE --target '
+        )
+        for msg in messages
+    )
     assert 'Step: Prepare host bind targets' in messages
 
 
