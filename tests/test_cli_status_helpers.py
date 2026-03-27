@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pytest import MonkeyPatch
+
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.status import (
@@ -20,7 +22,9 @@ from aivm.vm.drift import (
 )
 
 
-def test_check_network_parsing_and_permission(monkeypatch) -> None:
+def test_check_network_parsing_and_permission(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.network.name = 'aivm-net'
 
@@ -41,7 +45,9 @@ def test_check_network_parsing_and_permission(monkeypatch) -> None:
     assert 'autostart=no' in out.detail
 
 
-def test_check_firewall_branches(monkeypatch) -> None:
+def test_check_firewall_branches(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.enabled = False
     out = probe_firewall(cfg, use_sudo=False)
@@ -70,7 +76,9 @@ def test_check_firewall_branches(monkeypatch) -> None:
     assert 'present' in out.detail
 
 
-def test_probe_firewall_privileged_probe_uses_step(monkeypatch) -> None:
+def test_probe_firewall_privileged_probe_uses_step(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.enabled = True
     cfg.firewall.table = 'aivm_sandbox'
@@ -104,7 +112,9 @@ def test_probe_firewall_privileged_probe_uses_step(monkeypatch) -> None:
     assert step_titles == ['Inspect firewall status']
 
 
-def test_check_vm_state_branches(monkeypatch) -> None:
+def test_check_vm_state_branches(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
 
     monkeypatch.setattr(
@@ -133,7 +143,7 @@ def test_check_vm_state_branches(monkeypatch) -> None:
 
 
 def test_render_status_non_sudo_keeps_vm_unknown_distinct_from_missing(
-    monkeypatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'aivm-2404'
@@ -221,7 +231,9 @@ def test_parse_dominfo_hardware() -> None:
     assert mem == 2048
 
 
-def test_vm_hardware_drift(monkeypatch) -> None:
+def test_vm_hardware_drift(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.cpus = 4
     cfg.vm.ram_mb = 8192

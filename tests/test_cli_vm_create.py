@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import MonkeyPatch
 
 from aivm.cli import AgentVMModalCLI
 from aivm.cli.vm import VMCreateCLI, VMDestroyCLI
@@ -20,7 +21,7 @@ from aivm.store import (
 
 
 def test_vm_create_uses_defaults_and_adds_vm(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -54,7 +55,7 @@ def test_vm_create_uses_defaults_and_adds_vm(
 
 
 def test_vm_create_falls_back_to_existing_vm_when_defaults_missing(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -95,7 +96,7 @@ def test_vm_create_falls_back_to_existing_vm_when_defaults_missing(
 
 
 def test_vm_create_yes_preserves_existing_active_vm(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -135,7 +136,9 @@ def test_vm_create_yes_preserves_existing_active_vm(
     assert any(v.name == 'new-vm' for v in loaded.vms)
 
 
-def test_vm_create_set_default_opt_in(monkeypatch, tmp_path: Path) -> None:
+def test_vm_create_set_default_opt_in(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     defaults = AgentVMConfig()
@@ -175,7 +178,7 @@ def test_vm_create_set_default_opt_in(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_vm_create_interactive_default_prompt_no_keeps_active(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -225,7 +228,7 @@ def test_vm_create_interactive_default_prompt_no_keeps_active(
 
 
 def test_vm_destroy_removes_vm_and_attachments(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -254,7 +257,7 @@ def test_vm_destroy_removes_vm_and_attachments(
 
 
 def test_vm_destroy_warns_when_network_becomes_unused(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -281,7 +284,7 @@ def test_vm_destroy_warns_when_network_becomes_unused(
 
 
 def test_vm_destroy_accepts_positional_vm_name(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -315,7 +318,7 @@ def test_vm_destroy_accepts_positional_vm_name(
 
 
 def test_vm_create_interactive_edit_overrides_defaults(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -380,7 +383,9 @@ def test_vm_create_interactive_edit_overrides_defaults(
     assert net.network.subnet_cidr == '10.90.0.0/24'
 
 
-def test_vm_create_interactive_abort(monkeypatch, tmp_path: Path) -> None:
+def test_vm_create_interactive_abort(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     store.defaults = AgentVMConfig()
@@ -399,7 +404,7 @@ def test_vm_create_interactive_abort(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_vm_create_warns_when_requested_resources_look_too_high(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -437,7 +442,7 @@ def test_vm_create_warns_when_requested_resources_look_too_high(
 
 
 def test_vm_create_ensures_network_before_vm_create(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -473,7 +478,7 @@ def test_vm_create_ensures_network_before_vm_create(
 
 
 def test_vm_create_errors_when_resources_physically_impossible(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()

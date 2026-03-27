@@ -5,6 +5,8 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from aivm.config import AgentVMConfig
 from aivm.detect import (
     _recommend_vm_resources,
@@ -16,7 +18,9 @@ from aivm.detect import (
 from aivm.util import CmdResult
 
 
-def test_existing_ipv4_routes_parsing(monkeypatch) -> None:
+def test_existing_ipv4_routes_parsing(
+    monkeypatch: MonkeyPatch,
+) -> None:
     def fake_which(cmd: str):
         return '/usr/sbin/ip' if cmd == 'ip' else None
 
@@ -36,7 +40,9 @@ def test_existing_ipv4_routes_parsing(monkeypatch) -> None:
     assert ipaddress.ip_network('172.17.0.0/16') in got
 
 
-def test_pick_free_subnet(monkeypatch) -> None:
+def test_pick_free_subnet(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         'aivm.detect.existing_ipv4_routes',
         lambda: [ipaddress.ip_network('10.77.0.0/24')],
@@ -46,7 +52,7 @@ def test_pick_free_subnet(monkeypatch) -> None:
 
 
 def test_auto_defaults_sets_network_and_identity(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.paths.ssh_identity_file = ''
@@ -96,7 +102,7 @@ def test_recommend_vm_resources_large_host() -> None:
 
 
 def test_detect_ssh_identity_prefers_ssh_config_identityfile(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / 'home'
     ssh_dir = home / '.ssh'

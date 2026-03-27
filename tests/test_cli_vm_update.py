@@ -20,6 +20,8 @@ from aivm.cli.vm import (
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
 from aivm.util import CmdResult
+import pytest
+from pytest import MonkeyPatch
 
 
 def test_parse_qemu_img_virtual_size() -> None:
@@ -66,7 +68,9 @@ def test_apply_vm_update_rejects_disk_shrink() -> None:
         raise AssertionError('Expected RuntimeError on disk shrink')
 
 
-def test_vm_update_no_changes(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_vm_update_no_changes(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-noop'
     monkeypatch.setattr(
@@ -83,7 +87,9 @@ def test_vm_update_no_changes(monkeypatch, capsys, tmp_path: Path) -> None:
     assert 'already in sync' in out
 
 
-def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
+def test_vm_update_restarts_when_required(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-update'
     drift = VMUpdateDrift(cpus=(2, 4))
@@ -117,7 +123,9 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
     assert called['kwargs']['restart_policy'] == 'always'  # type: ignore
 
 
-def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
+def test_vm_update_drift_escalates_for_disk_probe(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-drift'
     cfg.vm.disk_gb = 60
@@ -175,7 +183,9 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
 
 
-def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
+def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
@@ -227,7 +237,7 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
 
 
 def test_prepare_attached_session_bootstraps_missing_vm(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     host_src = tmp_path / 'proj'
     host_src.mkdir()
@@ -311,7 +321,7 @@ def test_prepare_attached_session_bootstraps_missing_vm(
 
 
 def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     host_src = tmp_path / 'proj'
     host_src.mkdir()
@@ -420,7 +430,7 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
 
 
 def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     host_src = tmp_path / 'proj'
     host_src.mkdir()
@@ -454,7 +464,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
         lambda *a, **k: calls.append('config_init') or 0,
     )
 
-    def fake_vm_create(*a, **k):
+    def fake_vm_create(*a, **k) -> int:
         calls.append('vm_create')
         state['ready'] = True
         return 0
@@ -510,7 +520,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
 
 
 def test_prepare_attached_session_restores_saved_vm_attachments(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     from aivm.store import Store, save_store, upsert_attachment, upsert_vm
 
@@ -660,7 +670,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
 
 def test_prepare_attached_session_restores_saved_shared_root_attachments(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     from aivm.store import Store, save_store, upsert_attachment, upsert_vm
 

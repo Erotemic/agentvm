@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 
 import pytest
+from pytest import MonkeyPatch
 
 from aivm.commands import (
     CommandManager,
@@ -49,7 +50,9 @@ def test_nested_intent_breadcrumb_rendering() -> None:
     assert mgr.render_breadcrumb() == ''
 
 
-def test_plan_prompts_once_for_multiple_sudo_commands(monkeypatch) -> None:
+def test_plan_prompts_once_for_multiple_sudo_commands(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager()
     calls = []
     prompts = []
@@ -97,7 +100,9 @@ def test_plan_prompts_once_for_multiple_sudo_commands(monkeypatch) -> None:
     assert calls[2][0][:2] == ['sudo', 'virsh']
 
 
-def test_command_handle_result_flushes_through_handle(monkeypatch) -> None:
+def test_command_handle_result_flushes_through_handle(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager(yes_sudo=True)
     calls = []
 
@@ -129,7 +134,9 @@ def test_command_handle_result_flushes_through_handle(monkeypatch) -> None:
     assert second.done() is True
 
 
-def test_plan_yes_approves_current_block_only(monkeypatch) -> None:
+def test_plan_yes_approves_current_block_only(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager()
     prompts = []
 
@@ -163,7 +170,9 @@ def test_plan_yes_approves_current_block_only(monkeypatch) -> None:
     ]
 
 
-def test_plan_all_approves_current_and_future_blocks(monkeypatch) -> None:
+def test_plan_all_approves_current_and_future_blocks(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager()
     prompts = []
 
@@ -193,7 +202,9 @@ def test_plan_all_approves_current_and_future_blocks(monkeypatch) -> None:
     assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
 
 
-def test_plan_show_full_commands_then_reprompts(monkeypatch) -> None:
+def test_plan_show_full_commands_then_reprompts(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager()
     prompts = []
     messages = []
@@ -245,7 +256,9 @@ def test_plan_show_full_commands_then_reprompts(monkeypatch) -> None:
     assert "sudo bash -lc 'cat > /tmp/user-data <<'\"'\"'EOF'" in joined
 
 
-def test_manager_run_uses_submit_execution_path(monkeypatch) -> None:
+def test_manager_run_uses_submit_execution_path(
+    monkeypatch: MonkeyPatch,
+) -> None:
     mgr = _activate_manager(yes_sudo=True)
     calls = []
 
@@ -269,7 +282,7 @@ def test_manager_run_uses_submit_execution_path(monkeypatch) -> None:
 
 
 def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     mgr = _activate_manager(auto_approve_readonly_sudo=True)
     prompts = []
@@ -324,7 +337,9 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     assert 'Future read-only sudo commands are configured to auto-approve' in joined
 
 
-def test_confirm_sudo_scope_logs_preview_commands(monkeypatch) -> None:
+def test_confirm_sudo_scope_logs_preview_commands(
+    monkeypatch: MonkeyPatch,
+) -> None:
     mgr = _activate_manager(auto_approve_readonly_sudo=True)
     messages = []
 
@@ -373,7 +388,9 @@ def test_confirm_sudo_scope_logs_preview_commands(monkeypatch) -> None:
     assert 'sudo nft list table inet aivm_fw' in joined
 
 
-def test_plan_preview_includes_summary_and_command(monkeypatch) -> None:
+def test_plan_preview_includes_summary_and_command(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager(yes_sudo=True)
     messages = []
 
@@ -414,7 +431,9 @@ def test_plan_preview_includes_summary_and_command(monkeypatch) -> None:
     assert 'command: sudo systemctl enable --now libvirtd' in joined
 
 
-def test_run_logs_include_submitter_attribution(monkeypatch) -> None:
+def test_run_logs_include_submitter_attribution(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager(yes_sudo=True)
     messages = []
 
@@ -462,7 +481,7 @@ def test_run_logs_include_submitter_attribution(monkeypatch) -> None:
 
 
 def test_read_only_command_stays_read_inside_modify_intent(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     _activate_manager()
     calls = []
@@ -496,7 +515,9 @@ def test_read_only_command_stays_read_inside_modify_intent(
     ]
 
 
-def test_plan_preview_labels_read_only_commands(monkeypatch) -> None:
+def test_plan_preview_labels_read_only_commands(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _activate_manager(yes_sudo=True)
     messages = []
 
@@ -554,7 +575,9 @@ def test_noninteractive_sudo_plan_requires_yes() -> None:
                 )
 
 
-def test_confirm_file_update_requires_yes_noninteractive(monkeypatch) -> None:
+def test_confirm_file_update_requires_yes_noninteractive(
+    monkeypatch: MonkeyPatch,
+) -> None:
     mgr = _activate_manager()
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
     with pytest.raises(RuntimeError, match='Re-run with --yes'):
@@ -566,7 +589,7 @@ def test_confirm_file_update_requires_yes_noninteractive(monkeypatch) -> None:
 
 
 def test_confirm_file_update_aborts_on_negative_response(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     mgr = _activate_manager()
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)

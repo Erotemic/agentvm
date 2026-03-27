@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pytest import MonkeyPatch
 
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
@@ -15,12 +16,16 @@ from aivm.net import (
 from aivm.util import CmdResult
 
 
-def test_route_overlap_none_without_ip(monkeypatch) -> None:
+def test_route_overlap_none_without_ip(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setattr('aivm.net.which', lambda cmd: None)
     assert _route_overlap('10.77.0.0/24') is None
 
 
-def test_route_overlap_detects_conflict(monkeypatch) -> None:
+def test_route_overlap_detects_conflict(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setattr('aivm.net.which', lambda cmd: '/usr/sbin/ip')
     monkeypatch.setattr(
         'aivm.net.CommandManager.run',
@@ -34,7 +39,9 @@ def test_route_overlap_detects_conflict(monkeypatch) -> None:
     assert _route_overlap('10.77.0.0/23') == '10.77.0.0/24'
 
 
-def test_ensure_network_bridge_len_and_overlap_errors(monkeypatch) -> None:
+def test_ensure_network_bridge_len_and_overlap_errors(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.network.bridge = 'this-bridge-name-is-too-long'
     with pytest.raises(RuntimeError):
@@ -45,7 +52,9 @@ def test_ensure_network_bridge_len_and_overlap_errors(monkeypatch) -> None:
         ensure_network(cfg)
 
 
-def test_ensure_network_existing_not_recreate(monkeypatch) -> None:
+def test_ensure_network_existing_not_recreate(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     calls = []
 
@@ -66,7 +75,9 @@ def test_ensure_network_existing_not_recreate(monkeypatch) -> None:
     assert calls == [['virsh', 'net-info', cfg.network.name]]
 
 
-def test_network_status_and_destroy(monkeypatch) -> None:
+def test_network_status_and_destroy(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     calls = []
 

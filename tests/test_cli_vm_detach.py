@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from aivm.cli.vm import AttachmentMode, VMDetachCLI
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
@@ -11,7 +13,7 @@ from aivm.store import AttachmentEntry, Store, find_attachment_for_vm
 
 
 def test_vm_detach_shared_removes_store_and_detaches_mapping(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared'
@@ -62,7 +64,9 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
     assert find_attachment_for_vm(store, host_src, cfg.vm.name) is None
 
 
-def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
+def test_vm_detach_git_only_updates_store(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
     cfg_path = tmp_path / 'config.toml'
@@ -113,7 +117,7 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_vm_detach_shared_root_unbinds_guest_and_host(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root'

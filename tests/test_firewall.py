@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pytest import MonkeyPatch
+
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.firewall import (
@@ -12,7 +14,9 @@ from aivm.firewall import (
 )
 
 
-def test_effective_bridge_and_gateway_prefers_live(monkeypatch) -> None:
+def test_effective_bridge_and_gateway_prefers_live(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.network.name = 'aivm-net'
     cfg.network.bridge = 'virbr-aivm'
@@ -40,7 +44,9 @@ def test_effective_bridge_and_gateway_prefers_live(monkeypatch) -> None:
     assert gateway == '10.99.0.1'
 
 
-def test_nft_script_deduplicates_blocks(monkeypatch) -> None:
+def test_nft_script_deduplicates_blocks(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.block_cidrs = ['10.0.0.0/8', '10.0.0.0/8']
     cfg.firewall.extra_block_cidrs = ['192.168.0.0/16', ' 192.168.0.0/16 ']
@@ -53,7 +59,9 @@ def test_nft_script_deduplicates_blocks(monkeypatch) -> None:
     assert script.count('192.168.0.0/16') == 1
 
 
-def test_nft_script_allows_configured_ports(monkeypatch) -> None:
+def test_nft_script_allows_configured_ports(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.allow_tcp_ports = [22, 2222, 22]
     cfg.firewall.allow_udp_ports = [53]
@@ -69,7 +77,9 @@ def test_nft_script_allows_configured_ports(monkeypatch) -> None:
     )
 
 
-def test_nft_script_invalid_port_raises(monkeypatch) -> None:
+def test_nft_script_invalid_port_raises(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.allow_tcp_ports = [0]
     monkeypatch.setattr(
@@ -84,13 +94,17 @@ def test_nft_script_invalid_port_raises(monkeypatch) -> None:
         raise AssertionError('Expected RuntimeError for invalid firewall port')
 
 
-def test_apply_firewall_disabled_skips(monkeypatch) -> None:
+def test_apply_firewall_disabled_skips(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.enabled = False
     apply_firewall(cfg, dry_run=False)
 
 
-def test_firewall_status_uses_readonly_step(monkeypatch) -> None:
+def test_firewall_status_uses_readonly_step(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.firewall.table = 'aivm_fw'
     calls = []
@@ -125,7 +139,9 @@ def test_firewall_status_uses_readonly_step(monkeypatch) -> None:
     ]
 
 
-def test_apply_firewall_runs_delete_then_apply(monkeypatch) -> None:
+def test_apply_firewall_runs_delete_then_apply(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     calls = []
 

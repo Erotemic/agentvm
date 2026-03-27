@@ -105,7 +105,7 @@ class CommandError(RuntimeError):
         result: The normalized result object for the failed command.
     """
 
-    def __init__(self, cmd: Sequence[str] | str, result: CommandResult):
+    def __init__(self, cmd: Sequence[str] | str, result: CommandResult) -> None:
         self.cmd = cmd
         self.result = result
         super().__init__(
@@ -302,7 +302,7 @@ class IntentScope:
         why: str = '',
         role: CommandRole = 'modify',
         visible: bool = True,
-    ):
+    ) -> None:
         self.manager = manager
         self.frame = IntentFrame(
             title=title, why=why, role=role, visible=visible
@@ -338,7 +338,7 @@ class PlanScope:
         *,
         why: str = '',
         approval_scope: str = '',
-    ):
+    ) -> None:
         self.manager = manager
         self.plan = CommandPlan(
             title=title,
@@ -551,7 +551,7 @@ class CommandManager:
         yes: bool = False,
         yes_sudo: bool = False,
         auto_approve_readonly_sudo: bool = True,
-    ):
+    ) -> None:
         self.yes = bool(yes)
         self.yes_sudo = bool(yes_sudo)
         self.auto_approve_readonly_sudo = bool(auto_approve_readonly_sudo)

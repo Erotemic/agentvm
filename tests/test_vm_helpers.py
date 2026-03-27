@@ -6,6 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from pytest import MonkeyPatch
 
 from aivm.cli.vm import _ensure_shared_root_host_bind
 from aivm.commands import CommandManager
@@ -43,7 +44,7 @@ class _Proc:
         self.stderr = stderr
 
 
-def test_mac_for_vm_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mac_for_vm_parsing(monkeypatch: MonkeyPatch) -> None:
     stdout = """
  Interface   Type      Source     Model    MAC
 ---------------------------------------------------------------
@@ -61,7 +62,9 @@ def test_mac_for_vm_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _mac_for_vm(cfg) == '52:54:00:12:34:56'
 
 
-def test_mac_for_vm_uses_step_when_ungrouped(monkeypatch) -> None:
+def test_mac_for_vm_uses_step_when_ungrouped(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-mac'
     CommandManager.activate(CommandManager(yes_sudo=True))
@@ -104,7 +107,9 @@ def test_get_ip_cached(tmp_path: Path) -> None:
     assert get_ip_cached(cfg) == '10.77.0.123'
 
 
-def test_vm_share_helpers(monkeypatch, tmp_path: Path) -> None:
+def test_vm_share_helpers(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     source = tmp_path / 'src'
     source.mkdir()
     cfg = AgentVMConfig()
@@ -137,7 +142,9 @@ def test_vm_share_helpers(monkeypatch, tmp_path: Path) -> None:
     ]
 
 
-def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
+def test_vm_has_virtiofs_shared_memory(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     _activate_manager()
     xml_with_shared = """
@@ -163,7 +170,7 @@ def test_vm_has_virtiofs_shared_memory(monkeypatch) -> None:
 
 
 def test_attach_vm_share_treats_existing_mapping_as_satisfied(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
@@ -221,7 +228,9 @@ def test_attach_vm_share_treats_existing_mapping_as_satisfied(
     assert norm1[:2] == ['virsh', 'attach-device']
 
 
-def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:
+def test_ensure_share_mounted_retries_then_succeeds(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
@@ -259,7 +268,9 @@ def test_ensure_share_mounted_retries_then_succeeds(monkeypatch) -> None:
     assert sleeps == [2.0]
 
 
-def test_ensure_share_mounted_raises_after_retries(monkeypatch) -> None:
+def test_ensure_share_mounted_raises_after_retries(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-share-fail'
     cfg.vm.user = 'agent'
@@ -295,7 +306,9 @@ def test_ensure_share_mounted_raises_after_retries(monkeypatch) -> None:
     assert len(sleeps) == 11
 
 
-def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
+def test_ensure_share_mounted_read_only_uses_ro_option(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
@@ -332,7 +345,9 @@ def test_ensure_share_mounted_read_only_uses_ro_option(monkeypatch) -> None:
     assert 'mount -t virtiofs -o ro' in remote_script
 
 
-def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
+def test_create_vm_fallback_when_uefi_firmware_missing(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: False)
     monkeypatch.setattr(
@@ -378,7 +393,7 @@ def test_create_vm_fallback_when_uefi_firmware_missing(monkeypatch) -> None:
 
 
 def test_create_vm_prefers_uefi_even_when_host_looks_nested(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     cfg = AgentVMConfig()
     monkeypatch.setattr('aivm.vm.lifecycle.vm_exists', lambda *a, **k: False)
@@ -412,7 +427,7 @@ def test_create_vm_prefers_uefi_even_when_host_looks_nested(
 
 
 def test_create_or_start_existing_vm_uses_step_for_state_and_start(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-existing'
@@ -467,7 +482,7 @@ def test_create_or_start_existing_vm_uses_step_for_state_and_start(
 
 
 def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
@@ -511,7 +526,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
 
 
 def test_fetch_image_uses_atomic_temp_then_move(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -556,7 +571,7 @@ def test_fetch_image_uses_atomic_temp_then_move(
 
 
 def test_fetch_image_revalidates_cached_image_before_reuse(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -592,7 +607,7 @@ def test_fetch_image_revalidates_cached_image_before_reuse(
 
 
 def test_fetch_image_redownloads_when_cached_hash_is_stale(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -638,7 +653,7 @@ def test_fetch_image_redownloads_when_cached_hash_is_stale(
 
 
 def test_fetch_image_validates_ubuntu_checksum(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -676,7 +691,7 @@ def test_fetch_image_validates_ubuntu_checksum(
 
 
 def test_fetch_image_raises_on_checksum_mismatch(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -712,7 +727,7 @@ def test_fetch_image_raises_on_checksum_mismatch(
 
 
 def test_fetch_image_rejects_unsupported_url(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
@@ -727,7 +742,7 @@ def test_fetch_image_rejects_unsupported_url(
 
 
 def test_fetch_image_accepts_supported_file_url(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -769,7 +784,7 @@ def test_fetch_image_accepts_supported_file_url(
 
 
 def test_fetch_image_preview_uses_grouped_block_summaries(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -828,7 +843,7 @@ def test_fetch_image_preview_uses_grouped_block_summaries(
 
 
 def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     _activate_manager()
     cfg = AgentVMConfig()
@@ -884,7 +899,7 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
 
 
 def test_fetch_image_rejects_unsupported_file_url_digest(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
@@ -901,7 +916,9 @@ def test_fetch_image_rejects_unsupported_file_url_digest(
         fetch_image(cfg, dry_run=False)
 
 
-def test_wait_for_ssh_uses_generous_probe_timeout(monkeypatch) -> None:
+def test_wait_for_ssh_uses_generous_probe_timeout(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
@@ -933,7 +950,7 @@ def test_wait_for_ssh_uses_generous_probe_timeout(monkeypatch) -> None:
 
 
 def test_create_vm_raises_clear_error_when_virtiofsd_missing(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'
@@ -974,7 +991,7 @@ def test_create_vm_raises_clear_error_when_virtiofsd_missing(
 
 
 def test_create_vm_raises_clear_error_when_guest_memory_unavailable(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vmx'

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pytest import MonkeyPatch
+
 from aivm.config import AgentVMConfig
 from aivm.resource_checks import (
     vm_resource_impossible_lines,
@@ -9,7 +11,9 @@ from aivm.resource_checks import (
 )
 
 
-def test_impossible_uses_memtotal_not_memavailable(monkeypatch) -> None:
+def test_impossible_uses_memtotal_not_memavailable(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.ram_mb = 1024
     cfg.vm.cpus = 2
@@ -22,7 +26,9 @@ def test_impossible_uses_memtotal_not_memavailable(monkeypatch) -> None:
     assert problems == []
 
 
-def test_impossible_flags_memtotal_and_cpu(monkeypatch) -> None:
+def test_impossible_flags_memtotal_and_cpu(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.ram_mb = 16384
     cfg.vm.cpus = 16
@@ -35,7 +41,7 @@ def test_impossible_flags_memtotal_and_cpu(monkeypatch) -> None:
 
 
 def test_warning_uses_memtotal_and_ignores_low_memavailable(
-    monkeypatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.ram_mb = 1024

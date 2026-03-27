@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from aivm.cli.main import StatusCLI
 from aivm.config import AgentVMConfig
 from aivm.status import (
@@ -17,7 +19,9 @@ from aivm.store import Store
 main_mod = importlib.import_module('aivm.cli.main')
 
 
-def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
+def test_status_cli_uses_vm_opt_and_sudo(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'chosen-vm'
     cfg_path = tmp_path / 'config.toml'
@@ -69,7 +73,9 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     assert called['render'] == ('chosen-vm', cfg_path, False, True)
 
 
-def test_render_global_status_wording(monkeypatch) -> None:
+def test_render_global_status_wording(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setattr('aivm.status.check_commands', lambda: ([], []))
     monkeypatch.setattr(
         'aivm.status.probe_runtime_environment',

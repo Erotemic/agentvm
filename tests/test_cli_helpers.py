@@ -20,7 +20,8 @@ from aivm.cli.vm import (
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.store import Store, save_store, upsert_attachment, upsert_vm
-
+import pytest
+from pytest import MonkeyPatch
 
 def test_parse_sync_paths_arg() -> None:
     got = _parse_sync_paths_arg(' ~/.gitconfig, ,~/.bashrc,')
@@ -37,7 +38,7 @@ def test_auto_share_tag_collision() -> None:
 
 
 def test_upsert_ssh_config_no_confirm_when_unchanged(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv('HOME', str(tmp_path))
     cfg = AgentVMConfig()
@@ -52,7 +53,9 @@ def test_upsert_ssh_config_no_confirm_when_unchanged(
     assert changed2 is False
 
 
-def test_plan_omits_default_config_flag(monkeypatch, capsys) -> None:
+def test_plan_omits_default_config_flag(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     default = Path('/tmp/default-config.toml')
     monkeypatch.setattr(
         'aivm.cli.help._cfg_path',
@@ -65,7 +68,7 @@ def test_plan_omits_default_config_flag(monkeypatch, capsys) -> None:
     assert f'Config: {default}' in out
 
 
-def test_plan_includes_nondefault_config_flag(monkeypatch, capsys) -> None:
+def test_plan_includes_nondefault_config_flag(monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     default = Path('/tmp/default-config.toml')
     custom = Path('/tmp/custom-config.toml')
     monkeypatch.setattr(
@@ -78,7 +81,9 @@ def test_plan_includes_nondefault_config_flag(monkeypatch, capsys) -> None:
     assert f'--config {custom}' in out
 
 
-def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
+def test_cli_yes_sudo_defaults_from_config(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     store.defaults = AgentVMConfig()
@@ -93,7 +98,7 @@ def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_cli_auto_approve_readonly_sudo_defaults_from_config(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -124,7 +129,7 @@ def test_cli_verbose_defaults_from_behavior_config(tmp_path: Path) -> None:
 
 
 def test_help_raw_outputs_direct_system_commands(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch: MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -146,7 +151,7 @@ def test_help_raw_outputs_direct_system_commands(
     assert 'sudo nft list table inet fw-raw' in clean
 
 
-def test_help_completion_outputs_bash_setup(capsys) -> None:
+def test_help_completion_outputs_bash_setup(capsys: pytest.CaptureFixture[str]) -> None:
     rc = HelpCompletionCLI.main(argv=False, shell='bash', yes=True)
     assert rc == 0
     out = capsys.readouterr().out
@@ -163,7 +168,7 @@ def test_help_completion_rejects_unknown_shell() -> None:
 
 
 def test_hydrate_runtime_defaults_skips_detection_when_paths_already_set(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     cfg = AgentVMConfig()
     cfg.paths.ssh_identity_file = '/tmp/id_existing'
@@ -178,7 +183,7 @@ def test_hydrate_runtime_defaults_skips_detection_when_paths_already_set(
 
 
 def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     host_src = tmp_path / 'proj'
@@ -207,7 +212,7 @@ def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(
 
 
 def test_resolve_vm_name_errors_noninteractive_for_multi_attached_folder(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     host_src = tmp_path / 'proj'
@@ -236,7 +241,7 @@ def test_resolve_vm_name_errors_noninteractive_for_multi_attached_folder(
 
 
 def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     fake_home = tmp_path / 'home'
