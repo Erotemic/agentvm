@@ -573,7 +573,3 @@ def saved_vm_drift_report(
         use_sudo=use_sudo,
         expected_mappings=expected_mappings,
     )
-
-
-# Alias for backwards compatibility
-saved_attachment_drift_report = saved_vm_drift_report
