@@ -22,7 +22,7 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     cfg.vm.name = 'chosen-vm'
     cfg_path = tmp_path / 'config.toml'
 
-    called: dict[str, object] = {}
+    called: dict[str, object] = {}  # type: ignore
 
     def fake_load_cfg_with_path(config, vm_opt=''):
         called['vm_opt'] = vm_opt
@@ -60,10 +60,10 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     )
     assert rc == 0
     assert called['vm_opt'] == 'chosen-vm'
-    assert called['sudo']['purpose'].startswith(
+    assert (called['sudo']['purpose']).startswith(  # type: ignore
         'Inspect host/libvirt/firewall/VM state'
     )
-    assert called['sudo']['preview_cmds'] == anticipated_status_sudo_commands(
+    assert (called['sudo']['preview_cmds']) == anticipated_status_sudo_commands(  # type: ignore
         cfg, detail=False
     )
     assert called['render'] == ('chosen-vm', cfg_path, False, True)

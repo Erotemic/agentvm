@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -12,9 +15,19 @@ from .commands import shell_join
 
 # Keep these aliases so existing tests/helpers can still monkeypatch the
 # underlying runtime modules through ``aivm.util`` when needed.
-os = _commands.os
-sys = _commands.sys
-subprocess = _commands.subprocess
+# Re-export the standard library modules for convenience.
+
+__all__ = [
+    'CmdError',
+    'CmdResult',
+    'shell_join',
+    'which',
+    'ensure_dir',
+    'expand',
+    'os',
+    'sys',
+    'subprocess',
+]
 
 
 def which(cmd: str) -> Optional[str]:

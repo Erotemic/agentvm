@@ -187,7 +187,7 @@ class TestExpectedMappingForAttachment:
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode='git',
+            mode=AttachmentMode.GIT,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path',
@@ -204,7 +204,7 @@ class TestAttachmentHasMapping:
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode='shared',
+            mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path',
@@ -220,7 +220,7 @@ class TestAttachmentHasMapping:
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode='shared',
+            mode=AttachmentMode.SHARED,
             source_dir='/home/user/project',
             tag='my-tag',
             guest_dst='/guest/path',
@@ -235,7 +235,7 @@ class TestAttachmentHasMapping:
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode='shared-root',
+            mode=AttachmentMode.SHARED_ROOT,
             source_dir='/home/user/project',
             tag='shared-root',
             guest_dst='/guest/path',
@@ -257,7 +257,7 @@ class TestAttachmentHasMapping:
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
         att = ResolvedAttachment(
             vm_name='test-vm',
-            mode='shared-root',
+            mode=AttachmentMode.SHARED_ROOT,
             source_dir='/home/user/project',
             tag='shared-root',
             guest_dst='/guest/path',

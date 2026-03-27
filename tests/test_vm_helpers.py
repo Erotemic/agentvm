@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from aivm.cli.vm import ResolvedAttachment, _ensure_shared_root_host_bind
+from aivm.vm.share import AttachmentAccess, AttachmentMode
 from aivm.commands import CommandManager
 from aivm.config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
@@ -836,8 +837,8 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
     source_dir.mkdir()
     attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode='shared-root',
-        access='rw',
+        mode=AttachmentMode.SHARED_ROOT,
+        access=AttachmentAccess.RW,
         source_dir=str(source_dir.resolve()),
         guest_dst='/workspace/source',
         tag='hostcode-source',

@@ -99,10 +99,10 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
         'aivm.cli.vm._apply_vm_update',
         lambda *a, **k: (True, True),
     )
-    called: dict[str, object] = {}
+    called: dict[str, object] = {}  # type: ignore[assignment]
 
     def fake_restart(*a, **k):
-        called['kwargs'] = k
+        called['kwargs'] = k  # type: ignore[index]
 
     monkeypatch.setattr(
         'aivm.cli.vm._maybe_restart_vm_after_update', fake_restart
@@ -114,7 +114,7 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
         restart='always',
     )
     assert rc == 0
-    assert called['kwargs']['restart_policy'] == 'always'
+    assert called['kwargs']['restart_policy'] == 'always'  # type: ignore
 
 
 def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:

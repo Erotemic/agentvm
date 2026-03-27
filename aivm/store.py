@@ -68,7 +68,7 @@ def _norm_dir(path: str | Path) -> str:
         return str(p.absolute())
 
 
-def _cfg_from_dict(raw: dict) -> AgentVMConfig:
+def _cfg_from_dict(raw: dict[str, object]) -> AgentVMConfig:
     cfg = AgentVMConfig()
     for section in (
         'vm',
@@ -83,10 +83,11 @@ def _cfg_from_dict(raw: dict) -> AgentVMConfig:
         if isinstance(body, dict):
             obj = getattr(cfg, section)
             for k, v in body.items():
-                if hasattr(obj, k):
-                    setattr(obj, k, v)
-    if 'verbosity' in raw:
-        cfg.verbosity = int(raw['verbosity'])
+                if hasattr(obj, str(k)):
+                    setattr(obj, str(k), v)
+    verbosity_val = raw.get('verbosity')
+    if verbosity_val is not None:
+        cfg.verbosity = int(verbosity_val)  # type: ignore
     return cfg
 
 

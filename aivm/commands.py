@@ -769,8 +769,8 @@ class CommandManager:
         """Normalize a role string to ``'read'`` or ``'modify'``."""
         mode = str(role or 'modify').strip().lower()
         if mode == 'read':
-            return cast(CommandRole, 'read')
-        return cast(CommandRole, 'modify')
+            return 'read'
+        return 'modify'
 
     def _effective_role(self, spec: CommandSpec) -> CommandRole:
         """Infer the effective role for a command specification."""
