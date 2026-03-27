@@ -131,7 +131,7 @@ class VMUpCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config)
         _maybe_install_missing_host_deps(
@@ -172,7 +172,7 @@ class VMCreateCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMCreateCLI.main vm={} set_default={} force={} dry_run={} yes={}',
@@ -383,7 +383,7 @@ class VMWaitIPCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         mgr = CommandManager.current()
@@ -406,7 +406,7 @@ class VMStatusCLI(_BaseCommand):
     """Show VM lifecycle status and cached IP information."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         mgr = CommandManager.current()
@@ -432,7 +432,7 @@ class VMDestroyCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
         mgr = CommandManager.current()
@@ -472,7 +472,7 @@ class VMSshConfigCLI(_BaseCommand):
     """Print an SSH config stanza for easy VM access."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         print(mk_ssh_config(_load_cfg(args.config)))
         return 0
@@ -490,7 +490,7 @@ class VMProvisionCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         if args.config is not None or _cfg_path(None).exists():
             cfg = _load_cfg(args.config)
@@ -530,7 +530,7 @@ class VMSyncSettingsCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         if args.dry_run:
@@ -618,7 +618,7 @@ class VMCodeCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMCodeCLI.main host_src={} vm={} guest_dst={} dry_run={} yes={}',
@@ -743,7 +743,7 @@ class VMSSHCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMSSHCLI.main host_src={} vm={} guest_dst={} dry_run={} yes={}',
@@ -837,7 +837,7 @@ class VMAttachCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMAttachCLI.main host_src={} vm={} guest_dst={} mode={} access={} force={} dry_run={} yes={}',
@@ -889,13 +889,13 @@ class VMAttachCLI(_BaseCommand):
         vm_defined = False
         sudo_confirmed = False
         vm_out, vm_defined_probe = probe_vm_state(cfg, use_sudo=False)
-        vm_running_probe = vm_out.ok
-        vm_defined = vm_defined_probe
+        vm_running_probe = bool(vm_out.ok)
+        vm_defined = bool(vm_defined_probe)
         if not vm_defined:
             sudo_confirmed = True
             vm_out, vm_defined_probe = probe_vm_state(cfg, use_sudo=True)
-            vm_running_probe = vm_out.ok
-            vm_defined = vm_defined_probe
+            vm_running_probe = bool(vm_out.ok)
+            vm_defined = bool(vm_defined_probe)
         if vm_defined:
             vm_running = vm_running_probe is True
             if attachment.mode == ATTACHMENT_MODE_SHARED:
@@ -1019,7 +1019,7 @@ class VMDetachCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         host_src = Path(args.host_src).resolve()
         if not host_src.exists() or not host_src.is_dir():
@@ -1165,7 +1165,7 @@ class VMListCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         from .main import ListCLI
 
@@ -1199,7 +1199,7 @@ class VMUpdateCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         restart_policy = str(args.restart or 'auto').strip().lower()
         if restart_policy not in {'auto', 'always', 'never'}:

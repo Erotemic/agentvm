@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pytest import MonkeyPatch
 
 from aivm.config import AgentVMConfig
@@ -41,7 +43,7 @@ def test_impossible_flags_memtotal_and_cpu(
 
 
 def test_warning_uses_memtotal_and_ignores_low_memavailable(
-    monkeypatch: MonkeyPatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.ram_mb = 1024

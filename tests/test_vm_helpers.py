@@ -74,7 +74,7 @@ def test_mac_for_vm_uses_step_when_ungrouped(
     step_titles: list[str] = []
     orig_step = CommandManager.step
 
-    def track_step(self, title, **kwargs):
+    def track_step(self, title, **kwargs):  # type: ignore[no-untyped-def]
         step_titles.append(title)
         return orig_step(self, title, **kwargs)
 
@@ -185,7 +185,7 @@ def test_attach_vm_share_treats_existing_mapping_as_satisfied(
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         del kwargs
         parts = list(cmd)
         calls.append(parts)

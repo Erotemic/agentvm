@@ -16,7 +16,7 @@ from aivm.commands import (
 from aivm.util import CmdError
 
 
-def _activate_manager(**kwargs) -> CommandManager:
+def _activate_manager(**kwargs: object) -> CommandManager:
     mgr = CommandManager(**kwargs)
     CommandManager.activate(mgr)
     return mgr
@@ -215,13 +215,13 @@ def test_plan_show_full_commands_then_reprompts(
         stderr = ''
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             return None
 
     answers = iter(['s', 'y'])
@@ -296,16 +296,16 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
             self.stderr = stderr
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         auth_cmds.append(cmd)
         if cmd == ['sudo', '-n', 'true']:
             return P(returncode=1, stderr='sudo: a password is required')
@@ -350,16 +350,16 @@ def test_confirm_sudo_scope_logs_preview_commands(
             self.stderr = stderr
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         if cmd == ['sudo', '-n', 'true']:
             return P(returncode=1, stderr='sudo: a password is required')
         if cmd == ['sudo', '-v']:
@@ -400,13 +400,13 @@ def test_plan_preview_includes_summary_and_command(
         stderr = ''
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             return None
 
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
@@ -443,13 +443,13 @@ def test_run_logs_include_submitter_attribution(
         stderr = ''
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             return None
 
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
@@ -527,13 +527,13 @@ def test_plan_preview_labels_read_only_commands(
         stderr = ''
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             return None
 
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)

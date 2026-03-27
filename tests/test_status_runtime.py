@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from pytest import MonkeyPatch
+
 from aivm.config import (
     AgentVMConfig,
     FirewallConfig,
@@ -24,7 +26,7 @@ from aivm.vm.drift import saved_vm_drift_report
 
 
 def test_probe_runtime_environment_from_systemd_detect_virt_guest(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr('aivm.status.which', lambda cmd: '/usr/bin/' + cmd)
     monkeypatch.setattr(
@@ -38,7 +40,7 @@ def test_probe_runtime_environment_from_systemd_detect_virt_guest(
 
 
 def test_probe_runtime_environment_from_systemd_detect_virt_host(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr('aivm.status.which', lambda cmd: '/usr/bin/' + cmd)
     monkeypatch.setattr(
@@ -51,7 +53,7 @@ def test_probe_runtime_environment_from_systemd_detect_virt_host(
 
 
 def test_probe_runtime_environment_cpuinfo_hypervisor_fallback(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr('aivm.status.which', lambda cmd: None)
     monkeypatch.setattr(
@@ -75,7 +77,7 @@ def test_probe_runtime_environment_cpuinfo_hypervisor_fallback(
 
 
 def test_probe_runtime_environment_unknown_when_no_signals(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr('aivm.status.which', lambda cmd: None)
     monkeypatch.setattr('aivm.status.Path.exists', lambda self: False)
@@ -85,7 +87,7 @@ def test_probe_runtime_environment_unknown_when_no_signals(
 
 
 def test_render_global_status_includes_runtime_environment(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr('aivm.status.check_commands', lambda: ([], []))
     monkeypatch.setattr(
@@ -100,7 +102,7 @@ def test_render_global_status_includes_runtime_environment(
 
 
 def test_probe_cwd_shared_with_vm_exact_match(
-    monkeypatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'test-vm'
@@ -129,7 +131,7 @@ def test_probe_cwd_shared_with_vm_exact_match(
 
 
 def test_probe_cwd_shared_with_vm_parent_match(
-    monkeypatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'test-vm'
@@ -160,7 +162,7 @@ def test_probe_cwd_shared_with_vm_parent_match(
 
 
 def test_render_status_reports_unshared_cwd(
-    monkeypatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'test-vm'
@@ -199,7 +201,7 @@ def test_render_status_reports_unshared_cwd(
 
 
 def test_saved_vm_drift_report_no_nameerror(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     """Regression test for runtime status path.
 
@@ -238,7 +240,7 @@ def test_saved_vm_drift_report_no_nameerror(
 
 
 def test_saved_vm_drift_report_with_mappings(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     """Test saved_vm_drift_report with actual share mappings.
 
@@ -281,7 +283,7 @@ def test_saved_vm_drift_report_with_mappings(
 
 
 def test_saved_vm_drift_report_mapping_drift(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     """Test saved_vm_drift_report when VM has different mappings than expected.
 
@@ -325,7 +327,7 @@ def test_saved_vm_drift_report_mapping_drift(
 
 
 def test_vm_share_mappings_imported_in_drift_module(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     """Verify that vm_share_mappings is properly imported in drift module.
 

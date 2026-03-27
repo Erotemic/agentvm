@@ -81,7 +81,7 @@ def test_network_status_and_destroy(
     cfg = AgentVMConfig()
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs):  # type: ignore[no-untyped-def]
         calls.append(cmd)
         if cmd[1] == 'net-info':
             return CmdResult(0, 'INFO', '')

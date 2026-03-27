@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from aivm.config import AgentVMConfig
 from aivm.store import (
     AttachmentEntry,
@@ -54,12 +56,12 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     assert find_vm(loaded, 'missing') is None
 
 
-def test_save_store_logs_reason(monkeypatch, tmp_path: Path) -> None:
+def test_save_store_logs_reason(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     store = Store()
     store.defaults = AgentVMConfig()
     messages: list[str] = []
 
-    def fake_info(fmt: str, *args) -> None:
+    def fake_info(fmt: str, *args: object) -> None:
         messages.append(fmt.format(*args))
 
     monkeypatch.setattr('aivm.store.log.info', fake_info)

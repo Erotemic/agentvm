@@ -23,7 +23,7 @@ class PlanCLI(_BaseCommand):
     """Show the recommended end-to-end setup command sequence."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         default_path = _cfg_path(None)
@@ -71,7 +71,7 @@ class HelpTreeCLI(_BaseCommand):
     """Print the expanded aivm command tree."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         cls.cli(argv=argv, data=kwargs)
         from .main import AgentVMModalCLI
 
@@ -92,7 +92,7 @@ class HelpRawCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         vm_name, net_name, fw_table = _resolve_raw_targets(
             config_opt=args.config,
@@ -157,7 +157,7 @@ class HelpCompletionCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         shell = _resolve_completion_shell(str(args.shell or ''))
         reg = (

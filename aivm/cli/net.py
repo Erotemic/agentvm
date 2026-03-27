@@ -19,6 +19,7 @@ from ._common import (
     _cfg_path,
 )
 from typing import Any
+from aivm.store import Store
 
 class NetCreateCLI(_BaseCommand):
     """Create or recreate the configured libvirt network."""
@@ -36,7 +37,7 @@ class NetCreateCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool =True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
         mgr = CommandManager.current()
@@ -59,7 +60,7 @@ class NetStatusCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool =True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
         mgr = CommandManager.current()
@@ -90,7 +91,7 @@ class NetDestroyCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg_path = _cfg_path(args.config)
         reg = load_store(cfg_path)
@@ -129,7 +130,7 @@ def _resolve_network_cfg(
     config_opt: str | None,
     *,
     network_opt: str = '',
-    reg=None,
+    reg : Store | None = None,
 ) -> AgentVMConfig:
     reg = reg if reg is not None else load_store(_cfg_path(config_opt))
     net_name = str(network_opt or '').strip()

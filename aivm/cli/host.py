@@ -36,7 +36,7 @@ class DoctorCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         missing, missing_opt = check_commands()
         if missing:
@@ -68,7 +68,7 @@ class HostInstallDepsCLI(_BaseCommand):
     """Install required host dependencies on Debian/Ubuntu."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         if not host_is_debian_like():
             print(
@@ -95,7 +95,7 @@ class ImageFetchCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs) -> int:
+    def main(cls, argv : bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         mgr = CommandManager.current()
