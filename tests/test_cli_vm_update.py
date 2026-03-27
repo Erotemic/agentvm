@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from typing import Any
+
+import pytest
+from pytest import MonkeyPatch
 
 from aivm.cli.vm import (
     AttachmentMode,
@@ -22,8 +24,6 @@ from aivm.cli.vm import (
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
 from aivm.util import CmdResult
-import pytest
-from pytest import MonkeyPatch
 
 
 def test_parse_qemu_img_virtual_size() -> None:
@@ -132,7 +132,9 @@ def test_vm_update_drift_escalates_for_disk_probe(
     cfg.vm.name = 'vm-drift'
     cfg.vm.disk_gb = 60
 
-    def fake_run_cmd(self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any) -> CmdResult:
+    def fake_run_cmd(
+        self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any
+    ) -> CmdResult:
         del kwargs
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -192,7 +194,9 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_run_cmd(self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any) -> CmdResult:
+    def fake_run_cmd(
+        self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any
+    ) -> CmdResult:
         del kwargs, sudo
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -466,7 +470,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
         lambda *a, **k: calls.append('config_init') or 0,
     )
 
-    def fake_vm_create(*a : Any, **k : Any) -> int:
+    def fake_vm_create(*a: Any, **k: Any) -> int:
         calls.append('vm_create')
         state['ready'] = True
         return 0
@@ -564,7 +568,12 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         lambda **kwargs: (cfg, cfg_path),
     )
 
-    def fake_resolve_attachment(_cfg : AgentVMConfig, _cfg_path : Path, host_path : Path, _guest_dst_opt : str) -> ResolvedAttachment:
+    def fake_resolve_attachment(
+        _cfg: AgentVMConfig,
+        _cfg_path: Path,
+        host_path: Path,
+        _guest_dst_opt: str,
+    ) -> ResolvedAttachment:
         host_path = Path(host_path).resolve()
         if host_path == host_src.resolve():
             return current_attachment
@@ -596,7 +605,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     mappings = [(str(host_src.resolve()), 'hostcode-proj')]
 
-    def fake_vm_share_mappings(*a : Any, **k : Any) -> list:
+    def fake_vm_share_mappings(*a: Any, **k: Any) -> list:
         del a, k
         return list(mappings)
 
@@ -604,7 +613,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     attached: list[tuple[tuple, dict]] = []
 
-    def fake_attach_vm_share(*a : Any, **k : Any) -> None:
+    def fake_attach_vm_share(*a: Any, **k: Any) -> None:
         attached.append((a, k))
         mappings.append((str(other_src.resolve()), 'hostcode-docs'))
 
@@ -619,14 +628,14 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     def fake_record_attachment(
         cfg_arg: AgentVMConfig,
-        cfg_path_arg : Path,
+        cfg_path_arg: Path,
         *,
-        host_src : Path,
-        mode : str,
-        access : str,
-        guest_dst : str,
-        tag : str,
-        force : bool = False,
+        host_src: Path,
+        mode: str,
+        access: str,
+        guest_dst: str,
+        tag: str,
+        force: bool = False,
     ) -> Path:
         del cfg_arg, cfg_path_arg, force
         recorded.append(
@@ -717,7 +726,12 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         lambda **kwargs: (cfg, cfg_path),
     )
 
-    def fake_resolve_attachment(_cfg : AgentVMConfig, _cfg_path: Path, host_path: Path, _guest_dst_opt : str) -> ResolvedAttachment:
+    def fake_resolve_attachment(
+        _cfg: AgentVMConfig,
+        _cfg_path: Path,
+        host_path: Path,
+        _guest_dst_opt: str,
+    ) -> ResolvedAttachment:
         host_path = Path(host_path).resolve()
         if host_path == host_src.resolve():
             return current_attachment
@@ -774,15 +788,15 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     recorded: list[dict] = []
 
     def fake_record_attachment(
-        cfg_arg : AgentVMConfig,
-        cfg_path_arg : Path,
+        cfg_arg: AgentVMConfig,
+        cfg_path_arg: Path,
         *,
-        host_src : Path,
-        mode : str,
-        access : str,
-        guest_dst : str,
-        tag : str,
-        force : bool = False,
+        host_src: Path,
+        mode: str,
+        access: str,
+        guest_dst: str,
+        tag: str,
+        force: bool = False,
     ) -> Path:
         del cfg_arg, cfg_path_arg, force
         recorded.append(

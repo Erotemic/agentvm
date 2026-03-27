@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import scriptconfig as scfg
+
+from aivm.store import Store
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig, FirewallConfig, NetworkConfig
@@ -18,26 +22,25 @@ from ._common import (
     _BaseCommand,
     _cfg_path,
 )
-from typing import Any
-from aivm.store import Store
+
 
 class NetCreateCLI(_BaseCommand):
     """Create or recreate the configured libvirt network."""
 
-    network : Any = scfg.Value(
+    network: Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
-    recreate : Any = scfg.Value(
+    recreate: Any = scfg.Value(
         False, isflag=True, help='Destroy and recreate if it exists.'
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool =True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
         mgr = CommandManager.current()
@@ -53,14 +56,14 @@ class NetCreateCLI(_BaseCommand):
 class NetStatusCLI(_BaseCommand):
     """Print detailed status of the configured libvirt network."""
 
-    network : Any = scfg.Value(
+    network: Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
 
     @classmethod
-    def main(cls, argv : bool =True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
         mgr = CommandManager.current()
@@ -76,22 +79,22 @@ class NetStatusCLI(_BaseCommand):
 class NetDestroyCLI(_BaseCommand):
     """Destroy and undefine the configured libvirt network."""
 
-    network : Any = scfg.Value(
+    network: Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
-    force : Any = scfg.Value(
+    force: Any = scfg.Value(
         False,
         isflag=True,
         help='Allow destroying network even if referenced by managed VMs.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg_path = _cfg_path(args.config)
         reg = load_store(cfg_path)
@@ -130,7 +133,7 @@ def _resolve_network_cfg(
     config_opt: str | None,
     *,
     network_opt: str = '',
-    reg : Store | None = None,
+    reg: Store | None = None,
 ) -> AgentVMConfig:
     reg = reg if reg is not None else load_store(_cfg_path(config_opt))
     net_name = str(network_opt or '').strip()

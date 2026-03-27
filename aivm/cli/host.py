@@ -7,6 +7,7 @@ that are prerequisites for VM workflows.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import scriptconfig as scfg
 
@@ -24,19 +25,19 @@ from ._common import (
 )
 from .firewall import FirewallModalCLI
 from .net import NetModalCLI
-from typing import Any
+
 
 class DoctorCLI(_BaseCommand):
     """Check host prerequisites and list missing required tools."""
 
-    sudo : Any = scfg.Value(
+    sudo: Any = scfg.Value(
         False,
         isflag=True,
         help='Also verify required commands are available under sudo -n.',
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         missing, missing_opt = check_commands()
         if missing:
@@ -68,8 +69,8 @@ class HostInstallDepsCLI(_BaseCommand):
     """Install required host dependencies on Debian/Ubuntu."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
-        args = cls.cli(argv=argv, data=kwargs)
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
+        _ = cls.cli(argv=argv, data=kwargs)
         if not host_is_debian_like():
             print(
                 '❌ Host not detected as Debian/Ubuntu. Install dependencies manually.',
@@ -90,12 +91,12 @@ class HostInstallDepsCLI(_BaseCommand):
 class ImageFetchCLI(_BaseCommand):
     """Download/cache the configured Ubuntu base image."""
 
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         mgr = CommandManager.current()

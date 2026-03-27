@@ -146,7 +146,9 @@ def test_apply_firewall_runs_delete_then_apply(
     calls = []
 
     class P:
-        def __init__(self, returncode : int = 0, stdout : str ='', stderr : str ='') -> None:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr

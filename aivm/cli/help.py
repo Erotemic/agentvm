@@ -10,6 +10,7 @@ import shlex
 import shutil
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import scriptconfig as scfg
 import ubelt as ub
@@ -17,13 +18,12 @@ import ubelt as ub
 from ..store import find_vm, load_store
 from ._common import _BaseCommand, _cfg_path
 
-from typing import Any
 
 class PlanCLI(_BaseCommand):
     """Show the recommended end-to-end setup command sequence."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         default_path = _cfg_path(None)
@@ -71,7 +71,7 @@ class HelpTreeCLI(_BaseCommand):
     """Print the expanded aivm command tree."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         cls.cli(argv=argv, data=kwargs)
         from .main import AgentVMModalCLI
 
@@ -82,17 +82,17 @@ class HelpTreeCLI(_BaseCommand):
 class HelpRawCLI(_BaseCommand):
     """Print direct system-tool commands equivalent to common aivm checks."""
 
-    vm : Any = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    host_src : Any = scfg.Value(
+    host_src: Any = scfg.Value(
         '.',
         help='Host folder for attachment/share inspection context.',
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         vm_name, net_name, fw_table = _resolve_raw_targets(
             config_opt=args.config,
@@ -157,7 +157,7 @@ class HelpCompletionCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         shell = _resolve_completion_shell(str(args.shell or ''))
         reg = (

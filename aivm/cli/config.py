@@ -15,7 +15,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import fields
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import scriptconfig as scfg
 from loguru import logger
@@ -52,8 +52,6 @@ from ._common import (
     _resolve_cfg_for_code,
 )
 
-from typing import Any
-
 log = logger
 
 
@@ -72,7 +70,7 @@ class InitCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         reg = load_store(path)
@@ -252,7 +250,7 @@ class ConfigShowCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         vm_name = str(args.vm or '').strip()
@@ -284,19 +282,19 @@ class ConfigShowCLI(_BaseCommand):
 class ConfigEditCLI(_BaseCommand):
     """Edit global config store in $EDITOR."""
 
-    editor : Any = scfg.Value(
+    editor: Any = scfg.Value(
         '',
         help='Editor command override (default: $EDITOR/$VISUAL, then nano/vi).',
     )
 
-    visual : Any = scfg.Value(
+    visual: Any = scfg.Value(
         '',
         help='If true, then prever $VISUAL over $EDITOR',
         isflag=True,
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         if not path.exists():
@@ -323,11 +321,11 @@ class ConfigEditCLI(_BaseCommand):
 class ConfigPathCLI(_BaseCommand):
     """Show config store path and resolved VM selection context."""
 
-    vm : Any = scfg.Value('', help='Optional VM name override.')
-    host_src : Any = scfg.Value('.', help='Host directory scope to inspect.')
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    host_src: Any = scfg.Value('.', help='Host directory scope to inspect.')
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         host_src = Path(args.host_src).resolve()
         store = _cfg_path(args.config)
@@ -376,7 +374,7 @@ class ConfigDiscoverCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         # Discover is intentionally conservative: unmanaged VMs require explicit
         # import confirmation (unless --yes) to avoid surprising ownership grabs.
         args = cls.cli(argv=argv, data=kwargs)
@@ -446,7 +444,7 @@ class ConfigLintCLI(_BaseCommand):
     """Lint config store for unknown/unused keys and sections."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         if not path.exists():

@@ -20,13 +20,11 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from sys import version_info
-from typing import Literal, Sequence, cast
+from typing import Literal, Sequence
 
 if version_info >= (3, 11):
-    from typing import Never
     from types import TracebackType
 else:
-    from typing_extensions import Never
     from types import TracebackType
 
 from loguru import logger

@@ -56,7 +56,9 @@ def test_store_roundtrip(tmp_path: Path) -> None:
     assert find_vm(loaded, 'missing') is None
 
 
-def test_save_store_logs_reason(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+def test_save_store_logs_reason(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     store = Store()
     store.defaults = AgentVMConfig()
     messages: list[str] = []

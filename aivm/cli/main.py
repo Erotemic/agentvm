@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import scriptconfig as scfg
 
@@ -32,18 +33,17 @@ from .help import HelpModalCLI
 from .host import HostModalCLI
 from .vm import SSHCLI, AttachCLI, CodeCLI, DetachCLI, VMModalCLI
 
-from typing import Any
 
 class ListCLI(_BaseCommand):
     """List managed VMs, managed networks, and attached host folders."""
 
-    section : Any = scfg.Value(
+    section: Any = scfg.Value(
         'all',
         help='One of: all, vms, networks, folders.',
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         want = str(args.section or 'all').strip().lower()
         allowed = {'all', 'vms', 'networks', 'folders'}
@@ -112,16 +112,16 @@ class ListCLI(_BaseCommand):
 class StatusCLI(_BaseCommand):
     """Report setup progress across host, network, VM, SSH, and provisioning."""
 
-    sudo : Any = scfg.Value(
+    sudo: Any = scfg.Value(
         False,
         isflag=True,
         help='Run privileged status checks (virsh/nft/image) with sudo.',
     )
-    vm : Any = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    detail : Any = scfg.Value(
+    detail: Any = scfg.Value(
         False,
         isflag=True,
         help='Include raw diagnostics (virsh/nft/ssh probe outputs).',
@@ -129,7 +129,7 @@ class StatusCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = None
         path = None
@@ -151,7 +151,7 @@ class StatusCLI(_BaseCommand):
             return 0
         mgr = CommandManager.current()
         with mgr.intent(
-            f"Inspect status for {cfg.vm.name}",
+            f'Inspect status for {cfg.vm.name}',
             why='Summarize host, network, firewall, VM, and SSH readiness for this managed VM.',
             role='read',
         ):

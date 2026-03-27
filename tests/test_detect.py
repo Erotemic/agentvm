@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import ipaddress
 from pathlib import Path
+from typing import Any
 
 from pytest import MonkeyPatch
 

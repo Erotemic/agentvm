@@ -15,11 +15,10 @@ from .commands import CommandManager
 from .config import AgentVMConfig
 from .host import check_commands
 from .runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
-from .store import load_store, store_path
+from .store import AttachmentEntry, load_store, store_path
 from .util import which
 from .vm import get_ip_cached, vm_share_mappings
 from .vm.drift import saved_vm_drift_report
-from .store import AttachmentEntry
 
 
 @dataclass(frozen=True)
@@ -54,7 +53,9 @@ def clip(text: str, *, max_lines: int = 60) -> str:
     return '\n'.join(keep)
 
 
-def probe_cwd_shared_with_vm(cfg: AgentVMConfig, store_cfg_path: Path) -> ProbeOutcome:
+def probe_cwd_shared_with_vm(
+    cfg: AgentVMConfig, store_cfg_path: Path
+) -> ProbeOutcome:
     """Report whether the current working directory is covered by a saved share.
 
     The status command is often run from inside a project folder, so this probe
@@ -81,7 +82,9 @@ def probe_cwd_shared_with_vm(cfg: AgentVMConfig, store_cfg_path: Path) -> ProbeO
             matches.append((share_root, att))
 
     if not matches:
-        return ProbeOutcome(False, f'{cwd_norm} is not covered by a saved VM share')
+        return ProbeOutcome(
+            False, f'{cwd_norm} is not covered by a saved VM share'
+        )
 
     best_match, best_att = max(matches, key=lambda t: len(t[0].parts))
     if cwd_norm == best_match:
@@ -460,12 +463,14 @@ def render_status(
     # TODO(design): once digest-addressable image cache fallback exists,
     # surface both named-path and digest-path resolution in status.
     img_ok = (
-        CommandManager.current().run(
+        CommandManager.current()
+        .run(
             ['test', '-f', str(base_img)],
             sudo=use_sudo,
             check=False,
             capture=True,
-        ).code
+        )
+        .code
         == 0
     )
     if use_sudo:
@@ -537,7 +542,7 @@ def render_status(
     # TODO: we probably want to clean up the detail that is shown here, but do want more than just
     # the path that is shared. We want what mode it is shared in, which VMs if is shared with, what its access is.
     # It could be the case that it is shared with more than 1 VM in different modes, maybe we only print the first
-    # and then that there are more, and show them all if --detail is given.  
+    # and then that there are more, and show them all if --detail is given.
     cwd_share = probe_cwd_shared_with_vm(cfg, path)
     lines.append(
         status_line(cwd_share.ok, 'Current directory shared', cwd_share.detail)
@@ -721,9 +726,7 @@ def render_status(
             virsh_system_cmd('domifaddr', cfg.vm.name),
             virsh_system_cmd('net-dhcp-leases', cfg.network.name),
         ):
-            vm_raw = mgr.run(
-                cmd, sudo=use_sudo, check=False, capture=True
-            )
+            vm_raw = mgr.run(cmd, sudo=use_sudo, check=False, capture=True)
             lines.append(f'`{" ".join(cmd)}`')
             lines.append('```text')
             lines.append(

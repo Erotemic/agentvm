@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import builtins
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -36,20 +35,25 @@ from aivm.store import (
 )
 from aivm.util import CmdResult
 
-def _activate_manager(monkeypatch : pytest.MonkeyPatch, *, yes_sudo: bool = True) -> None:
+
+def _activate_manager(
+    monkeypatch: pytest.MonkeyPatch, *, yes_sudo: bool = True
+) -> None:
     CommandManager.activate(CommandManager(yes_sudo=yes_sudo))
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
 
 
 class _Proc:
-    def __init__(self, returncode : int = 0, stdout : str = '', stderr : str = '') -> None:
+    def __init__(
+        self, returncode: int = 0, stdout: str = '', stderr: str = ''
+    ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
 
 
-def _capture_command_logs(monkeypatch : pytest.MonkeyPatch) -> list[str]:
+def _capture_command_logs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     messages: list[str] = []
 
     class _FakeLog:
@@ -566,7 +570,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -616,7 +620,7 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -668,7 +672,7 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -723,7 +727,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
         Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root' / attachment.tag
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -827,7 +831,7 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         normalized = parts[2:] if parts[:2] == ['sudo', '-n'] else parts
@@ -885,7 +889,7 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     cmds: list[list[str]] = []
     run_kwargs: list[dict] = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         cmds.append([str(c) for c in cmd])
         run_kwargs.append(dict(kwargs))
         return _Proc(0, '', '')
@@ -950,7 +954,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
@@ -1015,7 +1019,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
@@ -1066,7 +1070,7 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
@@ -1093,7 +1097,10 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
 
     assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
     assert 'Step: Inspect shared-root VM mapping' in messages
-    assert 'Step: Inspect shared-root VM mapping with libvirt privileges' in messages
+    assert (
+        'Step: Inspect shared-root VM mapping with libvirt privileges'
+        in messages
+    )
     assert 'Step: Ensure VM virtiofs mapping' in messages
     assert (
         '  1. Attach virtiofs device to running VM vm-shared-root-map'
@@ -1293,9 +1300,7 @@ def test_git_current_branch_raises_on_git_error(
 
     monkeypatch.setattr(
         'aivm.cli.vm.CommandManager.run',
-        lambda self, *a, **k: CmdResult(
-            128, '', 'fatal: not a git repository'
-        ),
+        lambda self, *a, **k: CmdResult(128, '', 'fatal: not a git repository'),
     )
 
     with pytest.raises(
@@ -1337,7 +1342,7 @@ def test_upsert_host_git_remote_adds_remote(
     remote_name = _git_attachment_remote_name(cfg, repo)
     prompts: list[str] = []
 
-    def _capture_prompt(**kwargs : Any) -> None:
+    def _capture_prompt(**kwargs: Any) -> None:
         prompts.append(kwargs['purpose'])
 
     monkeypatch.setattr(

@@ -23,10 +23,10 @@ from .lifecycle import (
     wait_for_ssh,
 )
 from .share import (
+    SHARED_ROOT_VIRTIOFS_TAG,
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
-    SHARED_ROOT_VIRTIOFS_TAG,
     attach_vm_share,
     detach_vm_share,
     ensure_share_mounted,

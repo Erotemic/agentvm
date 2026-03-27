@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import scriptconfig as scfg
 
 from ..firewall import apply_firewall, firewall_status, remove_firewall
@@ -10,17 +12,16 @@ from ._common import (
     _resolve_cfg_fallback,
 )
 
-from typing import Any
 
 class FirewallApplyCLI(_BaseCommand):
     """Apply nftables isolation rules for the VM network."""
 
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         apply_firewall(cfg, dry_run=args.dry_run)
@@ -31,7 +32,7 @@ class FirewallStatusCLI(_BaseCommand):
     """Print current nftables status for the configured firewall table."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         print(firewall_status(cfg))
@@ -41,12 +42,12 @@ class FirewallStatusCLI(_BaseCommand):
 class FirewallRemoveCLI(_BaseCommand):
     """Remove nftables rules managed by aivm."""
 
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         remove_firewall(cfg, dry_run=args.dry_run)

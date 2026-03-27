@@ -3,4 +3,5 @@
 
 def test_import() -> None:
     import aivm
+
     print(f'aivm={aivm}')

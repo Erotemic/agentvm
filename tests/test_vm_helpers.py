@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from hashlib import sha256
-
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pytest import MonkeyPatch
@@ -40,7 +39,9 @@ def _activate_manager(*, yes_sudo: bool = True) -> None:
 
 
 class _Proc:
-    def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
+    def __init__(
+        self, returncode: int = 0, stdout: str = '', stderr: str = ''
+    ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
@@ -76,7 +77,7 @@ def test_mac_for_vm_uses_step_when_ungrouped(
     step_titles: list[str] = []
     orig_step = CommandManager.step
 
-    def track_step(self, title, **kwargs : Any):  # type: ignore[no-untyped-def]
+    def track_step(self, title, **kwargs: Any):  # type: ignore[no-untyped-def]
         step_titles.append(title)
         return orig_step(self, title, **kwargs)
 
@@ -109,9 +110,7 @@ def test_get_ip_cached(tmp_path: Path) -> None:
     assert get_ip_cached(cfg) == '10.77.0.123'
 
 
-def test_vm_share_helpers(
-    monkeypatch: MonkeyPatch, tmp_path: Path
-) -> None:
+def test_vm_share_helpers(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     source = tmp_path / 'src'
     source.mkdir()
     cfg = AgentVMConfig()
@@ -187,7 +186,7 @@ def test_attach_vm_share_treats_existing_mapping_as_satisfied(
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
 
-    def fake_subprocess_run(cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
+    def fake_subprocess_run(cmd, **kwargs: Any):  # type: ignore[no-untyped-def]
         del kwargs
         parts = list(cmd)
         calls.append(parts)
@@ -324,7 +323,7 @@ def test_ensure_share_mounted_read_only_uses_ro_option(
         'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
     )
 
-    def fake_run_cmd(self: object, cmd : list[str], **kwargs: Any) -> CmdResult:
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         cmds.append([str(c) for c in cmd])
         run_kwargs.append(dict(kwargs))
         return CmdResult(0, '', '')
@@ -502,7 +501,9 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     )
 
     class P:
-        def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -545,7 +546,7 @@ def test_fetch_image_uses_atomic_temp_then_move(
         '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -588,7 +589,7 @@ def test_fetch_image_revalidates_cached_image_before_reuse(
 
     monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: True)
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -628,7 +629,7 @@ def test_fetch_image_redownloads_when_cached_hash_is_stale(
         'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         nonlocal sha_calls
         del kwargs
         normalized = [str(part) for part in cmd]
@@ -672,7 +673,7 @@ def test_fetch_image_validates_ubuntu_checksum(
         '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
     )
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -708,7 +709,7 @@ def test_fetch_image_raises_on_checksum_mismatch(
     calls = []
     actual = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -766,7 +767,7 @@ def test_fetch_image_accepts_supported_file_url(
 
     calls = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -821,7 +822,7 @@ def test_fetch_image_preview_uses_grouped_block_summaries(
 
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
 
-    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:

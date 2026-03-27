@@ -455,9 +455,7 @@ def ensure_share_mounted(
     max_attempts = 12
     retry_sleep_s = 2.0
     for attempt in range(1, max_attempts + 1):
-        res = mgr.run(
-            cmd, sudo=False, check=False, capture=True, timeout=20
-        )
+        res = mgr.run(cmd, sudo=False, check=False, capture=True, timeout=20)
         if res.code == 0:
             if attempt > 1:
                 log.info(

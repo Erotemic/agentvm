@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import builtins
+from typing import Any
 
 import pytest
 from pytest import MonkeyPatch
@@ -292,7 +291,9 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     auth_cmds = []
 
     class P:
-        def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -307,7 +308,7 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
         def trace(self, fmt: str, *args: Any) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-    def fake_run(cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs: Any):  # type: ignore[no-untyped-def]
         auth_cmds.append(cmd)
         if cmd == ['sudo', '-n', 'true']:
             return P(returncode=1, stderr='sudo: a password is required')
@@ -336,7 +337,10 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     joined = '\n'.join(messages)
     assert 'Read nftables firewall status.' in joined
     assert 'Sudo authentication appears to be required' in joined
-    assert 'Future read-only sudo commands are configured to auto-approve' in joined
+    assert (
+        'Future read-only sudo commands are configured to auto-approve'
+        in joined
+    )
 
 
 def test_confirm_sudo_scope_logs_preview_commands(
@@ -346,7 +350,9 @@ def test_confirm_sudo_scope_logs_preview_commands(
     messages = []
 
     class P:
-        def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -559,7 +565,10 @@ def test_plan_preview_labels_read_only_commands(
 
     joined = '\n'.join(messages)
     assert '  1. Inspect mount source' in joined
-    assert 'command (read-only): sudo findmnt -n -o SOURCE --target /tmp/demo' in joined
+    assert (
+        'command (read-only): sudo findmnt -n -o SOURCE --target /tmp/demo'
+        in joined
+    )
 
 
 def test_noninteractive_sudo_plan_requires_yes() -> None:

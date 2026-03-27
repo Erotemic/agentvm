@@ -14,9 +14,9 @@ from aivm.config import (
     VMConfig,
 )
 from aivm.vm.drift import (
+    SHARED_ROOT_VIRTIOFS_TAG,
     DriftItem,
     DriftReport,
-    SHARED_ROOT_VIRTIOFS_TAG,
     attachment_drift_report,
     attachment_has_mapping,
     expected_mapping_for_attachment,
@@ -243,7 +243,6 @@ class TestAttachmentHasMapping:
         )
         # Shared-root uses canonical path, not the attachment source_dir
         from aivm.vm.drift import (
-            SHARED_ROOT_VIRTIOFS_TAG,
             _shared_root_host_dir,
         )
 

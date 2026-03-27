@@ -93,7 +93,9 @@ def test_install_deps_debian_behaviors(
     CommandManager.activate(CommandManager(yes_sudo=True))
 
     class P:
-        def __init__(self, returncode : int = 0, stdout : str = '', stderr : str = '') -> None:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -145,7 +147,9 @@ def test_install_deps_debian_reports_apt_lock_cleanly(
     CommandManager.activate(CommandManager(yes_sudo=True))
 
     class P:
-        def __init__(self, returncode : int = 100, stdout : str = '', stderr : str = '') -> None:
+        def __init__(
+            self, returncode: int = 100, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr

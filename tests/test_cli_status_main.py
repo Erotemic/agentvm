@@ -28,7 +28,9 @@ def test_status_cli_uses_vm_opt_and_sudo(
 
     called: dict[str, object] = {}  # type: ignore
 
-    def fake_load_cfg_with_path(config: str | None, vm_opt: str = '') -> tuple[AgentVMConfig, Path]:
+    def fake_load_cfg_with_path(
+        config: str | None, vm_opt: str = ''
+    ) -> tuple[AgentVMConfig, Path]:
         called['vm_opt'] = vm_opt
         return cfg, cfg_path
 

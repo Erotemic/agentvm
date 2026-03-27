@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from pytest import MonkeyPatch
-from pathlib import Path
+
 from aivm.config import (
     AgentVMConfig,
     FirewallConfig,
@@ -17,8 +18,8 @@ from aivm.status import (
     ProbeOutcome,
     probe_cwd_shared_with_vm,
     probe_runtime_environment,
-    render_status,
     render_global_status,
+    render_status,
 )
 from aivm.store import Store, upsert_attachment
 from aivm.util import CmdResult
@@ -191,7 +192,10 @@ def test_render_status_reports_unshared_cwd(
     )
     monkeypatch.setattr(
         'aivm.status.probe_vm_state',
-        lambda cfg, use_sudo=False: (ProbeOutcome(False, 'not defined', ''), False),
+        lambda cfg, use_sudo=False: (
+            ProbeOutcome(False, 'not defined', ''),
+            False,
+        ),
     )
     monkeypatch.setattr('aivm.status.get_ip_cached', lambda cfg: '')
 

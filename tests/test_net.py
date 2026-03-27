@@ -61,7 +61,9 @@ def test_ensure_network_existing_not_recreate(
     calls = []
 
     class P:
-        def __init__(self, returncode : int = 0, stdout: str = '', stderr : str = '') -> None:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -83,7 +85,7 @@ def test_network_status_and_destroy(
     cfg = AgentVMConfig()
     calls = []
 
-    def fake_run_cmd(self, cmd : list[str], **kwargs : Any):  # type: ignore[no-untyped-def]
+    def fake_run_cmd(self, cmd: list[str], **kwargs: Any):  # type: ignore[no-untyped-def]
         calls.append(cmd)
         if cmd[1] == 'net-info':
             return CmdResult(0, 'INFO', '')

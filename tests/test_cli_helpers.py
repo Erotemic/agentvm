@@ -2,28 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
+from pytest import MonkeyPatch
 
 import aivm.cli._common as common_mod
 from aivm.cli._common import (
     _maybe_offer_create_ssh_identity,
 )
 from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
+from aivm.vm.share import _auto_share_tag_for_path
 from aivm.cli.vm import (
-    _auto_share_tag_for_path,
     _parse_sync_paths_arg,
     _upsert_ssh_config_entry,
 )
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.store import Store, save_store, upsert_attachment, upsert_vm
-import pytest
-from pytest import MonkeyPatch
+
 
 def test_parse_sync_paths_arg() -> None:
     got = _parse_sync_paths_arg(' ~/.gitconfig, ,~/.bashrc,')
@@ -70,7 +69,9 @@ def test_plan_omits_default_config_flag(
     assert f'Config: {default}' in out
 
 
-def test_plan_includes_nondefault_config_flag(monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_plan_includes_nondefault_config_flag(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     default = Path('/tmp/default-config.toml')
     custom = Path('/tmp/custom-config.toml')
     monkeypatch.setattr(
@@ -153,7 +154,9 @@ def test_help_raw_outputs_direct_system_commands(
     assert 'sudo nft list table inet fw-raw' in clean
 
 
-def test_help_completion_outputs_bash_setup(capsys: pytest.CaptureFixture[str]) -> None:
+def test_help_completion_outputs_bash_setup(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     rc = HelpCompletionCLI.main(argv=False, shell='bash', yes=True)
     assert rc == 0
     out = capsys.readouterr().out
@@ -264,7 +267,7 @@ def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
             self.stdout = ''
             self.stderr = ''
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> Proc:
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> Proc:
         del kwargs
         normalized = [str(c) for c in cmd]
         calls.append(normalized)

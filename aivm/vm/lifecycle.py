@@ -266,11 +266,15 @@ def _resolve_expected_image_sha256(*, image_url: str) -> tuple[str | None, str]:
                 f'Requested URL: {image_url}\n'
                 f'Path: {file_path}'
             )
-        out = CommandManager.current().run(
-            ['sha256sum', str(file_path)],
-            check=True,
-            capture=True,
-        ).stdout
+        out = (
+            CommandManager.current()
+            .run(
+                ['sha256sum', str(file_path)],
+                check=True,
+                capture=True,
+            )
+            .stdout
+        )
         local_digest = out.strip().split()[0].lower() if out.strip() else ''
         for supported_url, supported_digest in SUPPORTED_IMAGE_SHA256.items():
             if local_digest == supported_digest.strip().lower():
@@ -546,9 +550,9 @@ def _ensure_qemu_access(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     base_root = Path(cfg.paths.base_dir) / cfg.vm.name
     grp = 'libvirt-qemu'
     if (
-        CommandManager.current().run(
-            ['getent', 'group', 'libvirt-qemu'], check=False, capture=True
-        ).code
+        CommandManager.current()
+        .run(['getent', 'group', 'libvirt-qemu'], check=False, capture=True)
+        .code
         != 0
     ):
         grp = 'kvm'
@@ -1435,7 +1439,5 @@ def provision(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         return
     wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
     log.info('Running provisioning apt installs (showing progress)')
-    CommandManager.current().run(
-        cmd, sudo=False, check=True, capture=False
-    )
+    CommandManager.current().run(cmd, sudo=False, check=True, capture=False)
     log.info('Provisioning complete.')

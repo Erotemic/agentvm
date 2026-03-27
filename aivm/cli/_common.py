@@ -7,10 +7,10 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Self, cast
 
 import scriptconfig as scfg
 from loguru import logger
-from typing import Any, Self, cast
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
@@ -44,22 +44,22 @@ class _BaseCommand(scfg.DataConfig):
 
     __special_options__ = False
 
-    config : Any  = scfg.Value(
+    config: Any = scfg.Value(
         None,
         help='Path to global aivm config store (default: ~/.config/aivm/config.toml).',
     )
-    verbose : Any  = scfg.Value(
+    verbose: Any = scfg.Value(
         0,
         short_alias=['v'],
         isflag='counter',
         help='Increase verbosity (-v, -vv).',
     )
-    yes : Any  = scfg.Value(
+    yes: Any = scfg.Value(
         False,
         isflag=True,
         help='Auto-approve interactive confirmations.',
     )
-    yes_sudo : Any = scfg.Value(
+    yes_sudo: Any = scfg.Value(
         False,
         isflag=True,
         help='Auto-approve sudo confirmation prompts only.',
@@ -67,7 +67,7 @@ class _BaseCommand(scfg.DataConfig):
 
     @classmethod
     def cli(cls, *args: Any, **kwargs: Any) -> Self:  # type: ignore
-        # NOTE: these getattrs are to make the type checker happy, and we 
+        # NOTE: these getattrs are to make the type checker happy, and we
         # should try to make this less ugly
         parsed = cast(Self, super().cli(*args, **kwargs))
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
@@ -487,6 +487,7 @@ def _record_vm(
     upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
     why = reason.strip() or f'Persist managed VM record for {cfg.vm.name}.'
     return save_store(reg, target, reason=why)
+
 
 def _resolve_cfg_for_code(
     *,

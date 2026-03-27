@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from . import commands as _commands
 from .commands import CommandError as CmdError
 from .commands import CommandResult as CmdResult
 from .commands import shell_join

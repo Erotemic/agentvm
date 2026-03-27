@@ -11,9 +11,9 @@ import xml.etree.ElementTree as ET
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 import scriptconfig as scfg
-from typing import Any
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
@@ -79,7 +79,6 @@ from ..vm.share import (
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
-    _auto_share_tag_for_path,
     _ensure_share_tag_len,
 )
 from ..vm.share import (
@@ -123,15 +122,15 @@ ATTACHMENT_ACCESS_MODES = {
 class VMUpCLI(_BaseCommand):
     """Create the VM if needed, or start it if already defined."""
 
-    recreate : Any = scfg.Value(
+    recreate: Any = scfg.Value(
         False, isflag=True, help='Destroy and recreate if it exists.'
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config)
         _maybe_install_missing_host_deps(
@@ -156,23 +155,23 @@ class VMUpCLI(_BaseCommand):
 class VMCreateCLI(_BaseCommand):
     """Create a managed VM from config-store defaults and start it."""
 
-    vm : Any = scfg.Value('', help='Optional VM name override.')
-    set_default : Any  = scfg.Value(
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    set_default: Any = scfg.Value(
         False,
         isflag=True,
         help='Set the created VM as the active default VM.',
     )
-    force : Any = scfg.Value(
+    force: Any = scfg.Value(
         False,
         isflag=True,
         help='Overwrite existing VM entry and recreate VM definition if present.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMCreateCLI.main vm={} set_default={} force={} dry_run={} yes={}',
@@ -377,13 +376,13 @@ def _review_vm_create_overrides_interactive(
 class VMWaitIPCLI(_BaseCommand):
     """Wait for and print the VM IPv4 address."""
 
-    timeout : Any = scfg.Value(360, type=int, help='Timeout seconds.')
-    dry_run : Any = scfg.Value(
+    timeout: Any = scfg.Value(360, type=int, help='Timeout seconds.')
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         mgr = CommandManager.current()
@@ -406,7 +405,7 @@ class VMStatusCLI(_BaseCommand):
     """Show VM lifecycle status and cached IP information."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         mgr = CommandManager.current()
@@ -422,17 +421,17 @@ class VMStatusCLI(_BaseCommand):
 class VMDestroyCLI(_BaseCommand):
     """Destroy and undefine the VM (shared host directories are not deleted)."""
 
-    vm : Any  = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         position=1,
         help='Optional VM name override (positional).',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
         mgr = CommandManager.current()
@@ -472,7 +471,7 @@ class VMSshConfigCLI(_BaseCommand):
     """Print an SSH config stanza for easy VM access."""
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         print(mk_ssh_config(_load_cfg(args.config)))
         return 0
@@ -481,16 +480,16 @@ class VMSshConfigCLI(_BaseCommand):
 class VMProvisionCLI(_BaseCommand):
     """Provision the VM with optional developer packages."""
 
-    vm : Any = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         if args.config is not None or _cfg_path(None).exists():
             cfg = _load_cfg(args.config)
@@ -513,24 +512,24 @@ class VMProvisionCLI(_BaseCommand):
 class VMSyncSettingsCLI(_BaseCommand):
     """Copy host user settings/files into the VM user home."""
 
-    paths : Any = scfg.Value(
+    paths: Any = scfg.Value(
         '',
         help=(
             'Optional comma-separated host paths to sync. '
             'Defaults to [sync].paths from config.'
         ),
     )
-    overwrite : Any = scfg.Value(
+    overwrite: Any = scfg.Value(
         True,
         isflag=True,
         help='Overwrite existing files in VM (default true).',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         if args.dry_run:
@@ -565,60 +564,60 @@ class VMSyncSettingsCLI(_BaseCommand):
 class VMCodeCLI(_BaseCommand):
     """Open a host project folder in VS Code attached to the VM via Remote-SSH."""
 
-    host_src : Any = scfg.Value(
+    host_src: Any = scfg.Value(
         '.',
         position=1,
         help='Host project directory to share and open (default: current directory).',
     )
-    vm : Any = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='VM name override.',
     )
-    guest_dst : Any = scfg.Value(
+    guest_dst: Any = scfg.Value(
         '',
         help='Guest mount path override (default: mirrors host_src path).',
     )
-    mode : Any = scfg.Value(
+    mode: Any = scfg.Value(
         '',
         help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
-    access : Any = scfg.Value(
+    access: Any = scfg.Value(
         '',
         help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
     )
-    recreate_if_needed : Any = scfg.Value(
+    recreate_if_needed: Any = scfg.Value(
         False,
         isflag=True,
         help='Recreate VM if existing definition lacks the requested share mapping.',
     )
-    ensure_firewall : Any = scfg.Value(
+    ensure_firewall: Any = scfg.Value(
         True,
         isflag=True,
         help='Apply firewall rules when firewall.enabled=true.',
     )
-    sync_settings : Any = scfg.Value(
+    sync_settings: Any = scfg.Value(
         False,
         isflag=True,
         help='Sync host settings files into VM before launching VS Code.',
     )
-    sync_paths : Any = scfg.Value(
+    sync_paths: Any = scfg.Value(
         '',
         help=(
             'Optional comma-separated paths used when --sync_settings is set. '
             'Defaults to [sync].paths.'
         ),
     )
-    force : Any = scfg.Value(
+    force: Any = scfg.Value(
         False,
         isflag=True,
         help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMCodeCLI.main host_src={} vm={} guest_dst={} dry_run={} yes={}',
@@ -707,43 +706,43 @@ class VMSSHCLI(_BaseCommand):
         position=1,
         help='Host project directory to share and open (default: current directory).',
     )
-    vm : Any = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='VM name override.',
     )
-    guest_dst : Any = scfg.Value(
+    guest_dst: Any = scfg.Value(
         '',
         help='Guest mount path override (default: mirrors host_src path).',
     )
-    mode : Any = scfg.Value(
+    mode: Any = scfg.Value(
         '',
         help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
-    access : Any = scfg.Value(
+    access: Any = scfg.Value(
         '',
         help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
     )
-    recreate_if_needed : Any = scfg.Value(
+    recreate_if_needed: Any = scfg.Value(
         False,
         isflag=True,
         help='Recreate VM if existing definition lacks the requested share mapping.',
     )
-    ensure_firewall : Any = scfg.Value(
+    ensure_firewall: Any = scfg.Value(
         True,
         isflag=True,
         help='Apply firewall rules when firewall.enabled=true.',
     )
-    force : Any = scfg.Value(
+    force: Any = scfg.Value(
         False,
         isflag=True,
         help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMSSHCLI.main host_src={} vm={} guest_dst={} dry_run={} yes={}',
@@ -816,28 +815,30 @@ class VMSSHCLI(_BaseCommand):
 class VMAttachCLI(_BaseCommand):
     """Attach/register a host directory to an existing managed VM."""
 
-    vm : Any = scfg.Value('', help='Optional VM name override.')
-    host_src : Any = scfg.Value('.', position=1, help='Host directory to attach.')
-    guest_dst : Any = scfg.Value('', help='Guest mount path override.')
-    mode : Any = scfg.Value(
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    host_src: Any = scfg.Value(
+        '.', position=1, help='Host directory to attach.'
+    )
+    guest_dst: Any = scfg.Value('', help='Guest mount path override.')
+    mode: Any = scfg.Value(
         '',
         help='Attachment mode: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
-    access : Any = scfg.Value(
+    access: Any = scfg.Value(
         '',
         help='Attachment access: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
     )
-    force : Any = scfg.Value(
+    force: Any = scfg.Value(
         False,
         isflag=True,
         help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMAttachCLI.main host_src={} vm={} guest_dst={} mode={} access={} force={} dry_run={} yes={}',
@@ -1012,14 +1013,16 @@ class VMAttachCLI(_BaseCommand):
 class VMDetachCLI(_BaseCommand):
     """Detach/unregister a host directory from a managed VM."""
 
-    vm : Any = scfg.Value('', help='Optional VM name override.')
-    host_src : Any = scfg.Value('.', position=1, help='Host directory to detach.')
-    dry_run : Any = scfg.Value(
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    host_src: Any = scfg.Value(
+        '.', position=1, help='Host directory to detach.'
+    )
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         host_src = Path(args.host_src).resolve()
         if not host_src.exists() or not host_src.is_dir():
@@ -1165,7 +1168,7 @@ class VMListCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         from .main import ListCLI
 
@@ -1189,17 +1192,17 @@ class VMUpdateDrift:
 class VMUpdateCLI(_BaseCommand):
     """Reconcile VM config drift against live libvirt settings."""
 
-    vm : Any = scfg.Value('', help='Optional VM name override.')
-    restart : Any = scfg.Value(
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    restart: Any = scfg.Value(
         'auto',
         help='Restart policy when changes require reboot to take effect: auto, always, never.',
     )
-    dry_run : Any = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv : bool = True, **kwargs: Any) -> int:
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         restart_policy = str(args.restart or 'auto').strip().lower()
         if restart_policy not in {'auto', 'always', 'never'}:
@@ -1708,9 +1711,7 @@ def _maybe_restart_vm_after_update(
     if dry_run:
         print(f'DRYRUN: {" ".join(cmd)}')
     else:
-        CommandManager.current().run(
-            cmd, sudo=True, check=True, capture=True
-        )
+        CommandManager.current().run(cmd, sudo=True, check=True, capture=True)
         print(f'Restarted VM {cfg.vm.name}.')
 
 
@@ -2250,9 +2251,7 @@ def _detach_shared_root_guest_bind(
     if dry_run:
         log.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
-    CommandManager.current().run(
-        cmd, sudo=False, check=False, capture=True
-    )
+    CommandManager.current().run(cmd, sudo=False, check=False, capture=True)
 
 
 def _ensure_attachment_available_in_guest(
