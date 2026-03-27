@@ -18,20 +18,20 @@ from ._common import (
     _BaseCommand,
     _cfg_path,
 )
-
+from typing import Any
 
 class NetCreateCLI(_BaseCommand):
     """Create or recreate the configured libvirt network."""
 
-    network = scfg.Value(
+    network : Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
-    recreate = scfg.Value(
+    recreate : Any = scfg.Value(
         False, isflag=True, help='Destroy and recreate if it exists.'
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -52,7 +52,7 @@ class NetCreateCLI(_BaseCommand):
 class NetStatusCLI(_BaseCommand):
     """Print detailed status of the configured libvirt network."""
 
-    network = scfg.Value(
+    network : Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
@@ -75,17 +75,17 @@ class NetStatusCLI(_BaseCommand):
 class NetDestroyCLI(_BaseCommand):
     """Destroy and undefine the configured libvirt network."""
 
-    network = scfg.Value(
+    network : Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
-    force = scfg.Value(
+    force : Any = scfg.Value(
         False,
         isflag=True,
         help='Allow destroying network even if referenced by managed VMs.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 

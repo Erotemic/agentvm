@@ -10,11 +10,12 @@ from ._common import (
     _resolve_cfg_fallback,
 )
 
+from typing import Any
 
 class FirewallApplyCLI(_BaseCommand):
     """Apply nftables isolation rules for the VM network."""
 
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -40,7 +41,7 @@ class FirewallStatusCLI(_BaseCommand):
 class FirewallRemoveCLI(_BaseCommand):
     """Remove nftables rules managed by aivm."""
 
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 

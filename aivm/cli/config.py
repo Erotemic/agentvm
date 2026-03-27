@@ -52,6 +52,8 @@ from ._common import (
     _resolve_cfg_for_code,
 )
 
+from typing import Any
+
 log = logger
 
 
@@ -282,12 +284,12 @@ class ConfigShowCLI(_BaseCommand):
 class ConfigEditCLI(_BaseCommand):
     """Edit global config store in $EDITOR."""
 
-    editor = scfg.Value(
+    editor : Any = scfg.Value(
         '',
         help='Editor command override (default: $EDITOR/$VISUAL, then nano/vi).',
     )
 
-    visual = scfg.Value(
+    visual : Any = scfg.Value(
         '',
         help='If true, then prever $VISUAL over $EDITOR',
         isflag=True,
@@ -321,8 +323,8 @@ class ConfigEditCLI(_BaseCommand):
 class ConfigPathCLI(_BaseCommand):
     """Show config store path and resolved VM selection context."""
 
-    vm = scfg.Value('', help='Optional VM name override.')
-    host_src = scfg.Value('.', help='Host directory scope to inspect.')
+    vm : Any = scfg.Value('', help='Optional VM name override.')
+    host_src : Any = scfg.Value('.', help='Host directory scope to inspect.')
 
     @classmethod
     def main(cls, argv=True, **kwargs) -> int:

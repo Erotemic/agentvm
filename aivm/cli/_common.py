@@ -10,6 +10,7 @@ from pathlib import Path
 
 import scriptconfig as scfg
 from loguru import logger
+from typing import Any, Self, cast
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
@@ -43,30 +44,32 @@ class _BaseCommand(scfg.DataConfig):
 
     __special_options__ = False
 
-    config = scfg.Value(
+    config : Any  = scfg.Value(
         None,
         help='Path to global aivm config store (default: ~/.config/aivm/config.toml).',
     )
-    verbose = scfg.Value(
+    verbose : Any  = scfg.Value(
         0,
         short_alias=['v'],
         isflag='counter',
         help='Increase verbosity (-v, -vv).',
     )
-    yes = scfg.Value(
+    yes : Any  = scfg.Value(
         False,
         isflag=True,
         help='Auto-approve interactive confirmations.',
     )
-    yes_sudo = scfg.Value(
+    yes_sudo : Any = scfg.Value(
         False,
         isflag=True,
         help='Auto-approve sudo confirmation prompts only.',
     )
 
     @classmethod
-    def cli(cls, *args: object, **kwargs: object) -> object:  # type: ignore
-        parsed = super().cli(*args, **kwargs)
+    def cli(cls, *args: Any, **kwargs: Any) -> Self:  # type: ignore
+        # NOTE: these getattrs are to make the type checker happy, and we 
+        # should try to make this less ugly
+        parsed = cast(Self, super().cli(*args, **kwargs))
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
         cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
         cfg_auto_approve_readonly_sudo = (

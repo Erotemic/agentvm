@@ -94,7 +94,7 @@ def test_cli_yes_sudo_defaults_from_config(
         argv=False,
         data={'config': str(cfg_path), 'yes': False, 'yes_sudo': False},
     )
-    assert bool(parsed.yes_sudo) is True
+    assert bool(parsed.yes_sudo) is True  # type: ignore
 
 
 def test_cli_auto_approve_readonly_sudo_defaults_from_config(

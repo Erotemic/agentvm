@@ -32,11 +32,12 @@ from .help import HelpModalCLI
 from .host import HostModalCLI
 from .vm import SSHCLI, AttachCLI, CodeCLI, DetachCLI, VMModalCLI
 
+from typing import Any
 
 class ListCLI(_BaseCommand):
     """List managed VMs, managed networks, and attached host folders."""
 
-    section = scfg.Value(
+    section : Any = scfg.Value(
         'all',
         help='One of: all, vms, networks, folders.',
     )
@@ -111,16 +112,16 @@ class ListCLI(_BaseCommand):
 class StatusCLI(_BaseCommand):
     """Report setup progress across host, network, VM, SSH, and provisioning."""
 
-    sudo = scfg.Value(
+    sudo : Any = scfg.Value(
         False,
         isflag=True,
         help='Run privileged status checks (virsh/nft/image) with sudo.',
     )
-    vm = scfg.Value(
+    vm : Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    detail = scfg.Value(
+    detail : Any = scfg.Value(
         False,
         isflag=True,
         help='Include raw diagnostics (virsh/nft/ssh probe outputs).',

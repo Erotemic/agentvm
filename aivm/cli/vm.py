@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 import scriptconfig as scfg
+from typing import Any
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
@@ -122,10 +123,10 @@ ATTACHMENT_ACCESS_MODES = {
 class VMUpCLI(_BaseCommand):
     """Create the VM if needed, or start it if already defined."""
 
-    recreate = scfg.Value(
+    recreate : Any = scfg.Value(
         False, isflag=True, help='Destroy and recreate if it exists.'
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -155,18 +156,18 @@ class VMUpCLI(_BaseCommand):
 class VMCreateCLI(_BaseCommand):
     """Create a managed VM from config-store defaults and start it."""
 
-    vm = scfg.Value('', help='Optional VM name override.')
-    set_default = scfg.Value(
+    vm : Any = scfg.Value('', help='Optional VM name override.')
+    set_default : Any  = scfg.Value(
         False,
         isflag=True,
         help='Set the created VM as the active default VM.',
     )
-    force = scfg.Value(
+    force : Any = scfg.Value(
         False,
         isflag=True,
         help='Overwrite existing VM entry and recreate VM definition if present.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -376,8 +377,8 @@ def _review_vm_create_overrides_interactive(
 class VMWaitIPCLI(_BaseCommand):
     """Wait for and print the VM IPv4 address."""
 
-    timeout = scfg.Value(360, type=int, help='Timeout seconds.')
-    dry_run = scfg.Value(
+    timeout : Any = scfg.Value(360, type=int, help='Timeout seconds.')
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -421,12 +422,12 @@ class VMStatusCLI(_BaseCommand):
 class VMDestroyCLI(_BaseCommand):
     """Destroy and undefine the VM (shared host directories are not deleted)."""
 
-    vm = scfg.Value(
+    vm : Any  = scfg.Value(
         '',
         position=1,
         help='Optional VM name override (positional).',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -480,11 +481,11 @@ class VMSshConfigCLI(_BaseCommand):
 class VMProvisionCLI(_BaseCommand):
     """Provision the VM with optional developer packages."""
 
-    vm = scfg.Value(
+    vm : Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -512,19 +513,19 @@ class VMProvisionCLI(_BaseCommand):
 class VMSyncSettingsCLI(_BaseCommand):
     """Copy host user settings/files into the VM user home."""
 
-    paths = scfg.Value(
+    paths : Any = scfg.Value(
         '',
         help=(
             'Optional comma-separated host paths to sync. '
             'Defaults to [sync].paths from config.'
         ),
     )
-    overwrite = scfg.Value(
+    overwrite : Any = scfg.Value(
         True,
         isflag=True,
         help='Overwrite existing files in VM (default true).',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -564,55 +565,55 @@ class VMSyncSettingsCLI(_BaseCommand):
 class VMCodeCLI(_BaseCommand):
     """Open a host project folder in VS Code attached to the VM via Remote-SSH."""
 
-    host_src = scfg.Value(
+    host_src : Any = scfg.Value(
         '.',
         position=1,
         help='Host project directory to share and open (default: current directory).',
     )
-    vm = scfg.Value(
+    vm : Any = scfg.Value(
         '',
         help='VM name override.',
     )
-    guest_dst = scfg.Value(
+    guest_dst : Any = scfg.Value(
         '',
         help='Guest mount path override (default: mirrors host_src path).',
     )
-    mode = scfg.Value(
+    mode : Any = scfg.Value(
         '',
         help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
-    access = scfg.Value(
+    access : Any = scfg.Value(
         '',
         help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
     )
-    recreate_if_needed = scfg.Value(
+    recreate_if_needed : Any = scfg.Value(
         False,
         isflag=True,
         help='Recreate VM if existing definition lacks the requested share mapping.',
     )
-    ensure_firewall = scfg.Value(
+    ensure_firewall : Any = scfg.Value(
         True,
         isflag=True,
         help='Apply firewall rules when firewall.enabled=true.',
     )
-    sync_settings = scfg.Value(
+    sync_settings : Any = scfg.Value(
         False,
         isflag=True,
         help='Sync host settings files into VM before launching VS Code.',
     )
-    sync_paths = scfg.Value(
+    sync_paths : Any = scfg.Value(
         '',
         help=(
             'Optional comma-separated paths used when --sync_settings is set. '
             'Defaults to [sync].paths.'
         ),
     )
-    force = scfg.Value(
+    force : Any = scfg.Value(
         False,
         isflag=True,
         help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -701,43 +702,43 @@ class VMCodeCLI(_BaseCommand):
 class VMSSHCLI(_BaseCommand):
     """SSH into the VM and start a shell in the mapped guest directory."""
 
-    host_src = scfg.Value(
+    host_src: Any = scfg.Value(
         '.',
         position=1,
         help='Host project directory to share and open (default: current directory).',
     )
-    vm = scfg.Value(
+    vm : Any = scfg.Value(
         '',
         help='VM name override.',
     )
-    guest_dst = scfg.Value(
+    guest_dst : Any = scfg.Value(
         '',
         help='Guest mount path override (default: mirrors host_src path).',
     )
-    mode = scfg.Value(
+    mode : Any = scfg.Value(
         '',
         help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
-    access = scfg.Value(
+    access : Any = scfg.Value(
         '',
         help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
     )
-    recreate_if_needed = scfg.Value(
+    recreate_if_needed : Any = scfg.Value(
         False,
         isflag=True,
         help='Recreate VM if existing definition lacks the requested share mapping.',
     )
-    ensure_firewall = scfg.Value(
+    ensure_firewall : Any = scfg.Value(
         True,
         isflag=True,
         help='Apply firewall rules when firewall.enabled=true.',
     )
-    force = scfg.Value(
+    force : Any = scfg.Value(
         False,
         isflag=True,
         help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -815,23 +816,23 @@ class VMSSHCLI(_BaseCommand):
 class VMAttachCLI(_BaseCommand):
     """Attach/register a host directory to an existing managed VM."""
 
-    vm = scfg.Value('', help='Optional VM name override.')
-    host_src = scfg.Value('.', position=1, help='Host directory to attach.')
-    guest_dst = scfg.Value('', help='Guest mount path override.')
-    mode = scfg.Value(
+    vm : Any = scfg.Value('', help='Optional VM name override.')
+    host_src : Any = scfg.Value('.', position=1, help='Host directory to attach.')
+    guest_dst : Any = scfg.Value('', help='Guest mount path override.')
+    mode : Any = scfg.Value(
         '',
         help='Attachment mode: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
-    access = scfg.Value(
+    access : Any = scfg.Value(
         '',
         help='Attachment access: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
     )
-    force = scfg.Value(
+    force : Any = scfg.Value(
         False,
         isflag=True,
         help='Deprecated no-op; multiple VMs may attach the same folder.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -1011,9 +1012,9 @@ class VMAttachCLI(_BaseCommand):
 class VMDetachCLI(_BaseCommand):
     """Detach/unregister a host directory from a managed VM."""
 
-    vm = scfg.Value('', help='Optional VM name override.')
-    host_src = scfg.Value('.', position=1, help='Host directory to detach.')
-    dry_run = scfg.Value(
+    vm : Any = scfg.Value('', help='Optional VM name override.')
+    host_src : Any = scfg.Value('.', position=1, help='Host directory to detach.')
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
@@ -1188,12 +1189,12 @@ class VMUpdateDrift:
 class VMUpdateCLI(_BaseCommand):
     """Reconcile VM config drift against live libvirt settings."""
 
-    vm = scfg.Value('', help='Optional VM name override.')
-    restart = scfg.Value(
+    vm : Any = scfg.Value('', help='Optional VM name override.')
+    restart : Any = scfg.Value(
         'auto',
         help='Restart policy when changes require reboot to take effect: auto, always, never.',
     )
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 

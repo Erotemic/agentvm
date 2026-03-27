@@ -17,6 +17,7 @@ import ubelt as ub
 from ..store import find_vm, load_store
 from ._common import _BaseCommand, _cfg_path
 
+from typing import Any
 
 class PlanCLI(_BaseCommand):
     """Show the recommended end-to-end setup command sequence."""
@@ -81,11 +82,11 @@ class HelpTreeCLI(_BaseCommand):
 class HelpRawCLI(_BaseCommand):
     """Print direct system-tool commands equivalent to common aivm checks."""
 
-    vm = scfg.Value(
+    vm : Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    host_src = scfg.Value(
+    host_src : Any = scfg.Value(
         '.',
         help='Host folder for attachment/share inspection context.',
     )

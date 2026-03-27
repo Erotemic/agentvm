@@ -24,12 +24,12 @@ from ._common import (
 )
 from .firewall import FirewallModalCLI
 from .net import NetModalCLI
-
+from typing import Any
 
 class DoctorCLI(_BaseCommand):
     """Check host prerequisites and list missing required tools."""
 
-    sudo = scfg.Value(
+    sudo : Any = scfg.Value(
         False,
         isflag=True,
         help='Also verify required commands are available under sudo -n.',
@@ -90,7 +90,7 @@ class HostInstallDepsCLI(_BaseCommand):
 class ImageFetchCLI(_BaseCommand):
     """Download/cache the configured Ubuntu base image."""
 
-    dry_run = scfg.Value(
+    dry_run : Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
