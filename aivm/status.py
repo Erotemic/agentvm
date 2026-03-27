@@ -89,7 +89,7 @@ def probe_cwd_shared_with_vm(cfg: AgentVMConfig, store_cfg_path: Path) -> ProbeO
     rel = cwd_norm.relative_to(best_match)
     return ProbeOutcome(
         True,
-        f'parent share covers current directory: {best_match} ({best_att})',
+        f'parent share covers current directory: {best_match} (+{rel}) ({best_att})',
     )
 
 

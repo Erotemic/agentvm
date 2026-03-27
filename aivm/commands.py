@@ -968,7 +968,11 @@ class CommandManager:
             and self._effective_role(item.spec) == 'read'
             and self.auto_approve_readonly_sudo
         ]
-        if readonly_autoapproved_sudo and not self._plan_needs_approval(plan):
+        if (
+            readonly_autoapproved_sudo
+            and not self._plan_needs_approval(plan)
+            and not (self.yes or self.yes_sudo or self._approve_all_remaining)
+        ):
             if self.sudo_authentication_required():
                 self._authenticate_sudo()
             plan.approved = True

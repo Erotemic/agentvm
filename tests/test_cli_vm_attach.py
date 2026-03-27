@@ -1070,6 +1070,8 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
             return _Proc(1, '', 'sudo: a password is required')
+        if parts[:2] == ['sudo', '-v']:
+            return _Proc(0, '', '')
         normalized = parts[1:] if parts[:1] == ['sudo'] else parts
         if normalized[:4] == ['virsh', '-c', 'qemu:///system', 'dumpxml']:
             return _Proc(1, '', 'domain not visible')
@@ -1088,11 +1090,7 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
         vm_running=True,
     )
 
-    assert len(prompts) == 2
-    assert prompts == [
-        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
-        'Approve this step? [y]es/[a]ll/[s]how/[N]o: ',
-    ]
+    assert prompts == ['Approve this step? [y]es/[a]ll/[s]how/[N]o: ']
     assert 'Step: Inspect shared-root VM mapping' in messages
     assert 'Step: Inspect shared-root VM mapping with libvirt privileges' in messages
     assert 'Step: Ensure VM virtiofs mapping' in messages
