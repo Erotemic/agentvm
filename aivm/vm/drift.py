@@ -529,12 +529,12 @@ def desired_saved_vm_mappings(
     """
     desired: set[tuple[str, str]] = set()
     for att in find_attachments_for_vm(reg, cfg.vm.name):
-        mode = getattr(att, 'mode', '')
+        mode = att.mode
         if mode in ('shared', 'shared-root'):
             if mode == 'shared':
                 # For shared mode, use host_path (the store field) and tag from attachment
-                src = getattr(att, 'host_path', '')
-                tag = getattr(att, 'tag', '')
+                src = att.host_path 
+                tag = att.tag
                 if src:  # Only add non-empty sources
                     desired.add((src, tag))
             elif mode == 'shared-root':

@@ -101,7 +101,7 @@ class ListCLI(_BaseCommand):
                 ):
                     print(
                         f'  - {att.host_path} | vm={att.vm_name} '
-                        f'| mode={att.mode} | access={getattr(att, "access", "rw")} '
+                        f'| mode={att.mode} | access={att.access} '
                         f'| guest_dst={att.guest_dst or "(default)"}'
                     )
         print('')

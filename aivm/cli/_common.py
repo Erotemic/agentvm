@@ -67,20 +67,14 @@ class _BaseCommand(scfg.DataConfig):
 
     @classmethod
     def cli(cls, *args: Any, **kwargs: Any) -> Self:  # type: ignore
-        # NOTE: these getattrs are to make the type checker happy, and we
-        # should try to make this less ugly
         parsed = cast(Self, super().cli(*args, **kwargs))
-        cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
-        cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
+        cfg_verbosity = _resolve_cfg_verbosity(parsed.config)
+        cfg_yes_sudo = _resolve_cfg_yes_sudo(parsed.config)
         cfg_auto_approve_readonly_sudo = (
-            _resolve_cfg_auto_approve_readonly_sudo(
-                getattr(parsed, 'config', None)
-            )
+            _resolve_cfg_auto_approve_readonly_sudo(parsed.config)
         )
         effective_yes_sudo = bool(
-            getattr(parsed, 'yes_sudo', False)
-            or getattr(parsed, 'yes', False)
-            or cfg_yes_sudo
+            parsed.yes_sudo or parsed.yes or cfg_yes_sudo
         )
         setattr(parsed, 'yes_sudo', effective_yes_sudo)
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
@@ -89,20 +83,20 @@ class _BaseCommand(scfg.DataConfig):
         )
         CommandManager.activate(
             CommandManager(
-                yes=bool(getattr(parsed, 'yes', False)),
+                yes=bool(parsed.yes),
                 yes_sudo=bool(effective_yes_sudo),
                 auto_approve_readonly_sudo=bool(cfg_auto_approve_readonly_sudo),
             )
         )
-        args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
+        args_verbose = int(parsed.verbose or 0)
         _setup_logging(args_verbose, cfg_verbosity)
         log.trace(
             'Parsed command {} with config={} verbose={} yes={} yes_sudo={} auto_approve_readonly_sudo={}',
             cls.__name__,
-            getattr(parsed, 'config', None),
+            parsed.config,
             args_verbose,
-            bool(getattr(parsed, 'yes', False)),
-            bool(getattr(parsed, 'yes_sudo', False)),
+            bool(parsed.yes),
+            bool(parsed.yes_sudo),
             bool(cfg_auto_approve_readonly_sudo),
         )
         return parsed
@@ -118,7 +112,7 @@ def _resolve_cfg_verbosity(config_opt: str | None) -> int:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            behavior_verbose = int(getattr(reg.behavior, 'verbose', 1) or 1)
+            behavior_verbose = int(reg.behavior.verbose or 1)
             if behavior_verbose != 1:
                 cfg_verbosity = behavior_verbose
             elif reg.active_vm:
@@ -150,9 +144,7 @@ def _resolve_cfg_auto_approve_readonly_sudo(config_opt: str | None) -> bool:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            auto_approve_readonly_sudo = bool(
-                getattr(reg.behavior, 'auto_approve_readonly_sudo', True)
-            )
+            auto_approve_readonly_sudo = bool(reg.behavior.auto_approve_readonly_sudo)
     except Exception:
         auto_approve_readonly_sudo = True
     return auto_approve_readonly_sudo

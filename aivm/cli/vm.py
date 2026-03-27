@@ -1060,7 +1060,7 @@ class VMDetachCLI(_BaseCommand):
         resolved = ResolvedAttachment(
             vm_name=cfg.vm.name,
             mode=mode,
-            access=_normalize_attachment_access(getattr(att, 'access', '')),
+            access=_normalize_attachment_access(att.access),
             source_dir=str(host_src),
             guest_dst=att.guest_dst or str(host_src),
             tag=att.tag,
@@ -2482,7 +2482,7 @@ def _resolve_attachment(
     att = find_attachment_for_vm(reg, host_src, cfg.vm.name)
     if att is not None:
         saved_mode = _normalize_attachment_mode(att.mode)
-        saved_access = _normalize_attachment_access(getattr(att, 'access', ''))
+        saved_access = _normalize_attachment_access(att.access)
         if mode_opt and mode != saved_mode:
             raise RuntimeError(
                 'Attachment mode mismatch for existing folder attachment.\n'
