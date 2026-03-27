@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pytest import MonkeyPatch
 
@@ -34,7 +36,7 @@ def test_check_commands_with_sudo(
 ) -> None:
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs : Any):
         calls.append(cmd)
         if cmd[:3] == ['sudo', '-n', 'true']:
             return CmdResult(0, '', '')
@@ -151,7 +153,7 @@ def test_install_deps_debian_reports_apt_lock_cleanly(
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, **kwargs : Any):
         del kwargs
         if cmd[-2:] == ['update', '-y']:
             return P(

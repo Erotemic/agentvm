@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Any
+
 from aivm.cli.vm import (
     AttachmentMode,
     ReconcileResult,
@@ -130,7 +132,7 @@ def test_vm_update_drift_escalates_for_disk_probe(
     cfg.vm.name = 'vm-drift'
     cfg.vm.disk_gb = 60
 
-    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs):
+    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs : Any):
         del kwargs
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -190,7 +192,7 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs):
+    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs : Any):
         del kwargs, sudo
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -248,7 +250,7 @@ def test_prepare_attached_session_bootstraps_missing_vm(
     calls: list[str] = []
     state = {'ready': False}
 
-    def fake_resolve_cfg_for_code(**kwargs):
+    def fake_resolve_cfg_for_code(**kwargs : Any):
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -333,7 +335,7 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
     init_kwargs: list[dict] = []
     create_kwargs: list[dict] = []
 
-    def fake_resolve_cfg_for_code(**kwargs):
+    def fake_resolve_cfg_for_code(**kwargs : Any):
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -447,7 +449,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
     calls: list[str] = []
     state = {'ready': False}
 
-    def fake_resolve_cfg_for_code(**kwargs):
+    def fake_resolve_cfg_for_code(**kwargs : Any):
         del kwargs
         if not state['ready']:
             raise RuntimeError(

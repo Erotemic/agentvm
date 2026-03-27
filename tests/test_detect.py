@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import ipaddress
 from pathlib import Path
 
@@ -24,7 +26,7 @@ def test_existing_ipv4_routes_parsing(
     def fake_which(cmd: str):
         return '/usr/sbin/ip' if cmd == 'ip' else None
 
-    def fake_run_cmd(self, *args, **kwargs):
+    def fake_run_cmd(self, *args, **kwargs : Any):
         return CmdResult(
             0,
             'default via 192.168.1.1 dev wlp2s0\n'

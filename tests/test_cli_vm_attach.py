@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import builtins
 import subprocess
 from pathlib import Path
@@ -34,7 +36,6 @@ from aivm.store import (
 )
 from aivm.util import CmdResult
 
-
 def _activate_manager(monkeypatch, *, yes_sudo: bool = True) -> None:
     CommandManager.activate(CommandManager(yes_sudo=yes_sudo))
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
@@ -42,7 +43,7 @@ def _activate_manager(monkeypatch, *, yes_sudo: bool = True) -> None:
 
 
 class _Proc:
-    def __init__(self, returncode=0, stdout='', stderr='') -> None:
+    def __init__(self, returncode : int = 0, stdout='', stderr='') -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
@@ -72,7 +73,7 @@ def _capture_command_logs(monkeypatch) -> list[str]:
 
 
 def test_vm_attach_mounts_share_when_vm_running(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-running'
@@ -140,7 +141,7 @@ def test_vm_attach_mounts_share_when_vm_running(
 
 
 def test_vm_attach_skips_guest_mount_when_vm_not_running(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-stopped'
@@ -199,7 +200,7 @@ def test_vm_attach_skips_guest_mount_when_vm_not_running(
 
 
 def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-needs-sudo'
@@ -475,7 +476,7 @@ def test_resolve_attachment_ro_not_implemented_for_git_mode(
 
 
 def test_vm_attach_shared_root_running_ensures_guest_ready(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root'
@@ -547,7 +548,7 @@ def test_vm_attach_shared_root_running_ensures_guest_ready(
 
 
 def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-bind'
@@ -565,7 +566,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any):
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -597,7 +598,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
 
 
 def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-bind-existing'
@@ -615,7 +616,7 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any):
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -649,7 +650,7 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
 
 
 def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-bind-device-subpath'
@@ -667,7 +668,7 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any):
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -701,7 +702,7 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
 
 
 def test_shared_root_host_bind_lazy_unmounts_busy_target(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-bind-busy'
@@ -722,7 +723,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
         Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root' / attachment.tag
     )
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any):
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -754,7 +755,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
 
 
 def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-safe-restore'
@@ -772,7 +773,7 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any):
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -808,7 +809,7 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
 
 
 def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-not-mounted'
@@ -826,7 +827,7 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any):
         del kwargs
         parts = [str(part) for part in cmd]
         normalized = parts[2:] if parts[:2] == ['sudo', '-n'] else parts
@@ -857,7 +858,7 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
 
 
 def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-ro'
@@ -884,7 +885,7 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     cmds: list[list[str]] = []
     run_kwargs: list[dict] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any):
         cmds.append([str(c) for c in cmd])
         run_kwargs.append(dict(kwargs))
         return _Proc(0, '', '')
@@ -924,7 +925,7 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
 
 
 def test_shared_root_host_bind_prompts_once_per_privileged_step(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-plan'
@@ -949,7 +950,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
@@ -989,7 +990,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
 
 
 def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-readonly'
@@ -1014,7 +1015,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
@@ -1049,7 +1050,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
 
 
 def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-map'
@@ -1065,7 +1066,7 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:
@@ -1105,7 +1106,7 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
 
 
 def test_shared_root_guest_bind_preview_uses_semantic_summaries(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root-preview'
@@ -1204,7 +1205,7 @@ def test_resolve_attachment_git_migrates_legacy_host_mirror_guest_dst(
 
 
 def test_vm_attach_git_mode_syncs_guest_repo_when_running(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
@@ -1270,7 +1271,7 @@ def test_vm_attach_git_mode_syncs_guest_repo_when_running(
 
 
 def test_git_current_branch_returns_named_branch(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo = tmp_path / 'repo'
     repo.mkdir()
@@ -1285,7 +1286,7 @@ def test_git_current_branch_returns_named_branch(
 
 
 def test_git_current_branch_raises_on_git_error(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo = tmp_path / 'repo'
     repo.mkdir()
@@ -1304,7 +1305,7 @@ def test_git_current_branch_raises_on_git_error(
 
 
 def test_upsert_host_git_remote_adds_remote(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo = tmp_path / 'repo'
     repo.mkdir()
@@ -1336,7 +1337,7 @@ def test_upsert_host_git_remote_adds_remote(
     remote_name = _git_attachment_remote_name(cfg, repo)
     prompts: list[str] = []
 
-    def _capture_prompt(**kwargs) -> None:
+    def _capture_prompt(**kwargs : Any) -> None:
         prompts.append(kwargs['purpose'])
 
     monkeypatch.setattr(
@@ -1364,7 +1365,7 @@ def test_upsert_host_git_remote_adds_remote(
 
 
 def test_upsert_host_git_remote_updates_remote_url(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     repo = tmp_path / 'repo'
     repo.mkdir()
@@ -1449,7 +1450,7 @@ def test_upsert_host_git_remote_raises_on_invalid_repo(tmp_path: Path) -> None:
 
 
 def test_record_attachment_skips_save_when_unchanged(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
@@ -1491,7 +1492,7 @@ def test_record_attachment_skips_save_when_unchanged(
 
 
 def test_record_attachment_passes_reason_to_save_store(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'

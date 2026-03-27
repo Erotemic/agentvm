@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pytest import MonkeyPatch
 
@@ -81,7 +83,7 @@ def test_network_status_and_destroy(
     cfg = AgentVMConfig()
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_run_cmd(self, cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
         calls.append(cmd)
         if cmd[1] == 'net-info':
             return CmdResult(0, 'INFO', '')

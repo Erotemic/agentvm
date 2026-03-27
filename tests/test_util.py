@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import builtins
 
 import pytest
@@ -290,7 +292,7 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     auth_cmds = []
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr='') -> None:
+        def __init__(self, returncode=0, stdout : str = '', stderr : str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -305,7 +307,7 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
         def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
         auth_cmds.append(cmd)
         if cmd == ['sudo', '-n', 'true']:
             return P(returncode=1, stderr='sudo: a password is required')
@@ -359,7 +361,7 @@ def test_confirm_sudo_scope_logs_preview_commands(
         def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
         if cmd == ['sudo', '-n', 'true']:
             return P(returncode=1, stderr='sudo: a password is required')
         if cmd == ['sudo', '-v']:

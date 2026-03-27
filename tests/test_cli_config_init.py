@@ -8,7 +8,7 @@ import pytest
 
 from aivm.cli.config import InitCLI
 from aivm.config import AgentVMConfig
-
+from typing import Any
 
 def _fake_defaults_cfg(tmp_path: Path) -> AgentVMConfig:
     cfg = AgentVMConfig()
@@ -19,7 +19,7 @@ def _fake_defaults_cfg(tmp_path: Path) -> AgentVMConfig:
 
 
 def test_config_init_noninteractive_requires_yes_or_defaults(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
@@ -35,7 +35,7 @@ def test_config_init_noninteractive_requires_yes_or_defaults(
 
 
 def test_config_init_noninteractive_defaults_flag_bypasses_prompt(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
@@ -56,7 +56,7 @@ def test_config_init_noninteractive_defaults_flag_bypasses_prompt(
 
 
 def test_config_init_interactive_shows_summary_and_accepts(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys : pytest.CaptureFixture[str]
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
@@ -77,7 +77,7 @@ def test_config_init_interactive_shows_summary_and_accepts(
 
 
 def test_config_init_interactive_can_create_dedicated_aivm_key(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     fake_home = tmp_path / 'home'
@@ -99,7 +99,7 @@ def test_config_init_interactive_can_create_dedicated_aivm_key(
             self.stdout = ''
             self.stderr = ''
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd, **kwargs : Any) -> Proc:
         del kwargs
         normalized = [str(c) for c in cmd]
         if normalized[:2] == ['mkdir', '-p']:
@@ -141,7 +141,7 @@ def test_config_init_interactive_can_create_dedicated_aivm_key(
 
 
 def test_config_init_defaults_warns_when_ssh_keys_missing(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
@@ -166,7 +166,7 @@ def test_config_init_defaults_warns_when_ssh_keys_missing(
 
 
 def test_config_init_prompt_mentions_edit_shortcut(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
@@ -190,7 +190,7 @@ def test_config_init_prompt_mentions_edit_shortcut(
 
 
 def test_config_init_interactive_edit_updates_hardware(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)
@@ -228,7 +228,7 @@ def test_config_init_interactive_edit_updates_hardware(
 
 
 def test_config_init_logs_resource_warnings_from_shared_checker(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     monkeypatch.setattr('aivm.cli.config._cfg_path', lambda p: cfg_path)

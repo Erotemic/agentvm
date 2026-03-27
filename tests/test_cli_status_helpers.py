@@ -20,7 +20,8 @@ from aivm.vm.drift import (
 from aivm.vm.drift import (
     parse_dominfo_hardware as _parse_dominfo_hardware,
 )
-
+from pathlib import Path
+from typing import Any
 
 def test_check_network_parsing_and_permission(
     monkeypatch: MonkeyPatch,
@@ -90,7 +91,7 @@ def test_probe_firewall_privileged_probe_uses_step(
     step_titles: list[str] = []
     orig_step = CommandManager.step
 
-    def track_step(self, title, **kwargs):
+    def track_step(self, title, **kwargs : Any):
         step_titles.append(title)
         return orig_step(self, title, **kwargs)
 
@@ -128,7 +129,7 @@ def test_check_vm_state_branches(
 
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs : Any):
         calls.append(cmd)
         if cmd[3] == 'dominfo':
             return CmdResult(0, 'ok', '')
@@ -143,7 +144,7 @@ def test_check_vm_state_branches(
 
 
 def test_render_status_non_sudo_keeps_vm_unknown_distinct_from_missing(
-    monkeypatch: MonkeyPatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path : Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'aivm-2404'
@@ -177,7 +178,7 @@ def test_render_status_non_sudo_keeps_vm_unknown_distinct_from_missing(
         ),
     )
 
-    def fake_run_cmd(self, cmd, **kwargs):
+    def fake_run_cmd(self, cmd, **kwargs : Any):
         del kwargs
         if cmd[:2] == ['test', '-f']:
             return CmdResult(1, '', '')

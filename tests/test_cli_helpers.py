@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import re
 from pathlib import Path
 
@@ -262,7 +264,7 @@ def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
             self.stdout = ''
             self.stderr = ''
 
-    def fake_subprocess_run(cmd, **kwargs):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> Proc:
         del kwargs
         normalized = [str(c) for c in cmd]
         calls.append(normalized)
