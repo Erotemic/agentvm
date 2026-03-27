@@ -246,7 +246,7 @@ def test_ensure_share_mounted_retries_then_succeeds(
         'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
     )
 
-    def fake_run_cmd(self, *a, **k):
+    def fake_run_cmd(self: object, *a: object, **k: Any) -> CmdResult:
         del a, k
         calls['n'] += 1
         if calls['n'] == 1:
@@ -324,7 +324,7 @@ def test_ensure_share_mounted_read_only_uses_ro_option(
         'aivm.vm.share.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519']
     )
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd : list[str], **kwargs: Any) -> CmdResult:
         cmds.append([str(c) for c in cmd])
         run_kwargs.append(dict(kwargs))
         return CmdResult(0, '', '')
@@ -365,7 +365,7 @@ def test_create_vm_fallback_when_uefi_firmware_missing(
 
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         calls.append(cmd)
         if cmd[0] == 'virt-install' and '--boot' in cmd:
             raise CmdError(
@@ -412,7 +412,7 @@ def test_create_vm_prefers_uefi_even_when_host_looks_nested(
 
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         calls.append(cmd)
         return CmdResult(0, '', '')
 
@@ -442,7 +442,7 @@ def test_create_or_start_existing_vm_uses_step_for_state_and_start(
     step_titles: list[str] = []
     orig_step = CommandManager.step
 
-    def track_step(self, title, **kwargs : Any):
+    def track_step(self: Any, title: str, **kwargs: Any) -> object:
         step_titles.append(title)
         return orig_step(self, title, **kwargs)
 
@@ -450,7 +450,7 @@ def test_create_or_start_existing_vm_uses_step_for_state_and_start(
 
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         parts = list(cmd)
         calls.append(parts)
@@ -502,12 +502,12 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     )
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr='') -> None:
+        def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> P:
         del kwargs
         normalized = cmd[1:] if cmd and cmd[0] == 'sudo' else cmd
         if normalized[:2] == ['bash', '-lc'] and 'cat > ' in normalized[2]:
@@ -545,7 +545,7 @@ def test_fetch_image_uses_atomic_temp_then_move(
         '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
     )
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -588,7 +588,7 @@ def test_fetch_image_revalidates_cached_image_before_reuse(
 
     monkeypatch.setattr('aivm.vm.lifecycle._sudo_file_exists', lambda p: True)
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -628,7 +628,7 @@ def test_fetch_image_redownloads_when_cached_hash_is_stale(
         'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
     )
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         nonlocal sha_calls
         del kwargs
         normalized = [str(part) for part in cmd]
@@ -672,7 +672,7 @@ def test_fetch_image_validates_ubuntu_checksum(
         '7aa6d9f5e8a3a55c7445b138d31a73d1187871211b2b7da9da2e1a6cbf169b21'
     )
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -708,7 +708,7 @@ def test_fetch_image_raises_on_checksum_mismatch(
     calls = []
     actual = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -766,7 +766,7 @@ def test_fetch_image_accepts_supported_file_url(
 
     calls = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -804,24 +804,24 @@ def test_fetch_image_preview_uses_grouped_block_summaries(
     )
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: object) -> None:
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: object) -> None:
             return None
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: object) -> None:
             return None
 
-        def warning(self, fmt: str, *args) -> None:
+        def warning(self, fmt: str, *args: object) -> None:
             messages.append(fmt.format(*args))
 
-        def error(self, fmt: str, *args) -> None:
+        def error(self, fmt: str, *args: object) -> None:
             messages.append(fmt.format(*args))
 
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:1] == ['sudo']:
@@ -863,14 +863,14 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
     )
     calls: list[list[str]] = []
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         del kwargs
         calls.append([str(part) for part in cmd])
         if cmd[:2] == ['getent', 'group']:
             return CmdResult(0, 'libvirt-qemu:x:1:\n', '')
         return CmdResult(0, '', '')
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         normalized = [str(part) for part in cmd]
         if normalized[:2] == ['sudo', '-n']:
@@ -937,7 +937,7 @@ def test_wait_for_ssh_uses_generous_probe_timeout(
     )
     monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda s: None)
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         del cmd
         calls['n'] += 1
         timeouts.append(kwargs.get('timeout'))
@@ -969,7 +969,7 @@ def test_create_vm_raises_clear_error_when_virtiofsd_missing(
         'aivm.vm.lifecycle._ensure_disk', lambda *a, **k: Path('/tmp/vm.qcow2')
     )
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         if cmd and cmd[0] == 'virt-install':
             raise CmdError(
                 cmd,
@@ -1013,7 +1013,7 @@ def test_create_vm_raises_clear_error_when_guest_memory_unavailable(
 
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         calls.append(cmd)
         if cmd and cmd[0] == 'virt-install' and '--boot' in cmd:
             raise CmdError(

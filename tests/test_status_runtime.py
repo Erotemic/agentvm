@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from pytest import MonkeyPatch
-
+from pathlib import Path
 from aivm.config import (
     AgentVMConfig,
     FirewallConfig,
@@ -102,7 +102,7 @@ def test_render_global_status_includes_runtime_environment(
 
 
 def test_probe_cwd_shared_with_vm_exact_match(
-    monkeypatch: MonkeyPatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'test-vm'
@@ -131,7 +131,7 @@ def test_probe_cwd_shared_with_vm_exact_match(
 
 
 def test_probe_cwd_shared_with_vm_parent_match(
-    monkeypatch: MonkeyPatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'test-vm'
@@ -162,7 +162,7 @@ def test_probe_cwd_shared_with_vm_parent_match(
 
 
 def test_render_status_reports_unshared_cwd(
-    monkeypatch: MonkeyPatch, tmp_path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'test-vm'

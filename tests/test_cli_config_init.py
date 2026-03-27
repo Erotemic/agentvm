@@ -99,7 +99,7 @@ def test_config_init_interactive_can_create_dedicated_aivm_key(
             self.stdout = ''
             self.stderr = ''
 
-    def fake_subprocess_run(cmd, **kwargs : Any) -> Proc:
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> Proc:
         del kwargs
         normalized = [str(c) for c in cmd]
         if normalized[:2] == ['mkdir', '-p']:

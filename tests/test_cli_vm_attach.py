@@ -36,36 +36,36 @@ from aivm.store import (
 )
 from aivm.util import CmdResult
 
-def _activate_manager(monkeypatch, *, yes_sudo: bool = True) -> None:
+def _activate_manager(monkeypatch : pytest.MonkeyPatch, *, yes_sudo: bool = True) -> None:
     CommandManager.activate(CommandManager(yes_sudo=yes_sudo))
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
 
 
 class _Proc:
-    def __init__(self, returncode : int = 0, stdout='', stderr='') -> None:
+    def __init__(self, returncode : int = 0, stdout : str = '', stderr : str = '') -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
 
 
-def _capture_command_logs(monkeypatch) -> list[str]:
+def _capture_command_logs(monkeypatch : pytest.MonkeyPatch) -> list[str]:
     messages: list[str] = []
 
     class _FakeLog:
-        def info(self, fmt: str, *args) -> None:
+        def info(self, fmt: str, *args: Any) -> None:
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args) -> None:
+        def debug(self, fmt: str, *args: Any) -> None:
             return None
 
-        def trace(self, fmt: str, *args) -> None:
+        def trace(self, fmt: str, *args: Any) -> None:
             return None
 
-        def warning(self, fmt: str, *args) -> None:
+        def warning(self, fmt: str, *args: Any) -> None:
             messages.append(fmt.format(*args))
 
-        def error(self, fmt: str, *args) -> None:
+        def error(self, fmt: str, *args: Any) -> None:
             messages.append(fmt.format(*args))
 
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
@@ -566,7 +566,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -616,7 +616,7 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -668,7 +668,7 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -723,7 +723,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
         Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root' / attachment.tag
     )
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -773,7 +773,7 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
         del kwargs
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
@@ -827,7 +827,7 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
     _activate_manager(monkeypatch)
     calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         normalized = parts[2:] if parts[:2] == ['sudo', '-n'] else parts
@@ -885,7 +885,7 @@ def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(
     cmds: list[list[str]] = []
     run_kwargs: list[dict] = []
 
-    def fake_subprocess_run(cmd : list[str], **kwargs : Any):
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         cmds.append([str(c) for c in cmd])
         run_kwargs.append(dict(kwargs))
         return _Proc(0, '', '')
@@ -1015,7 +1015,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
         lambda prompt: (prompts.append(prompt) or 'y'),
     )
 
-    def fake_subprocess_run(cmd, **kwargs : Any) -> _Proc:
+    def fake_subprocess_run(cmd : list[str], **kwargs : Any) -> _Proc:
         del kwargs
         parts = [str(part) for part in cmd]
         if parts[:3] == ['sudo', '-n', 'true']:

@@ -90,15 +90,16 @@ def test_probe_firewall_privileged_probe_uses_step(
 
     step_titles: list[str] = []
     orig_step = CommandManager.step
+    from aivm.commands import PlanScope
 
-    def track_step(self, title, **kwargs : Any):
+    def track_step(self : Any, title : str, **kwargs : Any) -> PlanScope:
         step_titles.append(title)
         return orig_step(self, title, **kwargs)
 
     monkeypatch.setattr('aivm.status.CommandManager.step', track_step)
 
     class _Proc:
-        def __init__(self, returncode=0, stdout='', stderr='') -> None:
+        def __init__(self, returncode : int = 0, stdout : str = '', stderr : str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -129,7 +130,7 @@ def test_check_vm_state_branches(
 
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self : Any, cmd : list[str], **kwargs : Any) -> CmdResult:
         calls.append(cmd)
         if cmd[3] == 'dominfo':
             return CmdResult(0, 'ok', '')
@@ -178,7 +179,7 @@ def test_render_status_non_sudo_keeps_vm_unknown_distinct_from_missing(
         ),
     )
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self : Any, cmd : list[str], **kwargs : Any) -> CmdResult:
         del kwargs
         if cmd[:2] == ['test', '-f']:
             return CmdResult(1, '', '')

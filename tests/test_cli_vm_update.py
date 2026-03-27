@@ -109,7 +109,7 @@ def test_vm_update_restarts_when_required(
     )
     called: dict[str, object] = {}  # type: ignore[assignment]
 
-    def fake_restart(*a, **k) -> None:
+    def fake_restart(*a: object, **k: Any) -> None:
         called['kwargs'] = k  # type: ignore[index]
 
     monkeypatch.setattr(
@@ -132,7 +132,7 @@ def test_vm_update_drift_escalates_for_disk_probe(
     cfg.vm.name = 'vm-drift'
     cfg.vm.disk_gb = 60
 
-    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any) -> CmdResult:
         del kwargs
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -192,7 +192,7 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_run_cmd(self, cmd, *, sudo=False, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any) -> CmdResult:
         del kwargs, sudo
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -250,7 +250,7 @@ def test_prepare_attached_session_bootstraps_missing_vm(
     calls: list[str] = []
     state = {'ready': False}
 
-    def fake_resolve_cfg_for_code(**kwargs : Any):
+    def fake_resolve_cfg_for_code(**kwargs: Any) -> tuple[AgentVMConfig, Path]:
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -267,7 +267,7 @@ def test_prepare_attached_session_bootstraps_missing_vm(
         lambda *a, **k: calls.append('config_init') or 0,
     )
 
-    def fake_vm_create(*a, **k):
+    def fake_vm_create(*a: Any, **k: Any) -> int:
         calls.append('vm_create')
         state['ready'] = True
         return 0
@@ -335,7 +335,7 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
     init_kwargs: list[dict] = []
     create_kwargs: list[dict] = []
 
-    def fake_resolve_cfg_for_code(**kwargs : Any):
+    def fake_resolve_cfg_for_code(**kwargs: Any) -> tuple[AgentVMConfig, Path]:
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -348,12 +348,12 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
         'aivm.cli.vm._resolve_cfg_for_code', fake_resolve_cfg_for_code
     )
 
-    def fake_init(*a, **k):
+    def fake_init(*a: object, **k: Any) -> int:
         del a
         init_kwargs.append(dict(k))
         return 0
 
-    def fake_vm_create(*a, **k):
+    def fake_vm_create(*a: object, **k: Any) -> int:
         del a
         create_kwargs.append(dict(k))
         state['ready'] = True
@@ -449,7 +449,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
     calls: list[str] = []
     state = {'ready': False}
 
-    def fake_resolve_cfg_for_code(**kwargs : Any):
+    def fake_resolve_cfg_for_code(**kwargs: Any) -> tuple[AgentVMConfig, Path]:
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -466,7 +466,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
         lambda *a, **k: calls.append('config_init') or 0,
     )
 
-    def fake_vm_create(*a, **k) -> int:
+    def fake_vm_create(*a : Any, **k : Any) -> int:
         calls.append('vm_create')
         state['ready'] = True
         return 0
@@ -564,7 +564,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         lambda **kwargs: (cfg, cfg_path),
     )
 
-    def fake_resolve_attachment(_cfg, _cfg_path, host_path, _guest_dst_opt):
+    def fake_resolve_attachment(_cfg : AgentVMConfig, _cfg_path : Path, host_path : Path, _guest_dst_opt : str) -> ResolvedAttachment:
         host_path = Path(host_path).resolve()
         if host_path == host_src.resolve():
             return current_attachment
@@ -596,7 +596,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     mappings = [(str(host_src.resolve()), 'hostcode-proj')]
 
-    def fake_vm_share_mappings(*a, **k):
+    def fake_vm_share_mappings(*a : Any, **k : Any) -> list:
         del a, k
         return list(mappings)
 
@@ -604,7 +604,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     attached: list[tuple[tuple, dict]] = []
 
-    def fake_attach_vm_share(*a, **k) -> None:
+    def fake_attach_vm_share(*a : Any, **k : Any) -> None:
         attached.append((a, k))
         mappings.append((str(other_src.resolve()), 'hostcode-docs'))
 
@@ -618,16 +618,16 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
     recorded: list[dict] = []
 
     def fake_record_attachment(
-        cfg_arg,
-        cfg_path_arg,
+        cfg_arg: AgentVMConfig,
+        cfg_path_arg : Path,
         *,
-        host_src,
-        mode,
-        access,
-        guest_dst,
-        tag,
-        force=False,
-    ):
+        host_src : Path,
+        mode : str,
+        access : str,
+        guest_dst : str,
+        tag : str,
+        force : bool = False,
+    ) -> Path:
         del cfg_arg, cfg_path_arg, force
         recorded.append(
             {
@@ -717,7 +717,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         lambda **kwargs: (cfg, cfg_path),
     )
 
-    def fake_resolve_attachment(_cfg, _cfg_path, host_path, _guest_dst_opt):
+    def fake_resolve_attachment(_cfg : AgentVMConfig, _cfg_path: Path, host_path: Path, _guest_dst_opt : str) -> ResolvedAttachment:
         host_path = Path(host_path).resolve()
         if host_path == host_src.resolve():
             return current_attachment
@@ -774,16 +774,16 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     recorded: list[dict] = []
 
     def fake_record_attachment(
-        cfg_arg,
-        cfg_path_arg,
+        cfg_arg : AgentVMConfig,
+        cfg_path_arg : Path,
         *,
-        host_src,
-        mode,
-        access,
-        guest_dst,
-        tag,
-        force=False,
-    ):
+        host_src : Path,
+        mode : str,
+        access : str,
+        guest_dst : str,
+        tag : str,
+        force : bool = False,
+    ) -> Path:
         del cfg_arg, cfg_path_arg, force
         recorded.append(
             {

@@ -36,7 +36,7 @@ def test_check_commands_with_sudo(
 ) -> None:
     calls = []
 
-    def fake_run_cmd(self, cmd, **kwargs : Any):
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
         calls.append(cmd)
         if cmd[:3] == ['sudo', '-n', 'true']:
             return CmdResult(0, '', '')
@@ -93,7 +93,7 @@ def test_install_deps_debian_behaviors(
     CommandManager.activate(CommandManager(yes_sudo=True))
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr='') -> None:
+        def __init__(self, returncode : int = 0, stdout : str = '', stderr : str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -145,7 +145,7 @@ def test_install_deps_debian_reports_apt_lock_cleanly(
     CommandManager.activate(CommandManager(yes_sudo=True))
 
     class P:
-        def __init__(self, returncode=100, stdout='', stderr='') -> None:
+        def __init__(self, returncode : int = 100, stdout : str = '', stderr : str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -153,7 +153,7 @@ def test_install_deps_debian_reports_apt_lock_cleanly(
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
 
-    def fake_run(cmd, **kwargs : Any):
+    def fake_run(cmd: list[str], **kwargs: Any) -> P:
         del kwargs
         if cmd[-2:] == ['update', '-y']:
             return P(

@@ -18,7 +18,7 @@ from aivm.commands import (
 from aivm.util import CmdError
 
 
-def _activate_manager(**kwargs: object) -> CommandManager:
+def _activate_manager(**kwargs: Any) -> CommandManager:
     mgr = CommandManager(**kwargs)
     CommandManager.activate(mgr)
     return mgr
@@ -292,19 +292,19 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     auth_cmds = []
 
     class P:
-        def __init__(self, returncode=0, stdout : str = '', stderr : str = '') -> None:
+        def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
 
     class _FakeLog:
-        def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
+        def info(self, fmt: str, *args: Any) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
+        def debug(self, fmt: str, *args: Any) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-        def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
+        def trace(self, fmt: str, *args: Any) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
     def fake_run(cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
@@ -346,7 +346,7 @@ def test_confirm_sudo_scope_logs_preview_commands(
     messages = []
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr='') -> None:
+        def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -361,7 +361,7 @@ def test_confirm_sudo_scope_logs_preview_commands(
         def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             messages.append(fmt.format(*args))
 
-    def fake_run(cmd, **kwargs : Any):  # type: ignore[no-untyped-def]
+    def fake_run(cmd: list[str], **kwargs: Any) -> P:
         if cmd == ['sudo', '-n', 'true']:
             return P(returncode=1, stderr='sudo: a password is required')
         if cmd == ['sudo', '-v']:

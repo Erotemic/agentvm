@@ -23,10 +23,10 @@ from aivm.util import CmdResult
 def test_existing_ipv4_routes_parsing(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    def fake_which(cmd: str):
+    def fake_which(cmd: str) -> str | None:
         return '/usr/sbin/ip' if cmd == 'ip' else None
 
-    def fake_run_cmd(self, *args, **kwargs : Any):
+    def fake_run_cmd(self: object, *args: Any, **kwargs: Any) -> CmdResult:
         return CmdResult(
             0,
             'default via 192.168.1.1 dev wlp2s0\n'
