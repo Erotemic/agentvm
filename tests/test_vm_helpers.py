@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aivm.cli.vm import ResolvedAttachment, _ensure_shared_root_host_bind
-from aivm.vm.share import AttachmentAccess, AttachmentMode
+from aivm.cli.vm import _ensure_shared_root_host_bind
 from aivm.commands import CommandManager
 from aivm.config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
@@ -16,6 +15,7 @@ from aivm.config import (
 )
 from aivm.util import CmdError, CmdResult
 from aivm.vm import (
+    ResolvedAttachment,
     _ensure_qemu_access,
     _mac_for_vm,
     _write_cloud_init,
@@ -29,6 +29,7 @@ from aivm.vm import (
     vm_share_mappings,
     wait_for_ssh,
 )
+from aivm.vm.share import AttachmentAccess, AttachmentMode
 
 
 def _activate_manager(*, yes_sudo: bool = True) -> None:
@@ -36,13 +37,13 @@ def _activate_manager(*, yes_sudo: bool = True) -> None:
 
 
 class _Proc:
-    def __init__(self, returncode=0, stdout='', stderr=''):
+    def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = '') -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
 
 
-def test_mac_for_vm_parsing(monkeypatch) -> None:
+def test_mac_for_vm_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = """
  Interface   Type      Source     Model    MAC
 ---------------------------------------------------------------
@@ -484,7 +485,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     )
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr=''):
+        def __init__(self, returncode=0, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr

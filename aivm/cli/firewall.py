@@ -19,7 +19,7 @@ class FirewallApplyCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         apply_firewall(cfg, dry_run=args.dry_run)
@@ -30,7 +30,7 @@ class FirewallStatusCLI(_BaseCommand):
     """Print current nftables status for the configured firewall table."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         print(firewall_status(cfg))
@@ -45,7 +45,7 @@ class FirewallRemoveCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, _ = _resolve_cfg_fallback(args.config)
         remove_firewall(cfg, dry_run=args.dry_run)

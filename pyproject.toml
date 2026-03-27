@@ -120,3 +120,23 @@ docstring-code-format = false
 [tool.ty.rules]
 unused-ignore-comment = "ignore"
 unused-type-ignore-comment = "ignore"
+
+[tool.mypy]
+# Mypy configuration for aivm
+# The ty type checker is the primary type checker; mypy is used for additional checks
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+strict_optional = true
+warn_redundant_casts = false
+warn_unused_ignores = false
+disallow_any_generics = false
+extra_checks = false
+ignore_missing_imports = true
+
+# Suppress specific errors that are framework-related or false positives
+disable_error_code = ["attr-defined", "arg-type", "func-returns-value"]

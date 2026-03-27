@@ -130,7 +130,7 @@ class VMUpCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config)
         _maybe_install_missing_host_deps(
@@ -171,7 +171,7 @@ class VMCreateCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         log.trace(
             'VMCreateCLI.main vm={} set_default={} force={} dry_run={} yes={}',
@@ -382,7 +382,7 @@ class VMWaitIPCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         mgr = CommandManager.current()
@@ -405,7 +405,7 @@ class VMStatusCLI(_BaseCommand):
     """Show VM lifecycle status and cached IP information."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _load_cfg(args.config)
         mgr = CommandManager.current()
@@ -431,7 +431,7 @@ class VMDestroyCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
         mgr = CommandManager.current()
@@ -471,7 +471,7 @@ class VMSshConfigCLI(_BaseCommand):
     """Print an SSH config stanza for easy VM access."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         print(mk_ssh_config(_load_cfg(args.config)))
         return 0
@@ -489,7 +489,7 @@ class VMProvisionCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         if args.config is not None or _cfg_path(None).exists():
             cfg = _load_cfg(args.config)

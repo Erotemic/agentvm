@@ -19,7 +19,15 @@ import subprocess
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from sys import version_info
 from typing import Literal, Sequence, cast
+
+if version_info >= (3, 11):
+    from typing import Never
+    from types import TracebackType
+else:
+    from typing_extensions import Never
+    from types import TracebackType
 
 from loguru import logger
 
@@ -305,7 +313,12 @@ class IntentScope:
         self.manager.push_intent(self.frame)
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> Literal[False]:
         """Pop this scope's frame from the manager on exit."""
         self.manager.pop_intent(self.frame)
         return False
@@ -339,7 +352,12 @@ class PlanScope:
         self.manager.begin_plan(self.plan)
         return self.plan
 
-    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> Literal[False]:
         """Finish or abort the plan, then remove it from the manager."""
         try:
             if exc_type is None:

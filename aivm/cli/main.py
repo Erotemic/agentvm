@@ -42,7 +42,7 @@ class ListCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         want = str(args.section or 'all').strip().lower()
         allowed = {'all', 'vms', 'networks', 'folders'}
@@ -128,7 +128,7 @@ class StatusCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = None
         path = None

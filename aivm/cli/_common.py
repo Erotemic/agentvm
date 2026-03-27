@@ -65,7 +65,7 @@ class _BaseCommand(scfg.DataConfig):
     )
 
     @classmethod
-    def cli(cls, *args, **kwargs):  # type: ignore[override]
+    def cli(cls, *args: object, **kwargs: object) -> object:  # type: ignore
         parsed = super().cli(*args, **kwargs)
         cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
         cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))

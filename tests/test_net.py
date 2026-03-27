@@ -50,7 +50,7 @@ def test_ensure_network_existing_not_recreate(monkeypatch) -> None:
     calls = []
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr=''):
+        def __init__(self, returncode=0, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr

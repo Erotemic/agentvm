@@ -36,7 +36,7 @@ class NetCreateCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
         mgr = CommandManager.current()
@@ -59,7 +59,7 @@ class NetStatusCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
         mgr = CommandManager.current()
@@ -90,7 +90,7 @@ class NetDestroyCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg_path = _cfg_path(args.config)
         reg = load_store(cfg_path)

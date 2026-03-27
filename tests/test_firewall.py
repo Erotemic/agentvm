@@ -130,7 +130,7 @@ def test_apply_firewall_runs_delete_then_apply(monkeypatch) -> None:
     calls = []
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr=''):
+        def __init__(self, returncode=0, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr

@@ -277,7 +277,7 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     auth_cmds = []
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr=''):
+        def __init__(self, returncode=0, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -329,7 +329,7 @@ def test_confirm_sudo_scope_logs_preview_commands(monkeypatch) -> None:
     messages = []
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr=''):
+        def __init__(self, returncode=0, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr

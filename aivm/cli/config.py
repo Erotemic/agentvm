@@ -70,7 +70,7 @@ class InitCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         reg = load_store(path)
@@ -250,7 +250,7 @@ class ConfigShowCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         vm_name = str(args.vm or '').strip()
@@ -294,7 +294,7 @@ class ConfigEditCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         if not path.exists():
@@ -325,7 +325,7 @@ class ConfigPathCLI(_BaseCommand):
     host_src = scfg.Value('.', help='Host directory scope to inspect.')
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         host_src = Path(args.host_src).resolve()
         store = _cfg_path(args.config)
@@ -374,7 +374,7 @@ class ConfigDiscoverCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         # Discover is intentionally conservative: unmanaged VMs require explicit
         # import confirmation (unless --yes) to avoid surprising ownership grabs.
         args = cls.cli(argv=argv, data=kwargs)
@@ -444,7 +444,7 @@ class ConfigLintCLI(_BaseCommand):
     """Lint config store for unknown/unused keys and sections."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv=True, **kwargs) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         if not path.exists():

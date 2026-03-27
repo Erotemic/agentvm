@@ -22,7 +22,7 @@ from pathlib import Path
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..runtime import virsh_system_cmd
-from ..store import find_attachments_for_vm
+from ..store import Store, find_attachments_for_vm
 from .share import (
     SHARED_ROOT_VIRTIOFS_TAG,
     AttachmentMode,
@@ -512,7 +512,9 @@ def vm_config_drift_report(
     )
 
 
-def desired_saved_vm_mappings(cfg: AgentVMConfig, reg) -> list[tuple[str, str]]:
+def desired_saved_vm_mappings(
+    cfg: AgentVMConfig, reg: Store
+) -> list[tuple[str, str]]:
     """Derive expected VM share mappings from saved attachments in config store.
 
     This helper centralizes the logic for computing what share mappings a VM
@@ -546,7 +548,7 @@ def desired_saved_vm_mappings(cfg: AgentVMConfig, reg) -> list[tuple[str, str]]:
 
 def saved_vm_drift_report(
     cfg: AgentVMConfig,
-    reg,
+    reg: Store,
     *,
     use_sudo: bool,
 ) -> DriftReport:

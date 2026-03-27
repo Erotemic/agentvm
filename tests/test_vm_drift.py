@@ -16,6 +16,7 @@ from aivm.config import (
 from aivm.vm.drift import (
     DriftItem,
     DriftReport,
+    SHARED_ROOT_VIRTIOFS_TAG,
     attachment_drift_report,
     attachment_has_mapping,
     expected_mapping_for_attachment,
@@ -29,7 +30,7 @@ from aivm.vm.share import AttachmentMode, ResolvedAttachment
 class TestDriftItem:
     """Tests for DriftItem dataclass."""
 
-    def test_drift_item_basic(self):
+    def test_drift_item_basic(self) -> None:
         """Test basic DriftItem creation."""
         item = DriftItem(key='cpus', expected=4, actual=2)
         assert item.key == 'cpus'
@@ -37,7 +38,7 @@ class TestDriftItem:
         assert item.actual == 2
         assert item.reason == ''
 
-    def test_drift_item_with_reason(self):
+    def test_drift_item_with_reason(self) -> None:
         """Test DriftItem with custom reason."""
         item = DriftItem(
             key='ram_mb',
@@ -51,7 +52,7 @@ class TestDriftItem:
 class TestDriftReport:
     """Tests for DriftReport dataclass."""
 
-    def test_drift_report_no_drift(self):
+    def test_drift_report_no_drift(self) -> None:
         """Test DriftReport with no drift."""
         report = DriftReport(available=True, summary='no drift detected')
         assert report.available is True
@@ -59,7 +60,7 @@ class TestDriftReport:
         assert report.items == ()
         assert report.ok is True
 
-    def test_drift_report_with_drift(self):
+    def test_drift_report_with_drift(self) -> None:
         """Test DriftReport with drift items."""
         item = DriftItem(key='cpus', expected=4, actual=2)
         report = DriftReport(
@@ -68,7 +69,7 @@ class TestDriftReport:
         assert report.available is True
         assert report.ok is False
 
-    def test_drift_report_unavailable(self):
+    def test_drift_report_unavailable(self) -> None:
         """Test DriftReport when libvirt query unavailable."""
         report = DriftReport(
             available=False,
@@ -82,7 +83,7 @@ class TestDriftReport:
 class TestParseDominfoHardware:
     """Tests for parse_dominfo_hardware helper."""
 
-    def test_parse_dominfo_cpu_and_memory_mib(self):
+    def test_parse_dominfo_cpu_and_memory_mib(self) -> None:
         """Test parsing CPU and memory from dominfo output with MiB unit."""
         dominfo = """
 Domain: test-vm
@@ -97,7 +98,7 @@ Domain: test-vm
         assert cpus == 4
         assert mem == 8192  # Memory is returned in MiB
 
-    def test_parse_dominfo_no_cpu(self):
+    def test_parse_dominfo_no_cpu(self) -> None:
         """Test parsing when CPU line is missing."""
         dominfo = """
 Domain: test-vm
@@ -108,7 +109,7 @@ Domain: test-vm
         assert cpus is None
         assert mem == 8192  # Memory is returned in MiB
 
-    def test_parse_dominfo_no_memory(self):
+    def test_parse_dominfo_no_memory(self) -> None:
         """Test parsing when memory line is missing."""
         dominfo = """
 Domain: test-vm
@@ -119,7 +120,7 @@ Domain: test-vm
         assert cpus == 4
         assert mem is None
 
-    def test_parse_dominfo_kib_unit(self):
+    def test_parse_dominfo_kib_unit(self) -> None:
         """Test parsing when memory is in KiB (typical virsh dominfo format)."""
         dominfo = """
 Domain: test-vm
@@ -131,7 +132,7 @@ Domain: test-vm
         assert cpus == 4
         assert mem == 8192  # 8388608 KiB = 8192 MiB
 
-    def test_parse_dominfo_gib_unit(self):
+    def test_parse_dominfo_gib_unit(self) -> None:
         """Test parsing when memory is in GiB."""
         dominfo = """
 Domain: test-vm
@@ -143,7 +144,7 @@ Domain: test-vm
         assert cpus == 4
         assert mem == 8192  # 8 GiB = 8192 MiB
 
-    def test_parse_dominfo_empty(self):
+    def test_parse_dominfo_empty(self) -> None:
         """Test parsing empty input."""
         cpus, mem = parse_dominfo_hardware('')
         assert cpus is None
@@ -153,7 +154,7 @@ Domain: test-vm
 class TestExpectedMappingForAttachment:
     """Tests for expected_mapping_for_attachment helper."""
 
-    def test_shared_mode_mapping(self):
+    def test_shared_mode_mapping(self) -> None:
         """Test expected mapping for shared mode attachment."""
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
@@ -166,7 +167,7 @@ class TestExpectedMappingForAttachment:
         result = expected_mapping_for_attachment(cfg, att)
         assert result == ('/home/user/project', 'my-tag')
 
-    def test_shared_root_mode_mapping(self):
+    def test_shared_root_mode_mapping(self) -> None:
         """Test expected mapping for shared-root mode attachment."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.paths = PathsConfig(base_dir='/var/lib/aivm')
@@ -182,7 +183,7 @@ class TestExpectedMappingForAttachment:
         assert result is not None
         assert result[1] == 'aivm-shared-root'
 
-    def test_git_mode_no_mapping(self):
+    def test_git_mode_no_mapping(self) -> None:
         """Test that git mode returns no mapping."""
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
@@ -199,7 +200,7 @@ class TestExpectedMappingForAttachment:
 class TestAttachmentHasMapping:
     """Tests for attachment_has_mapping helper."""
 
-    def test_mapping_exists_shared_mode(self):
+    def test_mapping_exists_shared_mode(self) -> None:
         """Test when mapping exists for shared mode."""
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
@@ -215,7 +216,7 @@ class TestAttachmentHasMapping:
         ]
         assert attachment_has_mapping(cfg, att, mappings) is True
 
-    def test_mapping_missing_shared_mode(self):
+    def test_mapping_missing_shared_mode(self) -> None:
         """Test when mapping does not exist for shared mode."""
         cfg = MagicMock(spec=AgentVMConfig)
         att = ResolvedAttachment(
@@ -228,7 +229,7 @@ class TestAttachmentHasMapping:
         mappings = [('/other/path', 'other-tag')]
         assert attachment_has_mapping(cfg, att, mappings) is False
 
-    def test_mapping_exists_shared_root_mode(self):
+    def test_mapping_exists_shared_root_mode(self) -> None:
         """Test when mapping exists for shared-root mode."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.paths = PathsConfig(base_dir='/var/lib/aivm')
@@ -250,7 +251,7 @@ class TestAttachmentHasMapping:
         mappings = [(expected_src, SHARED_ROOT_VIRTIOFS_TAG)]
         assert attachment_has_mapping(cfg, att, mappings) is True
 
-    def test_mapping_missing_shared_root_mode(self):
+    def test_mapping_missing_shared_root_mode(self) -> None:
         """Test when mapping does not exist for shared-root mode."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.paths = PathsConfig(base_dir='/var/lib/aivm')
@@ -273,7 +274,7 @@ class TestAttachmentHasMapping:
 class TestHardwareDriftReport:
     """Tests for hardware_drift_report function."""
 
-    def test_no_hardware_drift(self):
+    def test_no_hardware_drift(self) -> None:
         """Test when hardware matches config."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -290,7 +291,7 @@ class TestHardwareDriftReport:
             assert report.ok is True
             assert len(report.items) == 0
 
-    def test_memory_parse_none_no_crash(self):
+    def test_memory_parse_none_no_crash(self) -> None:
         """Test that None memory value doesn't crash (reported as unavailable, not 'in sync')."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -309,7 +310,7 @@ class TestHardwareDriftReport:
             assert report.ok is None
             assert 'could not be parsed' in report.summary
 
-    def test_cpu_drift(self):
+    def test_cpu_drift(self) -> None:
         """Test when CPU count differs from config."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -324,7 +325,7 @@ class TestHardwareDriftReport:
             assert report.items[0].expected == 4
             assert report.items[0].actual == 2
 
-    def test_memory_drift(self):
+    def test_memory_drift(self) -> None:
         """Test when RAM differs from config."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -339,7 +340,7 @@ class TestHardwareDriftReport:
             assert report.items[0].expected == 8192
             assert report.items[0].actual == 4096
 
-    def test_vm_not_defined(self):
+    def test_vm_not_defined(self) -> None:
         """Test when VM is not defined."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -360,7 +361,7 @@ class TestHardwareDriftReport:
 class TestAttachmentDriftReport:
     """Tests for attachment_drift_report function."""
 
-    def test_mapping_present(self):
+    def test_mapping_present(self) -> None:
         """Test when share mapping is present."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -383,7 +384,7 @@ class TestAttachmentDriftReport:
             assert report.available is True
             assert report.ok is True
 
-    def test_mapping_missing(self):
+    def test_mapping_missing(self) -> None:
         """Test when share mapping is missing."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -405,7 +406,7 @@ class TestAttachmentDriftReport:
             assert len(report.items) == 1
             assert report.items[0].key == 'share_mapping'
 
-    def test_vm_not_defined(self):
+    def test_vm_not_defined(self) -> None:
         """Test when VM is not defined."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -429,7 +430,7 @@ class TestAttachmentDriftReport:
 class TestVmConfigDriftReport:
     """Tests for vm_config_drift_report combined report function."""
 
-    def test_no_drift(self):
+    def test_no_drift(self) -> None:
         """Test when no drift exists."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -442,7 +443,7 @@ class TestVmConfigDriftReport:
             assert report.available is True
             assert report.ok is True
 
-    def test_combined_drift(self):
+    def test_combined_drift(self) -> None:
         """Test combined hardware and share drift."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
@@ -458,7 +459,7 @@ class TestVmConfigDriftReport:
             assert report.ok is False
             assert len(report.items) == 1
 
-    def test_with_expected_mappings(self):
+    def test_with_expected_mappings(self) -> None:
         """Test with explicit expected mappings."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)

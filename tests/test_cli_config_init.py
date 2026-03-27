@@ -94,7 +94,7 @@ def test_config_init_interactive_can_create_dedicated_aivm_key(
         return out
 
     class Proc:
-        def __init__(self):
+        def __init__(self) -> None:
             self.returncode = 0
             self.stdout = ''
             self.stderr = ''

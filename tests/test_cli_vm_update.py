@@ -101,7 +101,7 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
     )
     called: dict[str, object] = {}  # type: ignore[assignment]
 
-    def fake_restart(*a, **k):
+    def fake_restart(*a, **k) -> None:
         called['kwargs'] = k  # type: ignore[index]
 
     monkeypatch.setattr(
@@ -592,7 +592,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     attached: list[tuple[tuple, dict]] = []
 
-    def fake_attach_vm_share(*a, **k):
+    def fake_attach_vm_share(*a, **k) -> None:
         attached.append((a, k))
         mappings.append((str(other_src.resolve()), 'hostcode-docs'))
 

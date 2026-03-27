@@ -252,7 +252,7 @@ def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
     )
 
     class Proc:
-        def __init__(self):
+        def __init__(self) -> None:
             self.returncode = 0
             self.stdout = ''
             self.stderr = ''

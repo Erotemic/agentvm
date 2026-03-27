@@ -80,7 +80,7 @@ def test_install_deps_debian_behaviors(monkeypatch) -> None:
     CommandManager.activate(CommandManager(yes_sudo=True))
 
     class P:
-        def __init__(self, returncode=0, stdout='', stderr=''):
+        def __init__(self, returncode=0, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
@@ -130,7 +130,7 @@ def test_install_deps_debian_reports_apt_lock_cleanly(monkeypatch) -> None:
     CommandManager.activate(CommandManager(yes_sudo=True))
 
     class P:
-        def __init__(self, returncode=100, stdout='', stderr=''):
+        def __init__(self, returncode=100, stdout='', stderr='') -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
