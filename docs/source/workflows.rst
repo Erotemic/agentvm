@@ -153,9 +153,8 @@ Workflow logging model
 * raw commands, which remain visible for deeper inspection at higher verbosity
 
 This is meant to make multi-command workflows easier to follow and safer to
-approve than a stream of isolated sudo command prompts. Shared-root
-attach/reconcile is the most complete example today; some older helper flows
-still rely on the compatibility shim while migration continues.
+approve than a stream of isolated sudo command prompts. All command execution
+now flows through ``CommandManager`` with explicit intent/plan structure.
 
 Interactive approval semantics:
 
