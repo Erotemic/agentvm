@@ -12,7 +12,6 @@ approval prompts.
 
 from __future__ import annotations
 
-import inspect
 import os
 import shlex
 import subprocess
@@ -153,7 +152,6 @@ class CommandSpec:
         timeout: Optional timeout in seconds.
         summary: Short human-facing summary shown in previews.
         detail: Optional longer preview detail.
-        submitted_by: Caller provenance string captured at submission time.
     """
 
     cmd: Sequence[str]
@@ -167,7 +165,6 @@ class CommandSpec:
     timeout: float | None = None
     summary: str = ''
     detail: str = ''
-    submitted_by: str = ''
 
 
 @dataclass
@@ -192,7 +189,7 @@ class CommandHandle:
         """Return True if this command has already been executed."""
         return self._executed
 
-    def result(self) -> CommandResult:
+    def result(self, *, _stacklevel: int = 1) -> CommandResult:
         """Return the command result, executing through this handle if needed.
 
         If the command has not run yet, this method asks the manager to
@@ -203,7 +200,9 @@ class CommandHandle:
             The normalized command result.
         """
         if not self._executed:
-            self.manager.flush_through(self.command_id)
+            self.manager.flush_through(
+                self.command_id, _stacklevel=_stacklevel + 1
+            )
         assert self._result is not None
         return self._result
 
@@ -258,7 +257,6 @@ class CommandPlan:
         title: Human-facing title for the step.
         why: Optional explanation of the step's purpose.
         approval_scope: Optional label describing the approval boundary.
-        submitted_by: Caller provenance string for the plan.
         commands: Commands in submission order.
         approved: True once this plan has cleared approval.
         executed_upto: Highest command index already executed.
@@ -269,7 +267,6 @@ class CommandPlan:
     title: str
     why: str = ''
     approval_scope: str = ''
-    submitted_by: str = ''
     commands: list[PlannedCommand] = field(default_factory=list)
     approved: bool = False
     executed_upto: int = -1
@@ -342,7 +339,6 @@ class PlanScope:
             title=title,
             why=why,
             approval_scope=approval_scope,
-            submitted_by=manager.capture_submitter(),
         )
 
     def __enter__(self) -> CommandPlan:
@@ -359,7 +355,7 @@ class PlanScope:
         """Finish or abort the plan, then remove it from the manager."""
         try:
             if exc_type is None:
-                self.manager.finish_plan(self.plan)
+                self.manager.finish_plan(self.plan, _stacklevel=2)
             else:
                 self.manager.abort_plan(self.plan)
         finally:
@@ -601,7 +597,9 @@ class CommandManager:
         # TODO: probably a good public method, let the underlying scope handle it.
         plan.closed = True
 
-    def finish_plan(self, plan: CommandPlan) -> None:
+    def finish_plan(
+        self, plan: CommandPlan, *, _stacklevel: int = 1
+    ) -> None:
         """Finalize, approve, and execute a plan.
 
         Empty plans are simply marked closed. Non-empty plans are previewed,
@@ -611,40 +609,13 @@ class CommandManager:
         if plan.is_empty():
             plan.closed = True
             return
-        self._approve_plan_if_needed(plan)
-        self._flush_plan(plan)
+        self._approve_plan_if_needed(plan, _stacklevel=_stacklevel + 1)
+        self._flush_plan(plan, _stacklevel=_stacklevel + 1)
         plan.closed = True
 
     def current_plan(self) -> CommandPlan | None:
         """Return the currently active innermost plan, if any."""
         return self.plan_stack[-1] if self.plan_stack else None
-
-    def capture_submitter(self) -> str:
-        """Return a best-effort provenance string for the submitter.
-
-        The returned value is formatted as ``module:function:lineno`` and is
-        intended for debugging and log output. Frames within selected
-        internal modules are skipped so the provenance points at the caller.
-        """
-        # TODO: We probably want the logger to just take care of this.  This is
-        # too heavy handed.
-        frame = inspect.currentframe()
-        if frame is None:
-            return ''
-        try:
-            cur = frame.f_back
-            while cur is not None:
-                mod = inspect.getmodule(cur)
-                mod_name = mod.__name__ if mod is not None else ''
-                if mod_name not in {'aivm.commands', 'aivm.util'}:
-                    return (
-                        f'{mod_name or "(unknown)"}:'
-                        f'{cur.f_code.co_name}:{cur.f_lineno}'
-                    )
-                cur = cur.f_back
-        finally:
-            del frame
-        return ''
 
     def submit(
         self,
@@ -661,6 +632,7 @@ class CommandManager:
         summary: str = '',
         detail: str = '',
         eager: bool = False,
+        _stacklevel: int = 1,
     ) -> CommandHandle:
         """Submit one command and return a handle to its eventual result.
 
@@ -681,6 +653,8 @@ class CommandManager:
             summary: Short human-facing summary for previews.
             detail: Optional longer preview detail.
             eager: If True, execute through this command immediately.
+            _stacklevel: Number of frames between this call and user code,
+                used to attribute log lines to the real caller.
 
         Returns:
             A handle that can be used to inspect the eventual result.
@@ -700,7 +674,6 @@ class CommandManager:
             timeout=timeout,
             summary=summary.strip(),
             detail=detail.strip(),
-            submitted_by=self.capture_submitter(),
         )
         handle = CommandHandle(manager=self, command_id=self._next_command_id)
         planned = PlannedCommand(
@@ -712,12 +685,16 @@ class CommandManager:
         if plan is not None:
             plan.add(planned)
             if eager:
-                self.flush_through(planned.command_id)
+                self.flush_through(
+                    planned.command_id, _stacklevel=_stacklevel + 1
+                )
             return handle
 
         self._loose_commands.append(planned)
         if eager:
-            self.flush_through(planned.command_id)
+            self.flush_through(
+                planned.command_id, _stacklevel=_stacklevel + 1
+            )
         return handle
 
     def run(
@@ -749,18 +726,21 @@ class CommandManager:
             summary=summary,
             detail=detail,
             eager=True,
+            _stacklevel=2,
         ).result()
 
-    def flush(self) -> None:
+    def flush(self, *, _stacklevel: int = 1) -> None:
         """Flush pending execution for the current plan or loose queue."""
         # TODO: does this need to be public?
         if self.plan_stack:
-            self._flush_plan(self.plan_stack[-1])
+            self._flush_plan(self.plan_stack[-1], _stacklevel=_stacklevel + 1)
             return
         if self._loose_commands:
-            self._flush_loose_commands()
+            self._flush_loose_commands(_stacklevel=_stacklevel + 1)
 
-    def flush_through(self, command_id: int) -> None:
+    def flush_through(
+        self, command_id: int, *, _stacklevel: int = 1
+    ) -> None:
         """Flush execution through the specified command id.
 
         This executes all earlier pending commands needed to reach the
@@ -773,11 +753,17 @@ class CommandManager:
         # TODO: does this need to be public?
         for plan in reversed(self.plan_stack):
             if any(item.command_id == command_id for item in plan.commands):
-                self._approve_plan_if_needed(plan)
-                self._flush_plan(plan, through_command_id=command_id)
+                self._approve_plan_if_needed(plan, _stacklevel=_stacklevel + 1)
+                self._flush_plan(
+                    plan,
+                    through_command_id=command_id,
+                    _stacklevel=_stacklevel + 1,
+                )
                 return
         if self._loose_commands:
-            self._flush_loose_commands(through_command_id=command_id)
+            self._flush_loose_commands(
+                through_command_id=command_id, _stacklevel=_stacklevel + 1
+            )
             return
         raise RuntimeError(f'Unknown command handle id: {command_id}')
 
@@ -972,11 +958,13 @@ class CommandManager:
             for item in plan.commands
         )
 
-    def _approve_plan_if_needed(self, plan: CommandPlan) -> None:
+    def _approve_plan_if_needed(
+        self, plan: CommandPlan, *, _stacklevel: int = 1
+    ) -> None:
         """Render and approve ``plan`` if approval has not already occurred."""
         if plan.approved:
             return
-        self._render_plan_preview(plan)
+        self._render_plan_preview(plan, _stacklevel=_stacklevel + 1)
         readonly_autoapproved_sudo = [
             item
             for item in plan.commands
@@ -1008,7 +996,7 @@ class CommandManager:
                 .lower()
             )
             if ans in {'s', 'show'}:
-                self._render_plan_full_commands(plan)
+                self._render_plan_full_commands(plan, _stacklevel=_stacklevel + 1)
                 continue
             if ans in {'a', 'all'}:
                 self._approve_all_remaining = True
@@ -1019,15 +1007,15 @@ class CommandManager:
                 return
             raise RuntimeError('Aborted by user.')
 
-    def _render_plan_preview(self, plan: CommandPlan) -> None:
+    def _render_plan_preview(
+        self, plan: CommandPlan, *, _stacklevel: int = 1
+    ) -> None:
         """Log a concise preview of the commands contained in ``plan``."""
         if plan.rendered_preview:
             return
         breadcrumb = self.render_breadcrumb()
-        local_log = log.opt(depth=0)
+        local_log = log.opt(depth=_stacklevel)
         local_log.info('Step: {}', plan.title)
-        if plan.submitted_by:
-            local_log.info('Submitted by: {}', plan.submitted_by)
         if breadcrumb:
             local_log.info('Context: {}', breadcrumb)
         if plan.why:
@@ -1050,14 +1038,18 @@ class CommandManager:
             local_log.trace('     role={} capture={}', role, item.spec.capture)
         plan.rendered_preview = True
 
-    def _render_plan_full_commands(self, plan: CommandPlan) -> None:
+    def _render_plan_full_commands(
+        self, plan: CommandPlan, *, _stacklevel: int = 1
+    ) -> None:
         """Log the full raw command lines for every item in ``plan``."""
-        local_log = log.opt(depth=0)
+        local_log = log.opt(depth=_stacklevel)
         local_log.info('Full commands for step: {}', plan.title)
         for idx, item in enumerate(plan.commands, start=1):
             local_log.info('  {}. {}', idx, self._raw_command(item.spec))
 
-    def _confirm_loose_sudo_command(self, spec: CommandSpec) -> None:
+    def _confirm_loose_sudo_command(
+        self, spec: CommandSpec, *, _stacklevel: int = 1
+    ) -> None:
         """Confirm one sudo command that is not grouped into a plan."""
         if not spec.sudo or os.geteuid() == 0:
             return
@@ -1072,7 +1064,7 @@ class CommandManager:
                     'Run a privileged host command without an explicit step.'
                 )
         if not spec.summary.strip():
-            log.opt(depth=0).info(
+            log.opt(depth=_stacklevel).info(
                 '  This sudo command is not grouped into an explicit step. '
                 'Wrap related work in mgr.intent(...) / mgr.step(...) for clearer previews and fewer prompts.'
             )
@@ -1088,6 +1080,7 @@ class CommandManager:
         plan: CommandPlan,
         *,
         through_command_id: int | None = None,
+        _stacklevel: int = 1,
     ) -> None:
         """Execute pending commands in ``plan`` in submission order."""
         for idx in range(plan.executed_upto + 1, len(plan.commands)):
@@ -1096,6 +1089,7 @@ class CommandManager:
                 item.spec,
                 ordinal=(idx + 1, len(plan.commands)),
                 within_plan=True,
+                _stacklevel=_stacklevel + 1,
             )
             item.handle._set_result(res)
             plan.executed_upto = idx
@@ -1106,12 +1100,17 @@ class CommandManager:
                 break
 
     def _flush_loose_commands(
-        self, *, through_command_id: int | None = None
+        self,
+        *,
+        through_command_id: int | None = None,
+        _stacklevel: int = 1,
     ) -> None:
         """Execute pending loose commands in FIFO order."""
         while self._loose_commands:
             item = self._loose_commands[0]
-            res = self._execute_one(item.spec, within_plan=False)
+            res = self._execute_one(
+                item.spec, within_plan=False, _stacklevel=_stacklevel + 1
+            )
             item.handle._set_result(res)
             self._loose_commands.pop(0)
             if (
@@ -1165,11 +1164,14 @@ class CommandManager:
         *,
         ordinal: tuple[int, int] | None = None,
         within_plan: bool = False,
+        _stacklevel: int = 1,
     ) -> CommandResult:
         """Execute one command specification and normalize its result."""
-        local_log = log.opt(depth=0)
+        local_log = log.opt(depth=_stacklevel)
         if spec.sudo and not within_plan:
-            self._confirm_loose_sudo_command(spec)
+            self._confirm_loose_sudo_command(
+                spec, _stacklevel=_stacklevel + 1
+            )
         cmd = list(spec.cmd)
         if spec.sudo and os.geteuid() != 0:
             cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
@@ -1179,40 +1181,17 @@ class CommandManager:
         # Keep mutating or privileged work visible at INFO while leaving
         # unprivileged plumbing at DEBUG unless a plan preview already framed it.
         if spec.sudo:
-            logger = local_log.info
+            emit = local_log.info
         else:
-            logger = local_log.debug
+            emit = local_log.debug
 
         if within_plan and ordinal is not None:
             current, total = ordinal
-            if spec.submitted_by:
-                logger(
-                    'RUN [{}/{}]: {} (submitted_by={})',
-                    current,
-                    total,
-                    run_line,
-                    spec.submitted_by,
-                )
-            else:
-                logger('RUN [{}/{}]: {}', current, total, run_line)
+            emit('RUN [{}/{}]: {}', current, total, run_line)
         elif spec.check:
-            if spec.submitted_by:
-                local_log.info(
-                    'RUN: {} (submitted_by={})',
-                    run_line,
-                    spec.submitted_by,
-                )
-            else:
-                local_log.info('RUN: {}', run_line)
+            local_log.info('RUN: {}', run_line)
         else:
-            if spec.submitted_by:
-                logger(
-                    'RUN: {} (submitted_by={})',
-                    run_line,
-                    spec.submitted_by,
-                )
-            else:
-                logger('RUN: {}', run_line)
+            emit('RUN: {}', run_line)
 
         try:
             proc = subprocess.run(

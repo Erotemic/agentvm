@@ -439,11 +439,11 @@ def test_plan_preview_includes_summary_and_command(
     assert 'command: sudo systemctl enable --now libvirtd' in joined
 
 
-def test_run_logs_include_submitter_attribution(
+def test_run_logs_use_stacklevel_to_attribute_caller(
     monkeypatch: MonkeyPatch,
 ) -> None:
     _activate_manager(yes_sudo=True)
-    messages = []
+    depths_seen: list[int] = []
 
     class P:
         returncode = 0
@@ -452,17 +452,21 @@ def test_run_logs_include_submitter_attribution(
 
     class _FakeLog:
         def info(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
-            messages.append(fmt.format(*args))
+            return None
 
         def debug(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
-            messages.append(fmt.format(*args))
+            return None
 
         def trace(self, fmt: str, *args: object) -> None:  # type: ignore[no-untyped-def]
             return None
 
+    def _tracking_opt(**kwargs: Any) -> _FakeLog:
+        depths_seen.append(kwargs.get('depth', 0))
+        return _FakeLog()
+
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
-    monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
+    monkeypatch.setattr('aivm.commands.log.opt', _tracking_opt)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
         lambda cmd, **kwargs: P(),
@@ -477,15 +481,10 @@ def test_run_logs_include_submitter_attribution(
             summary='Enable and start libvirtd service',
         )
 
-    joined = '\n'.join(messages)
-    assert (
-        'Submitted by: test_util:test_run_logs_include_submitter_attribution'
-        in joined
-    )
-    assert (
-        'submitted_by=test_util:test_run_logs_include_submitter_attribution'
-        in joined
-    )
+    # stacklevel threading should produce depth values > 0, meaning log
+    # lines are attributed above the CommandManager internals
+    assert len(depths_seen) > 0
+    assert all(d > 0 for d in depths_seen)
 
 
 def test_read_only_command_stays_read_inside_modify_intent(
