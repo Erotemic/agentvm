@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 from pathlib import Path
+from typing import Any
+
+from pytest import MonkeyPatch
 
 from aivm.config import AgentVMConfig
 from aivm.detect import (
@@ -16,11 +19,13 @@ from aivm.detect import (
 from aivm.util import CmdResult
 
 
-def test_existing_ipv4_routes_parsing(monkeypatch) -> None:
-    def fake_which(cmd: str):
+def test_existing_ipv4_routes_parsing(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def fake_which(cmd: str) -> str | None:
         return '/usr/sbin/ip' if cmd == 'ip' else None
 
-    def fake_run_cmd(*args, **kwargs):
+    def fake_run_cmd(self: object, *args: Any, **kwargs: Any) -> CmdResult:
         return CmdResult(
             0,
             'default via 192.168.1.1 dev wlp2s0\n'
@@ -30,13 +35,15 @@ def test_existing_ipv4_routes_parsing(monkeypatch) -> None:
         )
 
     monkeypatch.setattr('aivm.detect.which', fake_which)
-    monkeypatch.setattr('aivm.detect.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.detect.CommandManager.run', fake_run_cmd)
     got = existing_ipv4_routes()
     assert ipaddress.ip_network('10.77.0.0/24') in got
     assert ipaddress.ip_network('172.17.0.0/16') in got
 
 
-def test_pick_free_subnet(monkeypatch) -> None:
+def test_pick_free_subnet(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         'aivm.detect.existing_ipv4_routes',
         lambda: [ipaddress.ip_network('10.77.0.0/24')],
@@ -46,7 +53,7 @@ def test_pick_free_subnet(monkeypatch) -> None:
 
 
 def test_auto_defaults_sets_network_and_identity(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.paths.ssh_identity_file = ''
@@ -96,7 +103,7 @@ def test_recommend_vm_resources_large_host() -> None:
 
 
 def test_detect_ssh_identity_prefers_ssh_config_identityfile(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / 'home'
     ssh_dir = home / '.ssh'

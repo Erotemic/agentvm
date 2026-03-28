@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import scriptconfig as scfg
 
+from ..commands import CommandManager
 from ..status import (
+    anticipated_status_sudo_commands,
     render_global_status,
     render_status,
 )
@@ -21,7 +24,6 @@ from ..store import load_store
 from ._common import (
     _BaseCommand,
     _cfg_path,
-    _confirm_sudo_block,
     _load_cfg_with_path,
     _resolve_cfg_for_code,
     log,
@@ -35,13 +37,13 @@ from .vm import SSHCLI, AttachCLI, CodeCLI, DetachCLI, VMModalCLI
 class ListCLI(_BaseCommand):
     """List managed VMs, managed networks, and attached host folders."""
 
-    section = scfg.Value(
+    section: Any = scfg.Value(
         'all',
         help='One of: all, vms, networks, folders.',
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         want = str(args.section or 'all').strip().lower()
         allowed = {'all', 'vms', 'networks', 'folders'}
@@ -99,7 +101,7 @@ class ListCLI(_BaseCommand):
                 ):
                     print(
                         f'  - {att.host_path} | vm={att.vm_name} '
-                        f'| mode={att.mode} | access={getattr(att, "access", "rw")} '
+                        f'| mode={att.mode} | access={att.access} '
                         f'| guest_dst={att.guest_dst or "(default)"}'
                     )
         print('')
@@ -110,16 +112,16 @@ class ListCLI(_BaseCommand):
 class StatusCLI(_BaseCommand):
     """Report setup progress across host, network, VM, SSH, and provisioning."""
 
-    sudo = scfg.Value(
+    sudo: Any = scfg.Value(
         False,
         isflag=True,
         help='Run privileged status checks (virsh/nft/image) with sudo.',
     )
-    vm = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    detail = scfg.Value(
+    detail: Any = scfg.Value(
         False,
         isflag=True,
         help='Include raw diagnostics (virsh/nft/ssh probe outputs).',
@@ -127,7 +129,7 @@ class StatusCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = None
         path = None
@@ -147,17 +149,28 @@ class StatusCLI(_BaseCommand):
         if cfg is None or path is None:
             print(render_global_status())
             return 0
-        if args.sudo:
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose=f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'.",
-                action='read',
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Inspect status for {cfg.vm.name}',
+            why='Summarize host, network, firewall, VM, and SSH readiness for this managed VM.',
+            role='read',
+        ):
+            if args.sudo:
+                mgr.confirm_sudo_scope(
+                    yes=bool(args.yes),
+                    purpose=(
+                        f"Inspect host/libvirt/firewall/VM state for status of '{cfg.vm.name}'."
+                    ),
+                    role='read',
+                    preview_cmds=anticipated_status_sudo_commands(
+                        cfg, detail=bool(args.detail)
+                    ),
+                )
+            print(
+                render_status(
+                    cfg, path, detail=args.detail, use_sudo=bool(args.sudo)
+                )
             )
-        print(
-            render_status(
-                cfg, path, detail=args.detail, use_sudo=bool(args.sudo)
-            )
-        )
         return 0
 
 

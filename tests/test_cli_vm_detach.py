@@ -4,19 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aivm.cli.vm import (
-    ATTACHMENT_MODE_GIT,
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
-    VMDetachCLI,
-)
+from pytest import MonkeyPatch
+
+from aivm.cli.vm import AttachmentMode, VMDetachCLI
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
 from aivm.store import AttachmentEntry, Store, find_attachment_for_vm
 
 
 def test_vm_detach_shared_removes_store_and_detaches_mapping(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared'
@@ -29,7 +26,7 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED,
+            mode=AttachmentMode.SHARED,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -44,9 +41,6 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (ProbeOutcome(True, 'running'), True),
     )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
     detached: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         'aivm.cli.vm.detach_vm_share',
@@ -55,7 +49,7 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
     saved: list[Path] = []
     monkeypatch.setattr(
         'aivm.cli.vm.save_store',
-        lambda reg, path: (saved.append(path) or path),
+        lambda reg, path, **kwargs: (saved.append(path) or path),
     )
 
     rc = VMDetachCLI.main(
@@ -70,7 +64,9 @@ def test_vm_detach_shared_removes_store_and_detaches_mapping(
     assert find_attachment_for_vm(store, host_src, cfg.vm.name) is None
 
 
-def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
+def test_vm_detach_git_only_updates_store(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
     cfg_path = tmp_path / 'config.toml'
@@ -82,7 +78,7 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_GIT,
+            mode=AttachmentMode.GIT,
             guest_dst='/workspace/repo',
             tag='',
         )
@@ -98,9 +94,6 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
         lambda *a, **k: (ProbeOutcome(False, 'shut off'), True),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
-    monkeypatch.setattr(
         'aivm.cli.vm.detach_vm_share',
         lambda *a, **k: (_ for _ in ()).throw(
             AssertionError('detach_vm_share should not be called for git mode')
@@ -109,7 +102,7 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
     saved: list[Path] = []
     monkeypatch.setattr(
         'aivm.cli.vm.save_store',
-        lambda reg, path: (saved.append(path) or path),
+        lambda reg, path, **kwargs: (saved.append(path) or path),
     )
 
     rc = VMDetachCLI.main(
@@ -124,7 +117,7 @@ def test_vm_detach_git_only_updates_store(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_vm_detach_shared_root_unbinds_guest_and_host(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-shared-root'
@@ -137,7 +130,7 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_SHARED_ROOT,
+            mode=AttachmentMode.SHARED_ROOT,
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
         )
@@ -151,9 +144,6 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (ProbeOutcome(True, 'running'), True),
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm._resolve_ip_for_ssh_ops',
@@ -180,7 +170,7 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     saved: list[Path] = []
     monkeypatch.setattr(
         'aivm.cli.vm.save_store',
-        lambda reg, path: (saved.append(path) or path),
+        lambda reg, path, **kwargs: (saved.append(path) or path),
     )
 
     rc = VMDetachCLI.main(

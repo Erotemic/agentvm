@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from . import drift
 from .lifecycle import (
     _ensure_disk,
     _ensure_qemu_access,
@@ -22,6 +23,10 @@ from .lifecycle import (
     wait_for_ssh,
 )
 from .share import (
+    SHARED_ROOT_VIRTIOFS_TAG,
+    AttachmentAccess,
+    AttachmentMode,
+    ResolvedAttachment,
     attach_vm_share,
     detach_vm_share,
     ensure_share_mounted,
@@ -39,14 +44,19 @@ __all__ = [
     '_sudo_file_exists',
     '_sudo_path_exists',
     '_write_cloud_init',
+    'AttachmentAccess',
+    'AttachmentMode',
     'attach_vm_share',
     'create_or_start_vm',
     'detach_vm_share',
     'destroy_vm',
+    'drift',
     'ensure_share_mounted',
     'fetch_image',
     'get_ip_cached',
     'provision',
+    'ResolvedAttachment',
+    'SHARED_ROOT_VIRTIOFS_TAG',
     'ssh_config',
     'sync_settings',
     'vm_exists',

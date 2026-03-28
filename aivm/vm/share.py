@@ -6,19 +6,145 @@ folders are shared into VMs.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shlex
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
-from ..util import CmdError, run_cmd
+from ..util import CmdError
 
 log = logger
+
+
+class AttachmentMode(StrEnum):
+    """Attachment mode for VM shared folders.
+
+    These modes determine how host directories are shared with the VM:
+    - SHARED: Direct virtiofs mount of the host directory
+    - SHARED_ROOT: VM-specific bind mount via shared-root directory
+    - GIT: Git clone of the host repo into the guest
+    """
+
+    SHARED = 'shared'
+    SHARED_ROOT = 'shared-root'
+    GIT = 'git'
+
+
+class AttachmentAccess(StrEnum):
+    """Attachment access mode for VM shared folders.
+
+    These modes determine the access permissions for shared folders:
+    - RW: Read-write access (default)
+    - RO: Read-only access
+    """
+
+    RW = 'rw'
+    RO = 'ro'
+
+
+# Shared-root tag constant
+SHARED_ROOT_VIRTIOFS_TAG = 'aivm-shared-root'
+
+
+@dataclass(frozen=True)
+class ResolvedAttachment:
+    """A resolved attachment with all fields computed for VM access.
+
+    This is used throughout the drift detection and attachment reconcile flows.
+    """
+
+    vm_name: str
+    mode: AttachmentMode = AttachmentMode.SHARED
+    access: AttachmentAccess = AttachmentAccess.RW
+    source_dir: str = ''
+    guest_dst: str = ''
+    tag: str = ''
+
+
+def _auto_share_tag_for_path(host_src: Path, existing_tags: set[str]) -> str:
+    """Generate a unique tag for a host path that doesn't conflict with existing tags.
+
+    This is used for tag alignment when attaching shares to avoid virtiofs conflicts.
+    """
+    max_len = 36
+    raw = re.sub(r'[^A-Za-z0-9_.-]+', '-', host_src.name or 'hostcode').strip(
+        '-'
+    )
+    base = f'hostcode-{raw}' if raw else 'hostcode'
+    base = base[:max_len]
+    if base not in existing_tags:
+        return base
+    suffix = hashlib.sha1(str(host_src).encode('utf-8')).hexdigest()[:8]
+    tag = f'{base[: max_len - 1 - len(suffix)]}-{suffix}'
+    if tag not in existing_tags:
+        return tag
+    idx = 2
+    while True:
+        tail = f'-{suffix[:5]}-{idx}'
+        cand = f'{base[: max_len - len(tail)]}{tail}'
+        if cand not in existing_tags:
+            return cand
+        idx += 1
+
+
+def _ensure_share_tag_len(
+    tag: str, host_src: Path, existing_tags: set[str]
+) -> str:
+    """Ensure a tag is within the 36-character limit, generating a new one if needed.
+
+    Args:
+        tag: The proposed tag.
+        host_src: The host source path (used for tag generation if needed).
+        existing_tags: Set of tags already in use.
+
+    Returns:
+        A tag that is at most 36 characters and doesn't conflict with existing tags.
+    """
+    tag = (tag or '').strip()
+    if tag and len(tag) <= 36:
+        return tag
+    return _auto_share_tag_for_path(host_src, existing_tags)
+
+
+def align_attachment_tag_with_mappings(
+    att: 'ResolvedAttachment', host_src: Path, mappings: list[tuple[str, str]]
+) -> 'ResolvedAttachment':
+    """Align an attachment's tag with existing mappings to avoid conflicts.
+
+    This ensures consistent tagging across multiple attachments and avoids
+    tag collisions that could cause virtiofs issues.
+
+    Args:
+        att: The attachment to align.
+        host_src: The host source path (used for tag generation if needed).
+        mappings: Current VM mappings.
+
+    Returns:
+        A new ResolvedAttachment with an aligned tag.
+    """
+    existing_tags = {tag for _, tag in mappings if tag}
+    tag = _ensure_share_tag_len(att.tag, host_src, existing_tags)
+    for src, existing_tag in mappings:
+        if src == att.source_dir and existing_tag:
+            tag = existing_tag
+            break
+    has_share = any(src == att.source_dir and t == tag for src, t in mappings)
+    if not has_share:
+        for src, existing_tag in mappings:
+            if existing_tag == tag and src != att.source_dir:
+                tag = _auto_share_tag_for_path(host_src, existing_tags)
+                break
+    return replace(att, tag=tag)
 
 
 def _is_virtiofs_filesystem(fs: ET.Element) -> bool:
@@ -29,21 +155,42 @@ def _is_virtiofs_filesystem(fs: ET.Element) -> bool:
     return driver.attrib.get('type', '').strip().lower() == 'virtiofs'
 
 
+def _dumpxml_text(
+    cfg: AgentVMConfig,
+    *,
+    use_sudo: bool,
+    summary: str,
+    detail: str = '',
+) -> str | None:
+    mgr = CommandManager.current()
+    res = mgr.submit(
+        virsh_system_cmd('dumpxml', cfg.vm.name),
+        sudo=use_sudo,
+        role='read',
+        check=False,
+        capture=True,
+        summary=summary,
+        detail=detail,
+    ).result()
+    if res.code != 0 or not res.stdout.strip():
+        return None
+    return res.stdout
+
+
 def vm_has_virtiofs_shared_memory(
     cfg: AgentVMConfig, *, use_sudo: bool = True
 ) -> bool | None:
     """Check if domain XML includes shared memory backing required by virtiofs."""
-    xml = run_cmd(
-        virsh_system_cmd('dumpxml', cfg.vm.name),
-        sudo=use_sudo,
-        sudo_action='read',
-        check=False,
-        capture=True,
+    xml_text = _dumpxml_text(
+        cfg,
+        use_sudo=use_sudo,
+        summary=f'Inspect VM shared-memory backing for {cfg.vm.name}',
+        detail='Read domain XML to verify memfd/shared backing for virtiofs.',
     )
-    if xml.code != 0 or not xml.stdout.strip():
+    if not xml_text:
         return None
     try:
-        root = ET.fromstring(xml.stdout)
+        root = ET.fromstring(xml_text)
     except Exception:
         return None
     mb = root.find('.//memoryBacking')
@@ -62,17 +209,16 @@ def vm_has_share(
     cfg = cfg.expanded_paths()
     if not source_dir or not tag:
         return False
-    xml = run_cmd(
-        virsh_system_cmd('dumpxml', cfg.vm.name),
-        sudo=use_sudo,
-        sudo_action='read',
-        check=False,
-        capture=True,
+    xml_text = _dumpxml_text(
+        cfg,
+        use_sudo=use_sudo,
+        summary=f'Inspect VM filesystem mappings for {cfg.vm.name}',
+        detail='Read domain XML to look for the requested virtiofs source/tag pair.',
     )
-    if xml.code != 0 or not xml.stdout.strip():
+    if not xml_text:
         return False
     try:
-        root = ET.fromstring(xml.stdout)
+        root = ET.fromstring(xml_text)
     except Exception:
         return False
     want_src = str(Path(source_dir).resolve())
@@ -93,17 +239,16 @@ def vm_share_mappings(
     cfg: AgentVMConfig, *, use_sudo: bool = True
 ) -> list[tuple[str, str]]:
     """Return virtiofs filesystem mappings as (source_dir, target_tag)."""
-    xml = run_cmd(
-        virsh_system_cmd('dumpxml', cfg.vm.name),
-        sudo=use_sudo,
-        sudo_action='read',
-        check=False,
-        capture=True,
+    xml_text = _dumpxml_text(
+        cfg,
+        use_sudo=use_sudo,
+        summary=f'Inspect VM virtiofs mappings for {cfg.vm.name}',
+        detail='Read domain XML to enumerate current virtiofs source/tag mappings.',
     )
-    if xml.code != 0 or not xml.stdout.strip():
+    if not xml_text:
         return []
     try:
-        root = ET.fromstring(xml.stdout)
+        root = ET.fromstring(xml_text)
     except Exception:
         return []
     mappings: list[tuple[str, str]] = []
@@ -120,7 +265,12 @@ def vm_share_mappings(
 
 
 def attach_vm_share(
-    cfg: AgentVMConfig, source_dir: str, tag: str, *, dry_run: bool = False
+    cfg: AgentVMConfig,
+    source_dir: str,
+    tag: str,
+    *,
+    dry_run: bool = False,
+    vm_running: bool | None = None,
 ) -> None:
     """Attach a virtiofs share mapping to an existing VM definition."""
     cfg = cfg.expanded_paths()
@@ -145,24 +295,56 @@ def attach_vm_share(
     with tempfile.NamedTemporaryFile('w', delete=False) as f:
         f.write(xml)
         tmp = f.name
-    state = (
-        run_cmd(
-            ['virsh', 'domstate', cfg.vm.name],
-            sudo=True,
-            sudo_action='read',
-            check=False,
-            capture=True,
+    mgr = CommandManager.current()
+    if vm_running is None:
+        state = (
+            mgr.submit(
+                ['virsh', 'domstate', cfg.vm.name],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                summary=f'Check whether VM {cfg.vm.name} is running before live attach',
+            )
+            .stdout.strip()
+            .lower()
         )
-        .stdout.strip()
-        .lower()
-    )
-    is_running = 'running' in state
+        is_running = 'running' in state
+    else:
+        is_running = bool(vm_running)
     attach_cmd = (
         ['virsh', 'attach-device', cfg.vm.name, tmp, '--live', '--config']
         if is_running
         else ['virsh', 'attach-device', cfg.vm.name, tmp, '--config']
     )
-    run_cmd(attach_cmd, sudo=True, check=True, capture=True)
+    attach_summary = (
+        f'Attach virtiofs device to running VM {cfg.vm.name}'
+        if is_running
+        else f'Attach virtiofs device to VM config for {cfg.vm.name}'
+    )
+    res = mgr.submit(
+        attach_cmd,
+        sudo=True,
+        role='modify',
+        check=False,
+        capture=True,
+        summary=attach_summary,
+        detail=f'source={source_dir} tag={tag}',
+    ).result()
+    if res.code == 0:
+        return
+    msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
+    if 'target already exists' in msg:
+        current = vm_share_mappings(cfg, use_sudo=True)
+        if any(src == source_dir and tgt == tag for src, tgt in current):
+            log.info(
+                'Virtiofs mapping already present for vm={} source={} tag={}; treating attach as satisfied.',
+                cfg.vm.name,
+                source_dir,
+                tag,
+            )
+            return
+    raise CmdError(attach_cmd, res)
 
 
 def detach_vm_share(
@@ -187,11 +369,12 @@ def detach_vm_share(
     with tempfile.NamedTemporaryFile('w', delete=False) as f:
         f.write(xml)
         tmp = f.name
+    mgr = CommandManager.current()
     state = (
-        run_cmd(
+        mgr.run(
             ['virsh', 'domstate', cfg.vm.name],
             sudo=True,
-            sudo_action='read',
+            role='read',
             check=False,
             capture=True,
         )
@@ -204,10 +387,10 @@ def detach_vm_share(
         if is_running
         else ['virsh', 'detach-device', cfg.vm.name, tmp, '--config']
     )
-    res = run_cmd(
+    res = mgr.run(
         detach_cmd,
         sudo=True,
-        sudo_action='modify',
+        role='modify',
         check=False,
         capture=True,
     )
@@ -268,10 +451,11 @@ def ensure_share_mounted(
     if dry_run:
         log.info('DRYRUN: {}', ' '.join(cmd))
         return
+    mgr = CommandManager.current()
     max_attempts = 12
     retry_sleep_s = 2.0
     for attempt in range(1, max_attempts + 1):
-        res = run_cmd(cmd, sudo=False, check=False, capture=True, timeout=20)
+        res = mgr.run(cmd, sudo=False, check=False, capture=True, timeout=20)
         if res.code == 0:
             if attempt > 1:
                 log.info(

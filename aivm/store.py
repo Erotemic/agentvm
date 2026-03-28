@@ -6,10 +6,10 @@ to support folder-centric VM resolution workflows.
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import tomllib
 import ubelt as ub
 from loguru import logger as log
 
@@ -68,7 +68,7 @@ def _norm_dir(path: str | Path) -> str:
         return str(p.absolute())
 
 
-def _cfg_from_dict(raw: dict) -> AgentVMConfig:
+def _cfg_from_dict(raw: dict[str, object]) -> AgentVMConfig:
     cfg = AgentVMConfig()
     for section in (
         'vm',
@@ -83,10 +83,11 @@ def _cfg_from_dict(raw: dict) -> AgentVMConfig:
         if isinstance(body, dict):
             obj = getattr(cfg, section)
             for k, v in body.items():
-                if hasattr(obj, k):
-                    setattr(obj, k, v)
-    if 'verbosity' in raw:
-        cfg.verbosity = int(raw['verbosity'])
+                if hasattr(obj, str(k)):
+                    setattr(obj, str(k), v)
+    verbosity_val = raw.get('verbosity')
+    if verbosity_val is not None:
+        cfg.verbosity = int(verbosity_val)  # type: ignore
     return cfg
 
 
@@ -184,7 +185,9 @@ def load_store(path: Path | None = None) -> Store:
     return reg
 
 
-def save_store(reg: Store, path: Path | None = None) -> Path:
+def save_store(
+    reg: Store, path: Path | None = None, *, reason: str = ''
+) -> Path:
     fpath = path or store_path()
     fpath.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [f'schema_version = {reg.schema_version}']
@@ -267,6 +270,8 @@ def save_store(reg: Store, path: Path | None = None) -> Path:
         lines.append('')
 
     log.info('Writing config store to {}', fpath)
+    if reason.strip():
+        log.info('  Reason: {}', reason.strip())
     fpath.write_text('\n'.join(lines).rstrip() + '\n', encoding='utf-8')
     return fpath
 

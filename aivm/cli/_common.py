@@ -7,10 +7,12 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Self, cast
 
 import scriptconfig as scfg
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..detect import detect_ssh_identity
 from ..store import (
@@ -23,10 +25,12 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import arm_sudo_intent, clear_sudo_intent, sudo_intent_auto_yes
+from ..util import (
+    which,
+)
 
 log = logger
-_LAST_LOGGING_STATE: tuple[str, bool] | None = None
+_LAST_LOGGING_STATE: tuple[str, bool, int] | None = None
 _CURRENT_YES_SUDO: ContextVar[bool] = ContextVar(
     'aivm_current_yes_sudo', default=False
 )
@@ -40,57 +44,59 @@ class _BaseCommand(scfg.DataConfig):
 
     __special_options__ = False
 
-    config = scfg.Value(
+    config: Any = scfg.Value(
         None,
         help='Path to global aivm config store (default: ~/.config/aivm/config.toml).',
     )
-    verbose = scfg.Value(
+    verbose: Any = scfg.Value(
         0,
         short_alias=['v'],
         isflag='counter',
         help='Increase verbosity (-v, -vv).',
     )
-    yes = scfg.Value(
+    yes: Any = scfg.Value(
         False,
         isflag=True,
         help='Auto-approve interactive confirmations.',
     )
-    yes_sudo = scfg.Value(
+    yes_sudo: Any = scfg.Value(
         False,
         isflag=True,
         help='Auto-approve sudo confirmation prompts only.',
     )
 
     @classmethod
-    def cli(cls, *args, **kwargs):  # type: ignore[override]
-        clear_sudo_intent()
-        parsed = super().cli(*args, **kwargs)
-        cfg_verbosity = _resolve_cfg_verbosity(getattr(parsed, 'config', None))
-        cfg_yes_sudo = _resolve_cfg_yes_sudo(getattr(parsed, 'config', None))
+    def cli(cls, *args: Any, **kwargs: Any) -> Self:  # type: ignore
+        parsed = cast(Self, super().cli(*args, **kwargs))
+        cfg_verbosity = _resolve_cfg_verbosity(parsed.config)
+        cfg_yes_sudo = _resolve_cfg_yes_sudo(parsed.config)
         cfg_auto_approve_readonly_sudo = (
-            _resolve_cfg_auto_approve_readonly_sudo(
-                getattr(parsed, 'config', None)
-            )
+            _resolve_cfg_auto_approve_readonly_sudo(parsed.config)
         )
         effective_yes_sudo = bool(
-            getattr(parsed, 'yes_sudo', False)
-            or getattr(parsed, 'yes', False)
-            or cfg_yes_sudo
+            parsed.yes_sudo or parsed.yes or cfg_yes_sudo
         )
         setattr(parsed, 'yes_sudo', effective_yes_sudo)
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
         _CURRENT_AUTO_APPROVE_READONLY_SUDO.set(
             bool(cfg_auto_approve_readonly_sudo)
         )
-        args_verbose = int(getattr(parsed, 'verbose', 0) or 0)
+        CommandManager.activate(
+            CommandManager(
+                yes=bool(parsed.yes),
+                yes_sudo=bool(effective_yes_sudo),
+                auto_approve_readonly_sudo=bool(cfg_auto_approve_readonly_sudo),
+            )
+        )
+        args_verbose = int(parsed.verbose or 0)
         _setup_logging(args_verbose, cfg_verbosity)
         log.trace(
             'Parsed command {} with config={} verbose={} yes={} yes_sudo={} auto_approve_readonly_sudo={}',
             cls.__name__,
-            getattr(parsed, 'config', None),
+            parsed.config,
             args_verbose,
-            bool(getattr(parsed, 'yes', False)),
-            bool(getattr(parsed, 'yes_sudo', False)),
+            bool(parsed.yes),
+            bool(parsed.yes_sudo),
             bool(cfg_auto_approve_readonly_sudo),
         )
         return parsed
@@ -106,7 +112,7 @@ def _resolve_cfg_verbosity(config_opt: str | None) -> int:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            behavior_verbose = int(getattr(reg.behavior, 'verbose', 1) or 1)
+            behavior_verbose = int(reg.behavior.verbose or 1)
             if behavior_verbose != 1:
                 cfg_verbosity = behavior_verbose
             elif reg.active_vm:
@@ -138,9 +144,7 @@ def _resolve_cfg_auto_approve_readonly_sudo(config_opt: str | None) -> bool:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            auto_approve_readonly_sudo = bool(
-                getattr(reg.behavior, 'auto_approve_readonly_sudo', True)
-            )
+            auto_approve_readonly_sudo = bool(reg.behavior.auto_approve_readonly_sudo)
     except Exception:
         auto_approve_readonly_sudo = True
     return auto_approve_readonly_sudo
@@ -157,7 +161,7 @@ def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
     elif effective_verbosity >= 3:
         level = 'TRACE'
     colorize = sys.stderr.isatty() and os.getenv('NO_COLOR') is None
-    state = (level, colorize)
+    state = (level, colorize, id(sys.stderr))
     if _LAST_LOGGING_STATE == state:
         return
     logger.remove()
@@ -178,11 +182,15 @@ def _setup_logging(args_verbose: int, cfg_verbosity: int) -> None:
 
 def _hydrate_runtime_defaults(cfg: AgentVMConfig) -> bool:
     changed = False
+    have_ident = bool((cfg.paths.ssh_identity_file or '').strip())
+    have_pub = bool((cfg.paths.ssh_pubkey_path or '').strip())
+    if have_ident and have_pub:
+        return False
     ident, pub = detect_ssh_identity()
-    if not cfg.paths.ssh_identity_file and ident:
+    if not have_ident and ident:
         cfg.paths.ssh_identity_file = ident
         changed = True
-    if not cfg.paths.ssh_pubkey_path and pub:
+    if not have_pub and pub:
         cfg.paths.ssh_pubkey_path = pub
         changed = True
     if changed:
@@ -193,6 +201,115 @@ def _hydrate_runtime_defaults(cfg: AgentVMConfig) -> bool:
             cfg.paths.ssh_pubkey_path or '(empty)',
         )
     return changed
+
+
+def _default_aivm_identity_paths() -> tuple[Path, Path]:
+    priv = Path.home() / '.ssh' / 'id_aivm_ed25519'
+    return priv, Path(str(priv) + '.pub')
+
+
+def _maybe_offer_create_ssh_identity(
+    cfg: AgentVMConfig,
+    *,
+    yes: bool,
+    prompt_reason: str,
+) -> bool:
+    """Offer to create a dedicated aivm SSH keypair when none is configured."""
+    ident = (cfg.paths.ssh_identity_file or '').strip()
+    pub = (cfg.paths.ssh_pubkey_path or '').strip()
+    ident_path = Path(ident).expanduser() if ident else None
+    pub_path = Path(pub).expanduser() if pub else None
+    ident_ok = ident_path is not None and ident_path.exists()
+    pub_ok = pub_path is not None and pub_path.exists()
+    if ident_ok and pub_ok:
+        return False
+
+    # Do not override a partially configured custom path automatically.
+    if ident or pub:
+        return False
+
+    default_priv, default_pub = _default_aivm_identity_paths()
+    if default_priv.exists() and default_pub.exists():
+        cfg.paths.ssh_identity_file = str(default_priv)
+        cfg.paths.ssh_pubkey_path = str(default_pub)
+        return True
+
+    if which('ssh-keygen') is None:
+        log.warning(
+            'ssh-keygen not found; cannot create dedicated aivm SSH identity.'
+        )
+        return False
+
+    if yes:
+        approved = True
+    else:
+        if not sys.stdin.isatty():
+            return False
+        ans = (
+            input(
+                'No SSH identity/public key was detected for aivm VM access. '
+                f'Create a dedicated keypair now at {default_priv}? [Y/n]: '
+            )
+            .strip()
+            .lower()
+        )
+        approved = ans in {'', 'y', 'yes'}
+    if not approved:
+        return False
+
+    mgr = CommandManager.current()
+    comment = f'aivm@{os.uname().nodename}'
+    with mgr.intent(
+        'Create SSH identity',
+        why='A VM SSH keypair is required for guest access and provisioning.',
+        role='modify',
+    ):
+        with mgr.step(
+            'Create dedicated aivm SSH keypair',
+            why=prompt_reason,
+            approval_scope='aivm-ssh-identity',
+        ):
+            mgr.submit(
+                ['mkdir', '-p', str(default_priv.parent)],
+                sudo=False,
+                role='modify',
+                summary='Create ~/.ssh directory if missing',
+                detail=f'target={default_priv.parent}',
+            )
+            mgr.submit(
+                ['chmod', '700', str(default_priv.parent)],
+                sudo=False,
+                role='modify',
+                summary='Ensure ~/.ssh directory permissions',
+                detail=f'target={default_priv.parent}',
+            )
+            mgr.submit(
+                [
+                    'ssh-keygen',
+                    '-q',
+                    '-t',
+                    'ed25519',
+                    '-f',
+                    str(default_priv),
+                    '-N',
+                    '',
+                    '-C',
+                    comment,
+                ],
+                sudo=False,
+                role='modify',
+                summary='Generate dedicated aivm SSH keypair',
+                detail=f'private={default_priv} public={default_pub}',
+            )
+    cfg.paths.ssh_identity_file = str(default_priv)
+    cfg.paths.ssh_pubkey_path = str(default_pub)
+    log.info(
+        'Configured dedicated aivm SSH identity for vm={} private={} public={}',
+        cfg.vm.name,
+        default_priv,
+        default_pub,
+    )
+    return True
 
 
 def _choose_vm_interactive(options: list[str], *, reason: str) -> str:
@@ -320,7 +437,14 @@ def _load_cfg_with_path(
     if changed and persist_runtime_defaults:
         upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
         upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
-        save_store(reg, store_path)
+        save_store(
+            reg,
+            store_path,
+            reason=(
+                f'Persist hydrated runtime defaults discovered while loading '
+                f'VM {cfg.vm.name}.'
+            ),
+        )
     return cfg, store_path
 
 
@@ -343,63 +467,18 @@ def _resolve_cfg_fallback(
     )
 
 
-def _record_vm(cfg: AgentVMConfig, store_file: Path | None = None) -> Path:
+def _record_vm(
+    cfg: AgentVMConfig,
+    store_file: Path | None = None,
+    *,
+    reason: str = '',
+) -> Path:
     target = store_file or store_path()
     reg = load_store(target)
     upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
     upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
-    return save_store(reg, target)
-
-
-def _confirm_sudo_block(
-    *,
-    yes: bool,
-    purpose: str,
-    action: str = 'modify',
-) -> None:
-    mode = str(action or 'modify').strip().lower()
-    if mode not in {'read', 'modify'}:
-        raise RuntimeError("--action must be either 'read' or 'modify'")
-    log.trace(
-        'Confirm sudo block yes={} action={} purpose={!r}',
-        yes,
-        mode,
-        purpose,
-    )
-    if os.geteuid() == 0:
-        return
-    auto_yes_read = mode == 'read' and _CURRENT_AUTO_APPROVE_READONLY_SUDO.get(
-        True
-    )
-    sticky_all = sudo_intent_auto_yes()
-    eff_yes = bool(
-        yes
-        or _CURRENT_YES_SUDO.get(False)
-        or sticky_all
-        or auto_yes_read
-    )
-    # Preserve "accept all" across later confirm blocks in the same command.
-    arm_sudo_intent(
-        yes=eff_yes, purpose=purpose, action=mode, sticky=sticky_all
-    )
-
-
-def _confirm_external_file_update(
-    *, yes: bool, path: Path, purpose: str
-) -> None:
-    if yes:
-        return
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            'External host file updates require confirmation, but stdin is not interactive. '
-            'Re-run with --yes.'
-        )
-    print('About to update a host file not managed by aivm:')
-    print(f'  {path}')
-    print(f'  {purpose}')
-    ans = input('Continue? [y/N]: ').strip().lower()
-    if ans not in {'y', 'yes'}:
-        raise RuntimeError('Aborted by user.')
+    why = reason.strip() or f'Persist managed VM record for {cfg.vm.name}.'
+    return save_store(reg, target, reason=why)
 
 
 def _resolve_cfg_for_code(

@@ -1,233 +1,32 @@
-"""Shared utility helpers for command execution and CLI safety boundaries.
-
-This module is intentionally central: most host/VM operations eventually call
-``run_cmd``. Keeping sudo-confirmation semantics here ensures the command shown
-to users is the command actually executed.
-"""
+"""Shared utility re-exports and small filesystem/path helpers."""
 
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import sys
-from contextvars import ContextVar
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional
 
-from loguru import logger
+from .commands import CommandError as CmdError
+from .commands import CommandResult as CmdResult
+from .commands import shell_join
 
-log = logger
+# Keep these aliases so existing tests/helpers can still monkeypatch the
+# underlying runtime modules through ``aivm.util`` when needed.
+# Re-export the standard library modules for convenience.
 
-
-@dataclass(frozen=True)
-class CmdResult:
-    code: int
-    stdout: str
-    stderr: str
-
-
-class CmdError(RuntimeError):
-    def __init__(self, cmd: Sequence[str] | str, result: CmdResult):
-        self.cmd = cmd
-        self.result = result
-        super().__init__(
-            f'Command failed (code={result.code}): {cmd}\n{result.stderr}'.strip()
-        )
-
-
-@dataclass(frozen=True)
-class SudoIntent:
-    yes: bool
-    purpose: str
-    action: str = 'modify'
-    sticky: bool = False
-
-
-_SUDO_INTENT: ContextVar[SudoIntent | None] = ContextVar(
-    'aivm_sudo_intent', default=None
-)
-
-
-def shell_join(cmd: Sequence[str]) -> str:
-    return ' '.join(shlex.quote(c) for c in cmd)
-
-
-def arm_sudo_intent(
-    *,
-    yes: bool,
-    purpose: str,
-    action: str = 'modify',
-    sticky: bool = False,
-) -> None:
-    mode = str(action or 'modify').strip().lower()
-    if mode not in {'read', 'modify'}:
-        mode = 'modify'
-    _SUDO_INTENT.set(
-        SudoIntent(
-            yes=bool(yes),
-            purpose=str(purpose),
-            action=mode,
-            sticky=bool(sticky),
-        )
-    )
-
-
-def clear_sudo_intent() -> None:
-    _SUDO_INTENT.set(None)
-
-
-def sudo_intent_auto_yes() -> bool:
-    intent = _SUDO_INTENT.get()
-    return bool(intent is not None and intent.sticky)
-
-
-def _consume_sudo_intent() -> SudoIntent | None:
-    # Intentionally *not* one-shot. We keep the intent armed so each sudo call
-    # in the current flow can require explicit confirmation unless --yes-sudo.
-    return _SUDO_INTENT.get()
-
-
-def _ensure_sudo_ready(intent: SudoIntent, cmd: Sequence[str]) -> None:
-    cmd_line = shell_join(cmd)
-    local_log = log.opt(depth=2)
-    mode = (
-        'read-only'
-        if str(intent.action).strip().lower() == 'read'
-        else 'state-changing'
-    )
-    as_root = os.geteuid() == 0
-    needs_confirm = (not as_root) and (not intent.yes)
-    if needs_confirm or mode == 'state-changing':
-        local_log.info(f'Planned privileged {mode} command: {cmd_line}')
-    else:
-        # Auto-approved read-only probes can be very chatty in polling loops.
-        # Keep intent visible at TRACE while DEBUG shows the concrete RUN line.
-        local_log.trace(f'Planned privileged {mode} command: {cmd_line}')
-    if as_root:
-        return
-    if intent.yes:
-        return
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            'Privileged host operations require confirmation, but stdin is not interactive. '
-            'Re-run with --yes.'
-        )
-    local_log.info(f'About to run privileged {mode} host operations via sudo:')
-    local_log.info(f'  {intent.purpose}')
-    ans = input('Continue? [y]es/[a]ll/[N]o: ').strip().lower()
-    if ans in {'a', 'all'}:
-        arm_sudo_intent(
-            yes=True,
-            purpose=intent.purpose,
-            action='modify',
-            sticky=True,
-        )
-        return
-    if ans not in {'y', 'yes'}:
-        raise RuntimeError('Aborted by user.')
-
-
-def run_cmd(
-    cmd: Sequence[str],
-    *,
-    sudo: bool = False,
-    sudo_action: str | None = None,
-    check: bool = True,
-    capture: bool = True,
-    text: bool = True,
-    input_text: Optional[str] = None,
-    env: Optional[dict[str, str]] = None,
-    timeout: float | None = None,
-) -> CmdResult:
-    """Execute a command with consistent logging, sudo policy, and error handling.
-
-    Design notes:
-    * ``check=True`` is treated as an imperative/change action and logged at
-      INFO so users can follow setup steps.
-    * ``check=False`` is usually probe/introspection and logged at DEBUG.
-    * sudo prompts are driven by intent armed from CLI orchestration code, so
-      users see/approve the real privileged command instead of a probe command.
-    """
-    original_cmd = cmd
-    local_log = log.opt(depth=1)
-    local_log.trace(
-        'run_cmd entry sudo={} check={} capture={} text={} cmd={}',
-        sudo,
-        check,
-        capture,
-        text,
-        shell_join(cmd),
-    )
-    if sudo and os.geteuid() != 0:
-        intent = _consume_sudo_intent()
-        if intent is not None:
-            action_override = str(sudo_action or '').strip().lower()
-            if (
-                action_override in {'read', 'modify'}
-                and action_override != intent.action
-            ):
-                intent = SudoIntent(
-                    yes=intent.yes,
-                    purpose=intent.purpose,
-                    action=action_override,
-                    sticky=intent.sticky,
-                )
-            _ensure_sudo_ready(intent, original_cmd)
-        # Use interactive sudo when stdin is a TTY so the user sees/authenticates
-        # on the actual command. In non-interactive mode, fail fast.
-        cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]
-        local_log.trace('Running with sudo: {}', shell_join(original_cmd))
-    run_line = shell_join(cmd)
-    if check:
-        # check=True generally corresponds to imperative setup/change steps.
-        local_log.info('RUN: {}', run_line)
-    else:
-        # check=False is commonly used for probes/introspection.
-        local_log.debug('RUN: {}', run_line)
-    try:
-        p = subprocess.run(
-            cmd,
-            input=input_text if input_text is not None else None,
-            capture_output=capture,
-            text=text,
-            env=env,
-            timeout=timeout,
-        )
-        res = CmdResult(p.returncode, p.stdout or '', p.stderr or '')
-    except subprocess.TimeoutExpired as ex:
-        stdout = ex.stdout or ''
-        stderr = ex.stderr or ''
-        if not isinstance(stdout, str):
-            stdout = stdout.decode(errors='replace')
-        if not isinstance(stderr, str):
-            stderr = stderr.decode(errors='replace')
-        res = CmdResult(124, stdout, (stderr + '\ncommand timed out').strip())
-        local_log.warning(
-            'Command timed out after {}s cmd={}',
-            timeout,
-            shell_join(cmd),
-        )
-        if check:
-            raise CmdError(cmd, res) from ex
-        return res
-    local_log.trace(
-        'run_cmd result code={} stdout_len={} stderr_len={}',
-        res.code,
-        len(res.stdout),
-        len(res.stderr),
-    )
-    if check and p.returncode != 0:
-        local_log.error(
-            'Command failed code={} cmd={} stderr={} stdout={}',
-            p.returncode,
-            shell_join(cmd),
-            res.stderr.strip(),
-            res.stdout.strip(),
-        )
-        raise CmdError(cmd, res)
-    return res
+__all__ = [
+    'CmdError',
+    'CmdResult',
+    'shell_join',
+    'which',
+    'ensure_dir',
+    'expand',
+    'os',
+    'sys',
+    'subprocess',
+]
 
 
 def which(cmd: str) -> Optional[str]:

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import scriptconfig as scfg
 
+from aivm.store import Store
+
+from ..commands import CommandManager
 from ..config import AgentVMConfig, FirewallConfig, NetworkConfig
 from ..net import destroy_network, ensure_network, network_status
 from ..store import (
@@ -16,78 +21,80 @@ from ..store import (
 from ._common import (
     _BaseCommand,
     _cfg_path,
-    _confirm_sudo_block,
 )
 
 
 class NetCreateCLI(_BaseCommand):
     """Create or recreate the configured libvirt network."""
 
-    network = scfg.Value(
+    network: Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
-    recreate = scfg.Value(
+    recreate: Any = scfg.Value(
         False, isflag=True, help='Destroy and recreate if it exists.'
     )
-    dry_run = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose=f"Create/update libvirt network '{cfg.network.name}'.",
-        )
-        ensure_network(cfg, recreate=args.recreate, dry_run=args.dry_run)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Create/update network {cfg.network.name}',
+            why='Prepare the managed libvirt network used by aivm VMs.',
+            role='modify',
+        ):
+            ensure_network(cfg, recreate=args.recreate, dry_run=args.dry_run)
         return 0
 
 
 class NetStatusCLI(_BaseCommand):
     """Print detailed status of the configured libvirt network."""
 
-    network = scfg.Value(
+    network: Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg = _resolve_network_cfg(args.config, network_opt=args.network)
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Inspect libvirt network status via virsh.',
-            action='read',
-        )
-        print(network_status(cfg))
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Inspect network {cfg.network.name}',
+            why='Read the live libvirt network state for the managed bridge.',
+            role='read',
+        ):
+            print(network_status(cfg))
         return 0
 
 
 class NetDestroyCLI(_BaseCommand):
     """Destroy and undefine the configured libvirt network."""
 
-    network = scfg.Value(
+    network: Any = scfg.Value(
         '',
         position=1,
         help='Optional managed network name (positional).',
     )
-    force = scfg.Value(
+    force: Any = scfg.Value(
         False,
         isflag=True,
         help='Allow destroying network even if referenced by managed VMs.',
     )
-    dry_run = scfg.Value(
+    dry_run: Any = scfg.Value(
         False, isflag=True, help='Print actions without running.'
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         cfg_path = _cfg_path(args.config)
         reg = load_store(cfg_path)
@@ -101,11 +108,13 @@ class NetDestroyCLI(_BaseCommand):
                 f"Network '{cfg.network.name}' is referenced by managed VMs: {names}. "
                 'Detach or destroy those VMs first, or use --force.'
             )
-        _confirm_sudo_block(
-            yes=bool(args.yes),
-            purpose='Destroy/undefine libvirt network.',
-        )
-        destroy_network(cfg, dry_run=args.dry_run)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Destroy network {cfg.network.name}',
+            why='Remove the managed libvirt network when it is no longer needed.',
+            role='modify',
+        ):
+            destroy_network(cfg, dry_run=args.dry_run)
         if not args.dry_run:
             remove_network(reg, cfg.network.name)
             save_store(reg, _cfg_path(args.config))
@@ -124,7 +133,7 @@ def _resolve_network_cfg(
     config_opt: str | None,
     *,
     network_opt: str = '',
-    reg=None,
+    reg: Store | None = None,
 ) -> AgentVMConfig:
     reg = reg if reg is not None else load_store(_cfg_path(config_opt))
     net_name = str(network_opt or '').strip()

@@ -11,15 +11,16 @@ import os
 import re
 import shlex
 import sys
+import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import fields
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import scriptconfig as scfg
-import tomllib
 from loguru import logger
 
+from ..commands import CommandManager
 from ..config import (
     AgentVMConfig,
     FirewallConfig,
@@ -42,12 +43,12 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
-from ..util import run_cmd, which
+from ..util import which
 from ._common import (
     _BaseCommand,
     _cfg_path,
-    _confirm_sudo_block,
     _load_cfg_with_path,
+    _maybe_offer_create_ssh_identity,
     _resolve_cfg_for_code,
 )
 
@@ -69,11 +70,19 @@ class InitCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         reg = load_store(path)
         cfg = auto_defaults(AgentVMConfig(), project_dir=Path.cwd())
+        _maybe_offer_create_ssh_identity(
+            cfg,
+            yes=bool(args.yes),
+            prompt_reason=(
+                'Generate a dedicated SSH keypair so aivm can access and '
+                'provision VMs without reusing a generic personal key name.'
+            ),
+        )
         if not bool(args.yes) and not bool(args.defaults):
             cfg = _review_init_defaults_interactive(cfg, path)
         else:
@@ -136,7 +145,7 @@ def _ssh_key_setup_warning_lines(cfg: AgentVMConfig) -> list[str]:
         '⚠️ SSH keypair not detected for this VM config.',
         '  `aivm` expects an SSH identity + public key for VM access/provisioning.',
         '  Quick setup:',
-        '    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""',
+        '    ssh-keygen -t ed25519 -f ~/.ssh/id_aivm_ed25519 -N ""',
         '  (Advisory only: config init will continue.)',
     ]
 
@@ -241,7 +250,7 @@ class ConfigShowCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         vm_name = str(args.vm or '').strip()
@@ -273,40 +282,50 @@ class ConfigShowCLI(_BaseCommand):
 class ConfigEditCLI(_BaseCommand):
     """Edit global config store in $EDITOR."""
 
-    editor = scfg.Value(
+    editor: Any = scfg.Value(
         '',
         help='Editor command override (default: $EDITOR/$VISUAL, then nano/vi).',
     )
 
+    visual: Any = scfg.Value(
+        '',
+        help='If true, then prever $VISUAL over $EDITOR',
+        isflag=True,
+    )
+
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         if not path.exists():
             reg = load_store(path)
             save_store(reg, path)
-        editor_cmd = (
-            args.editor.strip()
-            if str(args.editor or '').strip()
-            else (os.environ.get('EDITOR') or os.environ.get('VISUAL') or '')
-        )
+
+        order = ['VISUAL', 'EDITOR'] if args.visual else ['EDITOR', 'VISUAL']
+        candidates = [
+            str(args.editor or '').strip(),
+            *(os.environ.get(key, '') for key in order),
+        ]
+        editor_cmd = next((x for x in candidates if x), '')
         if not editor_cmd:
             editor_cmd = which('nano') or which('vi') or ''
         if not editor_cmd:
             raise RuntimeError('No editor found. Set $EDITOR or pass --editor.')
         parts = shlex.split(editor_cmd) + [str(path)]
-        run_cmd(parts, sudo=False, check=True, capture=False)
+        CommandManager.current().run(
+            parts, sudo=False, check=True, capture=False
+        )
         return 0
 
 
 class ConfigPathCLI(_BaseCommand):
     """Show config store path and resolved VM selection context."""
 
-    vm = scfg.Value('', help='Optional VM name override.')
-    host_src = scfg.Value('.', help='Host directory scope to inspect.')
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    host_src: Any = scfg.Value('.', help='Host directory scope to inspect.')
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         host_src = Path(args.host_src).resolve()
         store = _cfg_path(args.config)
@@ -355,11 +374,12 @@ class ConfigDiscoverCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         # Discover is intentionally conservative: unmanaged VMs require explicit
         # import confirmation (unless --yes) to avoid surprising ownership grabs.
         args = cls.cli(argv=argv, data=kwargs)
-        names_res = run_cmd(
+        mgr = CommandManager.current()
+        names_res = mgr.run(
             virsh_system_cmd('list', '--all', '--name'),
             sudo=False,
             check=False,
@@ -367,17 +387,13 @@ class ConfigDiscoverCLI(_BaseCommand):
         )
         used_sudo = False
         if names_res.code != 0:
-            _confirm_sudo_block(
-                yes=bool(args.yes),
-                purpose='Discover existing libvirt VMs via system virsh.',
-                action='read',
-            )
             used_sudo = True
-            names_res = run_cmd(
+            names_res = mgr.run(
                 virsh_system_cmd('list', '--all', '--name'),
                 sudo=True,
                 check=True,
                 capture=True,
+                summary='List libvirt VMs with system privileges',
             )
 
         vm_names = [
@@ -428,7 +444,7 @@ class ConfigLintCLI(_BaseCommand):
     """Lint config store for unknown/unused keys and sections."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         if not path.exists():
@@ -640,6 +656,7 @@ class ConfigModalCLI(scfg.ModalCLI):
 
 def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
     """Collect a minimal VM summary used for discover/import prompts."""
+    mgr = CommandManager.current()
     info: dict[str, object] = {
         'name': vm_name,
         'state': 'unknown',
@@ -649,7 +666,7 @@ def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
         'memory_mib': 'unknown',
         'shares': [],
     }
-    dominfo = run_cmd(
+    dominfo = mgr.run(
         virsh_system_cmd('dominfo', vm_name),
         sudo=use_sudo,
         check=False,
@@ -672,7 +689,7 @@ def _discover_vm_info(vm_name: str, *, use_sudo: bool) -> dict[str, object]:
                 if m:
                     kib = int(m.group(1))
                     info['memory_mib'] = str(kib // 1024)
-    xml = run_cmd(
+    xml = mgr.run(
         virsh_system_cmd('dumpxml', vm_name),
         sudo=use_sudo,
         check=False,

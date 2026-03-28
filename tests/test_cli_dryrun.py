@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aivm.cli import AgentVMModalCLI
 from aivm.config import AgentVMConfig
 from aivm.store import Store, save_store, upsert_vm
@@ -86,7 +88,7 @@ def test_dryrun_commands_with_yes(tmp_path: Path) -> None:
 
 
 def test_help_tree_includes_one_line_descriptions(
-    tmp_path: Path, capsys
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cfg_path = _write_cfg(tmp_path)
     assert _run(['help', 'tree', '--yes', '--config', str(cfg_path)]) == 0

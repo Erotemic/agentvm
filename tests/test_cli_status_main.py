@@ -5,22 +5,32 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from aivm.cli.main import StatusCLI
 from aivm.config import AgentVMConfig
-from aivm.status import ProbeOutcome, render_global_status
+from aivm.status import (
+    ProbeOutcome,
+    anticipated_status_sudo_commands,
+    render_global_status,
+)
 from aivm.store import Store
 
 main_mod = importlib.import_module('aivm.cli.main')
 
 
-def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
+def test_status_cli_uses_vm_opt_and_sudo(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'chosen-vm'
     cfg_path = tmp_path / 'config.toml'
 
-    called: dict[str, object] = {}
+    called: dict[str, object] = {}  # type: ignore
 
-    def fake_load_cfg_with_path(config, vm_opt=''):
+    def fake_load_cfg_with_path(
+        config: str | None, vm_opt: str = ''
+    ) -> tuple[AgentVMConfig, Path]:
         called['vm_opt'] = vm_opt
         return cfg, cfg_path
 
@@ -31,9 +41,9 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(main_mod, '_cfg_path', lambda _: cfg_path)
     monkeypatch.setattr(
-        main_mod,
-        '_confirm_sudo_block',
-        lambda **k: called.setdefault('sudo', k),
+        main_mod.CommandManager,
+        'confirm_sudo_scope',
+        lambda self, **k: called.setdefault('sudo', k),
     )
     monkeypatch.setattr(
         main_mod,
@@ -56,13 +66,18 @@ def test_status_cli_uses_vm_opt_and_sudo(monkeypatch, tmp_path: Path) -> None:
     )
     assert rc == 0
     assert called['vm_opt'] == 'chosen-vm'
-    assert called['sudo']['purpose'].startswith(
+    assert (called['sudo']['purpose']).startswith(  # type: ignore
         'Inspect host/libvirt/firewall/VM state'
+    )
+    assert (called['sudo']['preview_cmds']) == anticipated_status_sudo_commands(  # type: ignore
+        cfg, detail=False
     )
     assert called['render'] == ('chosen-vm', cfg_path, False, True)
 
 
-def test_render_global_status_wording(monkeypatch) -> None:
+def test_render_global_status_wording(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setattr('aivm.status.check_commands', lambda: ([], []))
     monkeypatch.setattr(
         'aivm.status.probe_runtime_environment',

@@ -9,7 +9,20 @@ Open project in VM
 .. code-block:: bash
 
    aivm code .
-   aivm vm code . --sync_settings
+   aivm vm code .
+
+These shortcut flows now report progress as grouped steps. Expect a current
+step title, a short explanation of why that step is happening, semantic command
+summaries, and the exact commands that will run. Privileged host changes prompt
+once for the whole step when approval is required.
+
+For the default ``shared-root`` attachment path, the current implementation
+usually breaks reconciliation into:
+
+* inspect shared-root host bind state
+* prepare host bind targets
+* inspect/ensure the VM virtiofs mapping
+* mount and verify the bind inside the guest
 
 SSH into mapped directory
 -------------------------
@@ -82,6 +95,17 @@ Attachment mode rules:
    aivm detach .
    aivm attach . --mode git
 
+Attachment access modes:
+
+* ``rw`` (default): read-write access to the shared folder.
+* ``ro``: read-only access; currently supported only for ``shared`` mode.
+
+Specify access with ``--access``:
+
+.. code-block:: bash
+
+   aivm attach . --access ro
+
 Inspect and list resources
 --------------------------
 
@@ -118,6 +142,32 @@ Reconcile VM drift
 
    aivm vm update
 
+Workflow logging model
+----------------------
+
+``aivm`` command execution is organized around:
+
+* nested intent context, which keeps the larger goal visible
+* step/plan previews, which describe what the current sequence of commands is
+  about to do and show the exact commands that will run
+* raw commands, which remain visible for deeper inspection at higher verbosity
+
+This is meant to make multi-command workflows easier to follow and safer to
+approve than a stream of isolated sudo command prompts. Shared-root
+attach/reconcile is the most complete example today; some older helper flows
+still rely on the compatibility shim while migration continues.
+
+Interactive approval semantics:
+
+* ``y`` approves the current block only
+* ``a`` approves the current block and all later blocks
+* ``s`` shows the full exact commands for the current block, then reprompts
+
+Normal previews are intentionally readable and may abbreviate long shell blobs,
+but the full exact commands can be shown before approval and are always logged
+when they execute. For ``shared-root`` attachments, host-side preparation is
+designed to avoid mutating ownership or permissions in the user's source tree.
+
 Get command tree
 ----------------
 
@@ -125,4 +175,5 @@ Get command tree
 
    aivm help tree
    aivm help plan
+   aivm help raw
    aivm help completion

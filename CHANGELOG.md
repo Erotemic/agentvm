@@ -2,6 +2,36 @@
 We [keep a changelog](https://keepachangelog.com/en/1.0.0/).
 We aim to adhere to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Version 0.4.0] - Unreleased
+
+### Added
+- New `CommandManager` module (`aivm/commands.py`) centralizing all subprocess execution with intent-based approval workflows, command plans, and role annotations (read vs modify).
+- VM configuration drift detection (`aivm/vm/drift.py`) with `DriftReport` and `DriftItem` dataclasses covering hardware (CPU/RAM) and share-mapping mismatches.
+- Status command now reports whether the current working directory is shared with a VM and flags any detected VM configuration drift.
+- Formal attachment model with `AttachmentMode` (shared, shared-root, git), `AttachmentAccess` (rw, ro), and `ResolvedAttachment` dataclasses in `aivm/vm/share.py`.
+- Read-only share access mode for folder attachments.
+- Directory share status display in `aivm status` output.
+- Grouped command approval: related commands are batched into plans with unified previews before execution.
+- SSH bootstrap prompting improvements.
+
+### Changed
+- All subprocess calls across lifecycle, firewall, host, and network modules now route through `CommandManager` instead of the previous ad-hoc `run_cmd` utility.
+- Operations declare explicit intent contexts describing *why* they are happening, improving logs and approval prompts.
+- Status and drift probes return tri-state outcomes (True/False/None) to gracefully handle permission or query errors.
+- Firewall and network setup operations now show clear intent in command previews.
+- Better error classification for apt lock conflicts, missing UEFI firmware, and memory allocation failures.
+- Python target version updated from 3.8 to 3.11 in ruff configuration.
+- Added mypy configuration section in `pyproject.toml`.
+- Bumped project version metadata to `0.4.0`.
+
+### Removed
+- Removed legacy `run_cmd`, `CmdResult`, and sudo intent arming from `aivm/util.py`; all command execution now lives in `CommandManager`.
+
+### Fixed
+- Fixed mounting issues and improved virtiofs tag alignment across lifecycle operations.
+- Fixed auto-approval logic for read-only sudo commands.
+- Various type annotation improvements and test fixes.
+
 ## [Version 0.3.0] - Unreleased
 
 ### Added

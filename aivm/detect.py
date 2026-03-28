@@ -14,13 +14,14 @@ from pathlib import Path
 
 from loguru import logger
 
+from .commands import CommandManager
 from .config import AgentVMConfig
 from .resource_checks import (
     host_cpu_count,
     host_free_disk_gb,
     host_mem_total_mb,
 )
-from .util import expand, run_cmd, which
+from .util import expand, which
 
 log = logger
 
@@ -74,7 +75,7 @@ def detect_ssh_identity() -> tuple[str, str]:
         return ident, pub
     if which('ssh'):
         try:
-            res = run_cmd(
+            res = CommandManager.current().run(
                 ['ssh', '-G', 'unknown@doesnt.exist'], check=True, capture=True
             )
             for line in res.stdout.splitlines():
@@ -115,7 +116,9 @@ def existing_ipv4_routes() -> list[ipaddress.IPv4Network]:
         log.warning('ip command not found; skipping route introspection')
         return []
     try:
-        res = run_cmd(['ip', '-4', 'route', 'show'], check=True, capture=True)
+        res = CommandManager.current().run(
+            ['ip', '-4', 'route', 'show'], check=True, capture=True
+        )
     except Exception as ex:
         log.warning('Failed to inspect host routes: {}', ex)
         return []

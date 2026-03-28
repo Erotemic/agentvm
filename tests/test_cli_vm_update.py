@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+import pytest
+from pytest import MonkeyPatch
 
 from aivm.cli.vm import (
-    ATTACHMENT_MODE_SHARED_ROOT,
+    AttachmentMode,
     ReconcileResult,
     ResolvedAttachment,
     VMUpdateCLI,
@@ -66,7 +70,9 @@ def test_apply_vm_update_rejects_disk_shrink() -> None:
         raise AssertionError('Expected RuntimeError on disk shrink')
 
 
-def test_vm_update_no_changes(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_vm_update_no_changes(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-noop'
     monkeypatch.setattr(
@@ -83,7 +89,9 @@ def test_vm_update_no_changes(monkeypatch, capsys, tmp_path: Path) -> None:
     assert 'already in sync' in out
 
 
-def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
+def test_vm_update_restarts_when_required(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-update'
     drift = VMUpdateDrift(cpus=(2, 4))
@@ -95,15 +103,14 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
         'aivm.cli.vm._vm_update_drift',
         lambda *a, **k: (drift, True),
     )
-    monkeypatch.setattr('aivm.cli.vm._confirm_sudo_block', lambda **k: None)
     monkeypatch.setattr(
         'aivm.cli.vm._apply_vm_update',
         lambda *a, **k: (True, True),
     )
-    called: dict[str, object] = {}
+    called: dict[str, object] = {}  # type: ignore[assignment]
 
-    def fake_restart(*a, **k):
-        called['kwargs'] = k
+    def fake_restart(*a: object, **k: Any) -> None:
+        called['kwargs'] = k  # type: ignore[index]
 
     monkeypatch.setattr(
         'aivm.cli.vm._maybe_restart_vm_after_update', fake_restart
@@ -115,21 +122,19 @@ def test_vm_update_restarts_when_required(monkeypatch, tmp_path: Path) -> None:
         restart='always',
     )
     assert rc == 0
-    assert called['kwargs']['restart_policy'] == 'always'
+    assert called['kwargs']['restart_policy'] == 'always'  # type: ignore
 
 
-def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
+def test_vm_update_drift_escalates_for_disk_probe(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-drift'
     cfg.vm.disk_gb = 60
 
-    sudo_prompts: list[str] = []
-
-    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
-        del yes, kwargs
-        sudo_prompts.append(purpose)
-
-    def fake_run_cmd(cmd, *, sudo=False, **kwargs):
+    def fake_run_cmd(
+        self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any
+    ) -> CmdResult:
         del kwargs
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -176,25 +181,22 @@ def test_vm_update_drift_escalates_for_disk_probe(monkeypatch) -> None:
             return CmdResult(0, '{"virtual-size": 42949672960}', '')
         raise AssertionError(f'Unexpected cmd={cmd!r} sudo={sudo}')
 
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
-    )
-    monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.cli.vm.CommandManager.run', fake_run_cmd)
     drift, running = _vm_update_drift(cfg, yes=False)
     assert running is True
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
-    assert len(sudo_prompts) == 1
 
 
-def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
+def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(
+    monkeypatch: MonkeyPatch,
+) -> None:
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-lock'
     cfg.vm.disk_gb = 60
 
-    def fake_confirm_sudo_block(*, yes, purpose, **kwargs):
-        del yes, purpose, kwargs
-
-    def fake_run_cmd(cmd, *, sudo=False, **kwargs):
+    def fake_run_cmd(
+        self: object, cmd: list[str], *, sudo: bool = False, **kwargs: Any
+    ) -> CmdResult:
         del kwargs, sudo
         if cmd[:3] == ['virsh', '-c', 'qemu:///system'] and cmd[3] == 'dominfo':
             return CmdResult(
@@ -234,17 +236,14 @@ def test_vm_update_drift_falls_back_to_domblkinfo_on_lock(monkeypatch) -> None:
             return CmdResult(0, 'Capacity: 42949672960\nAllocation: 0\n', '')
         raise AssertionError(f'Unexpected command: {cmd!r}')
 
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', fake_confirm_sudo_block
-    )
-    monkeypatch.setattr('aivm.cli.vm.run_cmd', fake_run_cmd)
+    monkeypatch.setattr('aivm.cli.vm.CommandManager.run', fake_run_cmd)
     drift, _running = _vm_update_drift(cfg, yes=True)
     assert drift.disk_bytes == (40 * 1024**3, 60 * 1024**3)
     assert any('falling back to virsh domblkinfo' in n for n in drift.notes)
 
 
 def test_prepare_attached_session_bootstraps_missing_vm(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     host_src = tmp_path / 'proj'
     host_src.mkdir()
@@ -255,7 +254,7 @@ def test_prepare_attached_session_bootstraps_missing_vm(
     calls: list[str] = []
     state = {'ready': False}
 
-    def fake_resolve_cfg_for_code(**kwargs):
+    def fake_resolve_cfg_for_code(**kwargs: Any) -> tuple[AgentVMConfig, Path]:
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -272,7 +271,7 @@ def test_prepare_attached_session_bootstraps_missing_vm(
         lambda *a, **k: calls.append('config_init') or 0,
     )
 
-    def fake_vm_create(*a, **k):
+    def fake_vm_create(*a: Any, **k: Any) -> int:
         calls.append('vm_create')
         state['ready'] = True
         return 0
@@ -327,8 +326,117 @@ def test_prepare_attached_session_bootstraps_missing_vm(
     assert calls == ['config_init', 'vm_create']
 
 
+def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'bootstrap-vm'
+    cfg_path = tmp_path / 'config.toml'
+
+    state = {'ready': False}
+    init_kwargs: list[dict] = []
+    create_kwargs: list[dict] = []
+
+    def fake_resolve_cfg_for_code(**kwargs: Any) -> tuple[AgentVMConfig, Path]:
+        del kwargs
+        if not state['ready']:
+            raise RuntimeError(
+                f'No VM definitions found in config store: {cfg_path}. '
+                'Run `aivm config init` then `aivm vm create` first.'
+            )
+        return cfg, cfg_path
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code', fake_resolve_cfg_for_code
+    )
+
+    def fake_init(*a: object, **k: Any) -> int:
+        del a
+        init_kwargs.append(dict(k))
+        return 0
+
+    def fake_vm_create(*a: object, **k: Any) -> int:
+        del a
+        create_kwargs.append(dict(k))
+        state['ready'] = True
+        return 0
+
+    monkeypatch.setattr('aivm.cli.config.InitCLI.main', fake_init)
+    monkeypatch.setattr('aivm.cli.vm.VMCreateCLI.main', fake_vm_create)
+    monkeypatch.setattr('aivm.cli.vm.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('builtins.input', lambda prompt='': 'y')
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_attachment',
+        lambda *a, **k: ResolvedAttachment(
+            vm_name=cfg.vm.name,
+            source_dir=str(host_src),
+            guest_dst=str(host_src),
+            tag='hostcode-proj',
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_attached_vm',
+        lambda *a, **k: ReconcileResult(
+            attachment=ResolvedAttachment(
+                vm_name=cfg.vm.name,
+                source_dir=str(host_src),
+                guest_dst=str(host_src),
+                tag='hostcode-proj',
+            ),
+            cached_ip=None,
+            cached_ssh_ok=False,
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', lambda *a, **k: tmp_path / 'dummy'
+    )
+    monkeypatch.setattr('aivm.cli.vm.get_ip_cached', lambda *a, **k: '10.0.0.2')
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_ssh_ready',
+        lambda *a, **k: ProbeOutcome(True, 'ready', ''),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None
+    )
+
+    session = _prepare_attached_session(
+        config_opt=None,
+        vm_opt='',
+        host_src=host_src,
+        guest_dst_opt='',
+        recreate_if_needed=False,
+        ensure_firewall_opt=True,
+        force=False,
+        dry_run=False,
+        yes=False,
+    )
+
+    assert session.cfg.vm.name == 'bootstrap-vm'
+    assert init_kwargs == [
+        {
+            'argv': False,
+            'config': None,
+            'yes': False,
+            'defaults': False,
+            'force': False,
+        }
+    ]
+    assert create_kwargs == [
+        {
+            'argv': False,
+            'config': None,
+            'vm': '',
+            'yes': False,
+            'dry_run': False,
+            'force': False,
+        }
+    ]
+
+
 def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     host_src = tmp_path / 'proj'
     host_src.mkdir()
@@ -345,7 +453,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
     calls: list[str] = []
     state = {'ready': False}
 
-    def fake_resolve_cfg_for_code(**kwargs):
+    def fake_resolve_cfg_for_code(**kwargs: Any) -> tuple[AgentVMConfig, Path]:
         del kwargs
         if not state['ready']:
             raise RuntimeError(
@@ -362,7 +470,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
         lambda *a, **k: calls.append('config_init') or 0,
     )
 
-    def fake_vm_create(*a, **k):
+    def fake_vm_create(*a: Any, **k: Any) -> int:
         calls.append('vm_create')
         state['ready'] = True
         return 0
@@ -418,7 +526,7 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
 
 
 def test_prepare_attached_session_restores_saved_vm_attachments(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     from aivm.store import Store, save_store, upsert_attachment, upsert_vm
 
@@ -460,7 +568,12 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         lambda **kwargs: (cfg, cfg_path),
     )
 
-    def fake_resolve_attachment(_cfg, _cfg_path, host_path, _guest_dst_opt):
+    def fake_resolve_attachment(
+        _cfg: AgentVMConfig,
+        _cfg_path: Path,
+        host_path: Path,
+        _guest_dst_opt: str,
+    ) -> ResolvedAttachment:
         host_path = Path(host_path).resolve()
         if host_path == host_src.resolve():
             return current_attachment
@@ -486,16 +599,13 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         ),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
-    )
-    monkeypatch.setattr(
         'aivm.cli.vm.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
     )
 
     mappings = [(str(host_src.resolve()), 'hostcode-proj')]
 
-    def fake_vm_share_mappings(*a, **k):
+    def fake_vm_share_mappings(*a: Any, **k: Any) -> list:
         del a, k
         return list(mappings)
 
@@ -503,7 +613,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
     attached: list[tuple[tuple, dict]] = []
 
-    def fake_attach_vm_share(*a, **k):
+    def fake_attach_vm_share(*a: Any, **k: Any) -> None:
         attached.append((a, k))
         mappings.append((str(other_src.resolve()), 'hostcode-docs'))
 
@@ -517,16 +627,16 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
     recorded: list[dict] = []
 
     def fake_record_attachment(
-        cfg_arg,
-        cfg_path_arg,
+        cfg_arg: AgentVMConfig,
+        cfg_path_arg: Path,
         *,
-        host_src,
-        mode,
-        access,
-        guest_dst,
-        tag,
-        force=False,
-    ):
+        host_src: Path,
+        mode: str,
+        access: str,
+        guest_dst: str,
+        tag: str,
+        force: bool = False,
+    ) -> Path:
         del cfg_arg, cfg_path_arg, force
         recorded.append(
             {
@@ -571,7 +681,7 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
 
 
 def test_prepare_attached_session_restores_saved_shared_root_attachments(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     from aivm.store import Store, save_store, upsert_attachment, upsert_vm
 
@@ -589,7 +699,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         store,
         host_path=host_src,
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         guest_dst='/workspace/proj',
         tag='token-proj',
     )
@@ -597,7 +707,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         store,
         host_path=other_src,
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         guest_dst='/workspace/docs',
         tag='token-docs',
     )
@@ -605,7 +715,7 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
 
     current_attachment = ResolvedAttachment(
         vm_name=cfg.vm.name,
-        mode=ATTACHMENT_MODE_SHARED_ROOT,
+        mode=AttachmentMode.SHARED_ROOT,
         source_dir=str(host_src.resolve()),
         guest_dst='/workspace/proj',
         tag='token-proj',
@@ -616,14 +726,19 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
         lambda **kwargs: (cfg, cfg_path),
     )
 
-    def fake_resolve_attachment(_cfg, _cfg_path, host_path, _guest_dst_opt):
+    def fake_resolve_attachment(
+        _cfg: AgentVMConfig,
+        _cfg_path: Path,
+        host_path: Path,
+        _guest_dst_opt: str,
+    ) -> ResolvedAttachment:
         host_path = Path(host_path).resolve()
         if host_path == host_src.resolve():
             return current_attachment
         if host_path == other_src.resolve():
             return ResolvedAttachment(
                 vm_name=cfg.vm.name,
-                mode=ATTACHMENT_MODE_SHARED_ROOT,
+                mode=AttachmentMode.SHARED_ROOT,
                 source_dir=str(other_src.resolve()),
                 guest_dst='/workspace/docs',
                 tag='token-docs',
@@ -641,9 +756,6 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
             cached_ip='10.0.0.3',
             cached_ssh_ok=True,
         ),
-    )
-    monkeypatch.setattr(
-        'aivm.cli.vm._confirm_sudo_block', lambda **kwargs: None
     )
     monkeypatch.setattr(
         'aivm.cli.vm.probe_ssh_ready',
@@ -676,16 +788,16 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     recorded: list[dict] = []
 
     def fake_record_attachment(
-        cfg_arg,
-        cfg_path_arg,
+        cfg_arg: AgentVMConfig,
+        cfg_path_arg: Path,
         *,
-        host_src,
-        mode,
-        access,
-        guest_dst,
-        tag,
-        force=False,
-    ):
+        host_src: Path,
+        mode: str,
+        access: str,
+        guest_dst: str,
+        tag: str,
+        force: bool = False,
+    ) -> Path:
         del cfg_arg, cfg_path_arg, force
         recorded.append(
             {
@@ -715,10 +827,17 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     )
 
     assert session.cfg.vm.name == 'restore-shared-root-vm'
-    assert len(primary_ready_calls) == 1
-    assert len(shared_root_host_binds) == 1
-    assert len(shared_root_vm_mappings) == 1
-    assert len(shared_root_guest_binds) == 1
+    assert len(primary_ready_calls) == 2
+    primary_args, primary_kwargs = primary_ready_calls[0]
+    restored_args, restored_kwargs = primary_ready_calls[1]
+    assert primary_args[2].guest_dst == '/workspace/proj'
+    assert primary_kwargs['ensure_shared_root_host_side'] is True
+    assert restored_args[2].guest_dst == '/workspace/docs'
+    assert restored_kwargs['ensure_shared_root_host_side'] is True
+    assert restored_kwargs['allow_disruptive_shared_root_rebind'] is False
+    assert len(shared_root_host_binds) == 0
+    assert len(shared_root_vm_mappings) == 0
+    assert len(shared_root_guest_binds) == 0
     assert len(recorded) == 2
-    assert recorded[1]['mode'] == ATTACHMENT_MODE_SHARED_ROOT
+    assert recorded[1]['mode'] == AttachmentMode.SHARED_ROOT
     assert recorded[1]['guest_dst'] == '/workspace/docs'

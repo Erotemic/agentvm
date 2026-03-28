@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from aivm.config import AgentVMConfig, dump_toml, load, save
 
 
@@ -29,7 +31,9 @@ def test_dump_toml_verbosity_default_omitted() -> None:
     assert 'verbosity =' not in text
 
 
-def test_expanded_paths_expands_env(monkeypatch) -> None:
+def test_expanded_paths_expands_env(
+    monkeypatch: MonkeyPatch,
+) -> None:
     monkeypatch.setenv('AIVM_TEST_DIR', '/tmp/aivm-x')
     cfg = AgentVMConfig()
     cfg.paths.state_dir = '$AIVM_TEST_DIR/state'

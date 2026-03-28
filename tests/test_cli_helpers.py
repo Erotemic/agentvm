@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
-import builtins
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
+from pytest import MonkeyPatch
 
 import aivm.cli._common as common_mod
-from aivm.cli._common import _confirm_external_file_update, _confirm_sudo_block
+from aivm.cli._common import (
+    _maybe_offer_create_ssh_identity,
+)
 from aivm.cli.help import HelpCompletionCLI, HelpRawCLI, PlanCLI
+from aivm.vm.share import _auto_share_tag_for_path
 from aivm.cli.vm import (
-    _auto_share_tag_for_path,
     _parse_sync_paths_arg,
     _upsert_ssh_config_entry,
 )
+from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.store import Store, save_store, upsert_attachment, upsert_vm
 
@@ -34,42 +38,8 @@ def test_auto_share_tag_collision() -> None:
     assert len(tag2) <= 36
 
 
-def test_confirm_external_file_update_yes_noninteractive(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr('sys.stdin.isatty', lambda: False)
-    _confirm_external_file_update(
-        yes=True,
-        path=Path('/tmp/ssh-config'),
-        purpose='Update SSH entry',
-    )
-
-
-def test_confirm_external_file_update_requires_yes_noninteractive(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr('sys.stdin.isatty', lambda: False)
-    with pytest.raises(RuntimeError, match='Re-run with --yes'):
-        _confirm_external_file_update(
-            yes=False,
-            path=Path('/tmp/ssh-config'),
-            purpose='Update SSH entry',
-        )
-
-
-def test_confirm_external_file_update_abort(monkeypatch) -> None:
-    monkeypatch.setattr('sys.stdin.isatty', lambda: True)
-    monkeypatch.setattr(builtins, 'input', lambda _: 'n')
-    with pytest.raises(RuntimeError, match='Aborted by user'):
-        _confirm_external_file_update(
-            yes=False,
-            path=Path('/tmp/ssh-config'),
-            purpose='Update SSH entry',
-        )
-
-
 def test_upsert_ssh_config_no_confirm_when_unchanged(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv('HOME', str(tmp_path))
     cfg = AgentVMConfig()
@@ -84,7 +54,9 @@ def test_upsert_ssh_config_no_confirm_when_unchanged(
     assert changed2 is False
 
 
-def test_plan_omits_default_config_flag(monkeypatch, capsys) -> None:
+def test_plan_omits_default_config_flag(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     default = Path('/tmp/default-config.toml')
     monkeypatch.setattr(
         'aivm.cli.help._cfg_path',
@@ -97,7 +69,9 @@ def test_plan_omits_default_config_flag(monkeypatch, capsys) -> None:
     assert f'Config: {default}' in out
 
 
-def test_plan_includes_nondefault_config_flag(monkeypatch, capsys) -> None:
+def test_plan_includes_nondefault_config_flag(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     default = Path('/tmp/default-config.toml')
     custom = Path('/tmp/custom-config.toml')
     monkeypatch.setattr(
@@ -110,147 +84,9 @@ def test_plan_includes_nondefault_config_flag(monkeypatch, capsys) -> None:
     assert f'--config {custom}' in out
 
 
-def test_confirm_sudo_block_arms_intent(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    _confirm_sudo_block(
-        yes=True,
-        purpose='test',
-    )
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'test',
-            'action': 'modify',
-            'sticky': False,
-        }
-    ]
-
-
-def test_confirm_sudo_block_noop_when_root(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 0)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    _confirm_sudo_block(yes=False, purpose='test')
-    assert calls == []
-
-
-def test_confirm_sudo_block_uses_effective_yes_sudo_context(
-    monkeypatch,
+def test_cli_yes_sudo_defaults_from_config(
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    token = common_mod._CURRENT_YES_SUDO.set(True)
-    try:
-        _confirm_sudo_block(yes=False, purpose='test')
-    finally:
-        common_mod._CURRENT_YES_SUDO.reset(token)
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'test',
-            'action': 'modify',
-            'sticky': False,
-        }
-    ]
-
-
-def test_confirm_sudo_block_honors_sticky_all_choice(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: True)
-    _confirm_sudo_block(yes=False, purpose='test')
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'test',
-            'action': 'modify',
-            'sticky': True,
-        }
-    ]
-
-
-def test_confirm_sudo_block_read_preserves_sticky_all_choice(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: True)
-    _confirm_sudo_block(yes=False, purpose='read check', action='read')
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'read check',
-            'action': 'read',
-            'sticky': True,
-        }
-    ]
-
-
-def test_confirm_sudo_block_read_auto_approved_by_default(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: False)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    _confirm_sudo_block(yes=False, purpose='read check', action='read')
-    assert calls == [
-        {
-            'yes': True,
-            'purpose': 'read check',
-            'action': 'read',
-            'sticky': False,
-        }
-    ]
-
-
-def test_confirm_sudo_block_read_honors_strict_policy(monkeypatch) -> None:
-    monkeypatch.setattr('aivm.cli._common.os.geteuid', lambda: 1000)
-    monkeypatch.setattr('aivm.cli._common.sudo_intent_auto_yes', lambda: False)
-    calls = []
-    monkeypatch.setattr(
-        'aivm.cli._common.arm_sudo_intent',
-        lambda **kwargs: calls.append(kwargs),
-    )
-    tok_yes = common_mod._CURRENT_YES_SUDO.set(False)
-    tok = common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.set(False)
-    try:
-        _confirm_sudo_block(yes=False, purpose='read check', action='read')
-    finally:
-        common_mod._CURRENT_AUTO_APPROVE_READONLY_SUDO.reset(tok)
-        common_mod._CURRENT_YES_SUDO.reset(tok_yes)
-    assert calls == [
-        {
-            'yes': False,
-            'purpose': 'read check',
-            'action': 'read',
-            'sticky': False,
-        }
-    ]
-
-
-def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
     store.defaults = AgentVMConfig()
@@ -261,11 +97,11 @@ def test_cli_yes_sudo_defaults_from_config(monkeypatch, tmp_path: Path) -> None:
         argv=False,
         data={'config': str(cfg_path), 'yes': False, 'yes_sudo': False},
     )
-    assert bool(parsed.yes_sudo) is True
+    assert bool(parsed.yes_sudo) is True  # type: ignore
 
 
 def test_cli_auto_approve_readonly_sudo_defaults_from_config(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -296,7 +132,7 @@ def test_cli_verbose_defaults_from_behavior_config(tmp_path: Path) -> None:
 
 
 def test_help_raw_outputs_direct_system_commands(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch: MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     store = Store()
@@ -318,7 +154,9 @@ def test_help_raw_outputs_direct_system_commands(
     assert 'sudo nft list table inet fw-raw' in clean
 
 
-def test_help_completion_outputs_bash_setup(capsys) -> None:
+def test_help_completion_outputs_bash_setup(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     rc = HelpCompletionCLI.main(argv=False, shell='bash', yes=True)
     assert rc == 0
     out = capsys.readouterr().out
@@ -334,8 +172,23 @@ def test_help_completion_rejects_unknown_shell() -> None:
         HelpCompletionCLI.main(argv=False, shell='tcsh', yes=True)
 
 
+def test_hydrate_runtime_defaults_skips_detection_when_paths_already_set(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.paths.ssh_identity_file = '/tmp/id_existing'
+    cfg.paths.ssh_pubkey_path = '/tmp/id_existing.pub'
+    monkeypatch.setattr(
+        'aivm.cli._common.detect_ssh_identity',
+        lambda: (_ for _ in ()).throw(
+            AssertionError('detect_ssh_identity should not be called')
+        ),
+    )
+    assert common_mod._hydrate_runtime_defaults(cfg) is False
+
+
 def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     host_src = tmp_path / 'proj'
@@ -364,7 +217,7 @@ def test_resolve_vm_name_prefers_active_vm_for_multi_attached_folder(
 
 
 def test_resolve_vm_name_errors_noninteractive_for_multi_attached_folder(
-    monkeypatch, tmp_path: Path
+    monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg_path = tmp_path / 'config.toml'
     host_src = tmp_path / 'proj'
@@ -390,3 +243,58 @@ def test_resolve_vm_name_errors_noninteractive_for_multi_attached_folder(
             vm_opt='',
             host_src=host_src,
         )
+
+
+def test_maybe_offer_create_ssh_identity_generates_distinct_aivm_key(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    fake_home = tmp_path / 'home'
+    ssh_dir = fake_home / '.ssh'
+    calls: list[list[str]] = []
+
+    CommandManager.activate(CommandManager(yes=True))
+    monkeypatch.setattr(
+        common_mod.Path, 'home', staticmethod(lambda: fake_home)
+    )
+    monkeypatch.setattr(
+        'aivm.cli._common.which', lambda cmd: '/usr/bin/ssh-keygen'
+    )
+
+    class Proc:
+        def __init__(self) -> None:
+            self.returncode = 0
+            self.stdout = ''
+            self.stderr = ''
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> Proc:
+        del kwargs
+        normalized = [str(c) for c in cmd]
+        calls.append(normalized)
+        if normalized[:2] == ['mkdir', '-p']:
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            return Proc()
+        if normalized[:2] == ['chmod', '700']:
+            return Proc()
+        if normalized[:4] == ['ssh-keygen', '-q', '-t', 'ed25519']:
+            key_path = Path(normalized[5])
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            key_path.write_text('PRIVATE', encoding='utf-8')
+            Path(str(key_path) + '.pub').write_text('PUBLIC', encoding='utf-8')
+            return Proc()
+        raise AssertionError(f'unexpected command: {cmd}')
+
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    changed = _maybe_offer_create_ssh_identity(
+        cfg,
+        yes=True,
+        prompt_reason='test prompt',
+    )
+
+    assert changed is True
+    assert cfg.paths.ssh_identity_file == str(ssh_dir / 'id_aivm_ed25519')
+    assert cfg.paths.ssh_pubkey_path == str(ssh_dir / 'id_aivm_ed25519.pub')
+    assert any(
+        cmd[:4] == ['ssh-keygen', '-q', '-t', 'ed25519'] for cmd in calls
+    )

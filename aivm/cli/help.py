@@ -10,6 +10,7 @@ import shlex
 import shutil
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import scriptconfig as scfg
 import ubelt as ub
@@ -22,7 +23,7 @@ class PlanCLI(_BaseCommand):
     """Show the recommended end-to-end setup command sequence."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         path = _cfg_path(args.config)
         default_path = _cfg_path(None)
@@ -70,7 +71,7 @@ class HelpTreeCLI(_BaseCommand):
     """Print the expanded aivm command tree."""
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         cls.cli(argv=argv, data=kwargs)
         from .main import AgentVMModalCLI
 
@@ -81,17 +82,17 @@ class HelpTreeCLI(_BaseCommand):
 class HelpRawCLI(_BaseCommand):
     """Print direct system-tool commands equivalent to common aivm checks."""
 
-    vm = scfg.Value(
+    vm: Any = scfg.Value(
         '',
         help='Optional VM name override.',
     )
-    host_src = scfg.Value(
+    host_src: Any = scfg.Value(
         '.',
         help='Host folder for attachment/share inspection context.',
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         vm_name, net_name, fw_table = _resolve_raw_targets(
             config_opt=args.config,
@@ -156,10 +157,13 @@ class HelpCompletionCLI(_BaseCommand):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
         args = cls.cli(argv=argv, data=kwargs)
         shell = _resolve_completion_shell(str(args.shell or ''))
-        reg = shutil.which('register-python-argcomplete') or 'register-python-argcomplete'
+        reg = (
+            shutil.which('register-python-argcomplete')
+            or 'register-python-argcomplete'
+        )
         activate_global = (
             shutil.which('activate-global-python-argcomplete')
             or 'activate-global-python-argcomplete'
@@ -290,7 +294,7 @@ def _render_completion_help(
 ) -> str:
     if shell == 'bash':
         hook_now = f'eval "$({register_cmd} aivm)"'
-        persist = f'echo \'{hook_now}\' >> ~/.bashrc'
+        persist = f"echo '{hook_now}' >> ~/.bashrc"
         reload_cmd = 'source ~/.bashrc'
     elif shell == 'zsh':
         hook_now = textwrap.dedent(
@@ -311,7 +315,9 @@ def _render_completion_help(
             f'{register_cmd} --shell fish aivm > '
             '~/.config/fish/completions/aivm.fish'
         )
-        persist = '(fish uses the completions file above; no extra rc hook needed)'
+        persist = (
+            '(fish uses the completions file above; no extra rc hook needed)'
+        )
         reload_cmd = 'exec fish'
 
     return textwrap.dedent(
