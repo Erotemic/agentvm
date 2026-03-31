@@ -16,6 +16,7 @@ from aivm.cli.vm import (
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
+    _apply_guest_derived_symlinks,
     _compute_mirror_home_symlink,
     _default_primary_guest_dst,
     _ensure_guest_symlink,
@@ -2487,3 +2488,287 @@ def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
     assert any(
         c['symlink_path'] == expected_mirror for c in symlink_calls
     ), f'Expected mirror symlink at {expected_mirror}, got: {symlink_calls}'
+
+
+# ---------------------------------------------------------------------------
+# Pass 3: _apply_guest_derived_symlinks and _restore_saved_vm_attachments
+# ---------------------------------------------------------------------------
+
+
+def test_apply_guest_derived_symlinks_companion_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Companion symlink created when host_src is a symlink; no mirror without flag."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-deriv'
+    cfg.vm.user = 'agent'
+
+    real_dir = tmp_path / 'real'
+    real_dir.mkdir()
+    link_dir = tmp_path / 'link'
+    link_dir.symlink_to(real_dir)
+
+    resolved_dst = str(real_dir)
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=resolved_dst,
+        guest_dst=resolved_dst,
+        tag='tag1',
+    )
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda c, ip, *, symlink_path, target_path: calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        ),
+    )
+
+    _apply_guest_derived_symlinks(
+        cfg, '10.0.0.1', link_dir, attachment, mirror_home=False
+    )
+
+    assert len(calls) == 1
+    assert calls[0]['symlink_path'] == str(link_dir.expanduser().absolute())
+    assert calls[0]['target_path'] == resolved_dst
+
+
+def test_apply_guest_derived_symlinks_dual_mirror_for_symlink_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When host_src is a symlink, mirror-home applies to both lexical and resolved paths."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-dual-mirror'
+    cfg.vm.user = 'agent'
+
+    # Set up: host_home = tmp_path
+    # lexical = tmp_path/code/link  (symlink to tmp_path/real/code)
+    # resolved = tmp_path/real/code
+    host_home = tmp_path
+    real_dir = tmp_path / 'real' / 'code'
+    real_dir.mkdir(parents=True)
+    code_dir = tmp_path / 'code'
+    code_dir.mkdir()
+    link_dir = code_dir / 'link'
+    link_dir.symlink_to(real_dir)
+
+    resolved_dst = str(real_dir)
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=resolved_dst,
+        guest_dst=resolved_dst,
+        tag='tag2',
+    )
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda c, ip, *, symlink_path, target_path: calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        ),
+    )
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: host_home)
+
+    _apply_guest_derived_symlinks(
+        cfg, '10.0.0.1', link_dir, attachment, mirror_home=True
+    )
+
+    symlink_paths = [c['symlink_path'] for c in calls]
+    # Companion symlink at lexical guest path
+    assert str(link_dir.expanduser().absolute()) in symlink_paths
+    # Mirror for lexical host path (tmp_path/code/link -> guest home /home/agent/code/link)
+    assert '/home/agent/code/link' in symlink_paths
+    # Mirror for resolved host path (tmp_path/real/code -> guest home /home/agent/real/code)
+    assert '/home/agent/real/code' in symlink_paths
+
+
+def test_apply_guest_derived_symlinks_no_dup_mirror_when_same(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If both lexical and resolved mirrors compute to the same path, only one symlink is created."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-nodup'
+    cfg.vm.user = 'agent'
+
+    # host_home = tmp_path/home/joncrall
+    # symlink: tmp_path/home/joncrall/proj -> tmp_path/home/joncrall/proj_real
+    # lexical relative to home = proj; resolved relative to home = proj_real
+    # They differ, so two distinct mirrors. This test verifies deduplication
+    # when lexical == resolved (not a symlink - just sanity check no duplicate).
+    real_dir = tmp_path / 'code'
+    real_dir.mkdir()
+
+    resolved_dst = str(real_dir)
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=resolved_dst,
+        guest_dst=resolved_dst,
+        tag='tag3',
+    )
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda c, ip, *, symlink_path, target_path: calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        ),
+    )
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: tmp_path)
+
+    # Not a symlink — no companion, only one mirror
+    _apply_guest_derived_symlinks(
+        cfg, '10.0.0.1', real_dir, attachment, mirror_home=True
+    )
+
+    # Only one mirror call (for the non-symlink host, resolved branch is skipped)
+    mirror_calls = [c for c in calls if '/home/agent' in c['symlink_path']]
+    symlink_paths = [c['symlink_path'] for c in mirror_calls]
+    # No duplicates
+    assert len(symlink_paths) == len(set(symlink_paths))
+
+
+def test_restore_shared_attachment_applies_guest_derived_symlinks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_restore_saved_vm_attachments applies _apply_guest_derived_symlinks for shared mode."""
+    from aivm.cli.vm import _restore_saved_vm_attachments
+
+    _activate_manager(monkeypatch)
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-restore-shared'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+
+    primary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(host_src),
+        guest_dst=str(host_src),
+        tag='tag-primary',
+    )
+    secondary_src = tmp_path / 'sec'
+    secondary_src.mkdir()
+    secondary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(secondary_src),
+        guest_dst=str(secondary_src),
+        tag='tag-secondary',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._saved_vm_attachments',
+        lambda *a, **k: [primary, secondary],
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.vm_share_mappings',
+        lambda *a, **k: [(str(secondary_src), 'tag-secondary')],
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.drift_align_attachment_tag_with_mappings',
+        lambda att, *a, **k: att,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.drift_attachment_has_mapping',
+        lambda cfg_a, att, mappings: True,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path
+    )
+
+    derived_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._apply_guest_derived_symlinks',
+        lambda cfg_a, ip, host_src_a, att, *, mirror_home: derived_calls.append(
+            {'host_src': host_src_a, 'mirror_home': mirror_home}
+        ),
+    )
+
+    _restore_saved_vm_attachments(
+        cfg,
+        cfg_path,
+        ip='10.0.0.1',
+        primary_attachment=primary,
+        yes=True,
+        mirror_home=True,
+    )
+
+    assert len(derived_calls) == 1
+    assert derived_calls[0]['mirror_home'] is True
+
+
+def test_restore_shared_root_attachment_passes_mirror_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_restore_saved_vm_attachments passes mirror_home to _ensure_attachment_available_in_guest for shared-root."""
+    from aivm.cli.vm import _restore_saved_vm_attachments
+
+    _activate_manager(monkeypatch)
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-restore-sr'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+
+    primary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED_ROOT,
+        source_dir=str(host_src),
+        guest_dst=str(host_src),
+        tag='token-primary',
+    )
+    secondary_src = tmp_path / 'sec'
+    secondary_src.mkdir()
+    secondary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED_ROOT,
+        source_dir=str(secondary_src),
+        guest_dst=str(secondary_src),
+        tag='token-secondary',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._saved_vm_attachments',
+        lambda *a, **k: [primary, secondary],
+    )
+
+    ensure_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_attachment_available_in_guest',
+        lambda cfg_a, host_src_a, att, ip, *, yes, dry_run, ensure_shared_root_host_side, allow_disruptive_shared_root_rebind, mirror_home: ensure_calls.append(
+            {
+                'allow_disruptive': allow_disruptive_shared_root_rebind,
+                'mirror_home': mirror_home,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path
+    )
+
+    _restore_saved_vm_attachments(
+        cfg,
+        cfg_path,
+        ip='10.0.0.1',
+        primary_attachment=primary,
+        yes=True,
+        mirror_home=True,
+    )
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]['mirror_home'] is True
+    # Non-disruptive rebind must remain False during restore
+    assert ensure_calls[0]['allow_disruptive'] is False

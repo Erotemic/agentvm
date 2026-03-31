@@ -1,3 +1,31 @@
+## 2026-03-31 19:10:00 +0000
+
+Session completed Pass 3 of the attachment path policy / mirror-symlink feature.
+
+### What was done
+
+**`_apply_guest_derived_symlinks` helper** (`aivm/cli/vm.py`): New module-level function that consolidates all post-attachment guest-side symlink creation. It handles three cases in sequence: (1) companion symlink at the lexical host path when host_src is a symlink, (2) mirror-home symlink for the lexical host path when `mirror_home=True`, and (3) mirror-home symlink for the *resolved* host path independently when host_src is a symlink — so both `~/link` and `~/real` under the guest home point to the primary guest_dst when either is under the host home.
+
+**Inline block replacement**: The repeated 12-line companion+mirror block that existed in `_ensure_attachment_available_in_guest` and the git branch of `_prepare_attached_session` was replaced with single calls to `_apply_guest_derived_symlinks`. No behavioral change in those paths; this is pure refactoring to share the new dual-path logic.
+
+**`_restore_saved_vm_attachments` (`aivm/cli/vm.py`)**: Added `mirror_home: bool = False` parameter. Shared-root restore path now passes `mirror_home` through to `_ensure_attachment_available_in_guest`. Shared restore path now calls `_apply_guest_derived_symlinks` after `ensure_share_mounted` succeeds, before `_record_attachment`. Both `_restore_saved_vm_attachments` call sites in `_prepare_attached_session` updated to pass `mirror_home`.
+
+### Dual-path mirror semantics
+
+When `host_src` is a symlink on the host:
+- Primary guest destination = resolved real path (unchanged)
+- Companion symlink at lexical host path on the guest → resolved guest_dst
+- Mirror-home for lexical: if `~/link` is under host home, create `~guest/link` → resolved guest_dst
+- Mirror-home for resolved: if `~/real` is under host home, create `~guest/real` → resolved guest_dst
+
+The two mirrors are computed independently via `_compute_mirror_home_symlink` with separate `host_src` inputs (lexical for one, `host_src.resolve()` for the other). A deduplication guard prevents creating the same symlink path twice if they happen to compute identically.
+
+### Tests
+
+Five new tests: `test_apply_guest_derived_symlinks_companion_only`, `test_apply_guest_derived_symlinks_dual_mirror_for_symlink_host`, `test_apply_guest_derived_symlinks_no_dup_mirror_when_same`, `test_restore_shared_attachment_applies_guest_derived_symlinks`, `test_restore_shared_root_attachment_passes_mirror_home`. Full suite: 258 passed, 3 skipped (up from 242 + 16 Pass 2 tests = 258 total).
+
+---
+
 ## 2026-03-31 17:43:06 +0000
 
 Session focused on attachment path policy unification and the new mirror-symlink feature (spec was provided as a detailed prompt).

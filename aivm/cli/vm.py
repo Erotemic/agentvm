@@ -1848,6 +1848,69 @@ def _ensure_guest_symlink(
         log.warning('{}', stderr.replace('aivm-symlink-warn: ', ''))
 
 
+def _apply_guest_derived_symlinks(
+    cfg: AgentVMConfig,
+    ip: str,
+    host_src: Path,
+    attachment: ResolvedAttachment,
+    *,
+    mirror_home: bool,
+) -> None:
+    """Create companion and mirror-home symlinks in the guest after attachment.
+
+    Three cases are handled:
+    1. Companion symlink: if host_src is a symlink on the host, create a guest
+       symlink at the lexical path pointing to the resolved guest_dst.
+    2. Mirror-home (lexical): if mirror_home is enabled and the lexical host
+       path is under the host home, create a symlink under the guest home at
+       the same relative position.
+    3. Mirror-home (resolved): when host_src is a symlink, also apply the
+       mirror-home rule independently to the resolved host path, so both the
+       lexical and resolved relative paths under the guest home point to guest_dst.
+    """
+    guest_dst = attachment.guest_dst
+    lexical = _host_symlink_lexical_path(host_src)
+
+    # 1. Companion symlink at the lexical guest path -> resolved guest_dst.
+    if lexical is not None and lexical != guest_dst:
+        _ensure_guest_symlink(
+            cfg,
+            ip,
+            symlink_path=lexical,
+            target_path=guest_dst,
+        )
+
+    if not mirror_home:
+        return
+
+    # 2. Mirror-home for the lexical host path.
+    is_default_dst = guest_dst == _default_primary_guest_dst(host_src)
+    mirror_path = _compute_mirror_home_symlink(
+        cfg, host_src, guest_dst, is_default_dst=is_default_dst
+    )
+    if mirror_path is not None:
+        _ensure_guest_symlink(
+            cfg,
+            ip,
+            symlink_path=mirror_path,
+            target_path=guest_dst,
+        )
+
+    # 3. Mirror-home for the resolved host path (only when host_src is a symlink).
+    if lexical is not None:
+        resolved_src = host_src.resolve()
+        resolved_mirror = _compute_mirror_home_symlink(
+            cfg, resolved_src, guest_dst, is_default_dst=True
+        )
+        if resolved_mirror is not None and resolved_mirror != mirror_path:
+            _ensure_guest_symlink(
+                cfg,
+                ip,
+                symlink_path=resolved_mirror,
+                target_path=guest_dst,
+            )
+
+
 def _shared_root_host_dir(cfg: AgentVMConfig) -> Path:
     return Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root'
 
@@ -2501,36 +2564,14 @@ def _ensure_attachment_available_in_guest(
     if dry_run:
         return
 
-    # After primary attachment is ready, create companion symlinks.
-    # 1. If the host source was addressed via a symlink, create a guest symlink
-    #    at the lexical host path pointing to the real (resolved) guest_dst.
-    lexical = _host_symlink_lexical_path(host_src)
-    if lexical is not None and lexical != attachment.guest_dst:
-        _ensure_guest_symlink(
-            cfg,
-            ip,
-            symlink_path=lexical,
-            target_path=attachment.guest_dst,
-        )
-
-    # 2. Optionally create a mirror-home symlink when behavior flag is enabled.
-    if mirror_home:
-        is_default_dst = attachment.guest_dst == _default_primary_guest_dst(
-            host_src
-        )
-        mirror_path = _compute_mirror_home_symlink(
-            cfg,
-            host_src,
-            attachment.guest_dst,
-            is_default_dst=is_default_dst,
-        )
-        if mirror_path is not None:
-            _ensure_guest_symlink(
-                cfg,
-                ip,
-                symlink_path=mirror_path,
-                target_path=attachment.guest_dst,
-            )
+    # After primary attachment is ready, create companion and mirror-home symlinks.
+    _apply_guest_derived_symlinks(
+        cfg,
+        ip,
+        host_src,
+        attachment,
+        mirror_home=mirror_home,
+    )
 
 
 def _upsert_ssh_config_entry(
@@ -2816,6 +2857,7 @@ def _restore_saved_vm_attachments(
     ip: str,
     primary_attachment: ResolvedAttachment | None,
     yes: bool,
+    mirror_home: bool = False,
 ) -> None:
     """Best-effort restore saved non-primary attachments for a running VM session.
 
@@ -2877,6 +2919,7 @@ def _restore_saved_vm_attachments(
                     dry_run=False,
                     ensure_shared_root_host_side=True,
                     allow_disruptive_shared_root_rebind=False,
+                    mirror_home=mirror_home,
                 )
                 _record_attachment(
                     cfg,
@@ -2956,6 +2999,13 @@ def _restore_saved_vm_attachments(
                 tag=aligned.tag,
                 read_only=(aligned.access == ATTACHMENT_ACCESS_RO),
                 dry_run=False,
+            )
+            _apply_guest_derived_symlinks(
+                cfg,
+                ip,
+                Path(aligned.source_dir),
+                aligned,
+                mirror_home=mirror_home,
             )
             _record_attachment(
                 cfg,
@@ -3445,6 +3495,7 @@ def _prepare_attached_session(
             ip=ip,
             primary_attachment=attachment,
             yes=bool(yes),
+            mirror_home=mirror_home,
         )
     else:
         _ensure_git_clone_attachment(
@@ -3457,37 +3508,20 @@ def _prepare_attached_session(
         )
         # Apply companion-symlink and mirror-home behavior for git mode too.
         # The git clone creates the primary destination; symlinks come after.
-        lexical = _host_symlink_lexical_path(host_src)
-        if lexical is not None and lexical != attachment.guest_dst:
-            _ensure_guest_symlink(
-                cfg,
-                ip,
-                symlink_path=lexical,
-                target_path=attachment.guest_dst,
-            )
-        if mirror_home:
-            is_default_dst = attachment.guest_dst == _default_primary_guest_dst(
-                host_src
-            )
-            mirror_path = _compute_mirror_home_symlink(
-                cfg,
-                host_src,
-                attachment.guest_dst,
-                is_default_dst=is_default_dst,
-            )
-            if mirror_path is not None:
-                _ensure_guest_symlink(
-                    cfg,
-                    ip,
-                    symlink_path=mirror_path,
-                    target_path=attachment.guest_dst,
-                )
+        _apply_guest_derived_symlinks(
+            cfg,
+            ip,
+            host_src,
+            attachment,
+            mirror_home=mirror_home,
+        )
         _restore_saved_vm_attachments(
             cfg,
             cfg_path,
             ip=ip,
             primary_attachment=None,
             yes=bool(yes),
+            mirror_home=mirror_home,
         )
     return PreparedSession(
         cfg=cfg,
