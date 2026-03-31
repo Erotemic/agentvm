@@ -124,6 +124,7 @@ class BehaviorConfig:
     yes_sudo: bool = False
     auto_approve_readonly_sudo: bool = True
     verbose: int = 1
+    mirror_shared_home_folders: bool = False
 
 
 @dataclass

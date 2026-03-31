@@ -1,3 +1,39 @@
+## 2026-03-31 17:43:06 +0000
+
+Session focused on attachment path policy unification and the new mirror-symlink feature (spec was provided as a detailed prompt).
+
+### What was done
+
+Four files changed: `aivm/config.py`, `aivm/store.py`, `aivm/vm/share.py`, `aivm/cli/vm.py`, plus test updates in `tests/test_cli_vm_attach.py`.
+
+**Tag generation** (`aivm/vm/share.py`): `_auto_share_tag_for_path` now always includes a stable 8-hex-char hash of the resolved path in every generated tag (`hostcode-<name>-<hash>`). Previously the hash was only added on collision. This is a quiet but important correctness fix — two directories with the same basename used to silently get the same tag until one was detected as a conflict at attach time.
+
+**Unified default guest destination** (`aivm/cli/vm.py`): Removed the git-mode special case that defaulted the guest destination to `/home/<user>/...` relative. All modes now default to the lexical absolute host path (`expanduser().absolute()`). The old auto-migration logic (which tried to retroactively rewrite saved `guest_dst` values that matched the host path to the guest-home-relative form) was also removed. Existing saved records are preserved as-is. This is a breaking behavioral change for any new git attachments, but the right call: users who attach `/home/joncrall/code/repo` should find it at `/home/joncrall/code/repo` in the guest, not at a rewritten path under `/home/agent/`.
+
+**Host symlink handling**: Added `_default_primary_guest_dst` and `_host_symlink_lexical_path` helpers. If the host source is itself a symlink, the primary guest destination becomes the resolved real path, and a companion symlink is created on the guest at the lexical path. The safety rules for companion symlinks (`_ensure_guest_symlink`) cover: no-op if already correct, replace empty dir, warn-and-skip for non-empty dir / regular file / wrong-target symlink.
+
+**Mirror-home** (`behavior.mirror_shared_home_folders`): New `BehaviorConfig` flag (default false). When enabled and the host path is under the host home and the guest home differs, `_ensure_attachment_available_in_guest` creates a symlink under the guest home mirroring the relative path. The flag is threaded from the store into `VMAttachCLI.main` and `_prepare_attached_session`.
+
+**Git exact-path support** (`_ensure_guest_git_repo`): Updated the shell script to use `sudo -n mkdir -p <parent>` with a fallback `sudo -n chown` on the leaf when `mkdir -p <root>` fails unprivileged. This allows git-mode to work when the destination is outside the guest home (e.g. `/home/joncrall/code/repo` on the guest).
+
+### Tradeoffs and risks
+
+The biggest behavioral change is the git-mode default destination. Any new git attachment that previously would have gone to `/home/agent/code/repo` will now go to `/home/joncrall/code/repo` (matching the host). This is intentional but could surprise users who relied on the old behavior for a path that required a writable guest home. The spec explicitly called for this change and the old auto-migration was already fragile.
+
+The `VMAttachCLI.main` change from `Path(...).resolve()` to `Path(...).expanduser().absolute()` for `host_src` is necessary for symlink detection to work, but means any downstream code that assumed `host_src` was always fully resolved may see a non-resolved path. Audited all uses in that function — they all pass through `_resolve_attachment` which calls `host_src.resolve()` internally for `source_dir`, so this is safe.
+
+The `_ensure_guest_symlink` helper uses `sudo -n mkdir -p` for the symlink parent on the guest. This is fine for typical aivm setups where the guest user has passwordless sudo, but could silently fail or warn if sudo isn't configured. The function logs a warning on unexpected exit codes but doesn't raise.
+
+### Confidence
+
+High confidence on the core path-unification and tag changes — they're simple and well-tested. Medium confidence on the symlink companion and mirror-home paths since they involve SSH guest-side shell scripts that are harder to integration-test without a live VM. The unit tests cover the logic paths but not actual SSH execution.
+
+### Tests
+
+Two tests were updated to reflect the new behavior (git default path, no migration). 21 new tests were added covering: default guest dst helpers, tag hash properties, guest symlink safety rules, mirror-home path computation, and the mirror integration through `_ensure_attachment_available_in_guest`. Full suite: 242 passed, 3 skipped.
+
+---
+
 ## 2026-03-28 00:15:00 +0000
 
 Session focused on three areas: changelog maintenance, removing dead backward-compatibility code, and improving log attribution in `CommandManager`.

@@ -14,10 +14,14 @@ from aivm.cli.vm import (
     AttachmentMode,
     ResolvedAttachment,
     VMAttachCLI,
+    _compute_mirror_home_symlink,
+    _default_primary_guest_dst,
+    _ensure_guest_symlink,
     _ensure_shared_root_guest_bind,
     _ensure_shared_root_host_bind,
     _git_attachment_remote_name,
     _git_current_branch,
+    _host_symlink_lexical_path,
     _record_attachment,
     _resolve_attachment,
     _upsert_host_git_remote,
@@ -1163,9 +1167,10 @@ def test_shared_root_guest_bind_preview_uses_semantic_summaries(
     assert all('set -euo pipefail; if [ ! -d' not in msg for msg in messages)
 
 
-def test_resolve_attachment_git_defaults_to_guest_home_path(
+def test_resolve_attachment_git_defaults_to_exact_host_path(
     tmp_path: Path,
 ) -> None:
+    """New behaviour: git mode defaults to the exact lexical host path, not guest-home-relative."""
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
     cfg.vm.user = 'agent'
@@ -1177,28 +1182,29 @@ def test_resolve_attachment_git_defaults_to_guest_home_path(
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', 'git')
 
     assert resolved.mode == AttachmentMode.GIT
-    assert resolved.guest_dst.startswith('/home/agent/')
-    assert resolved.guest_dst.endswith('/repo')
+    # Default is now the exact (lexical absolute) host path, not guest-home-relative
+    assert resolved.guest_dst == str(host_src.expanduser().absolute())
 
 
-def test_resolve_attachment_git_migrates_legacy_host_mirror_guest_dst(
+def test_resolve_attachment_git_preserves_saved_guest_dst(
     tmp_path: Path,
 ) -> None:
+    """Existing saved guest_dst is preserved unchanged — no auto-migration occurs."""
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git'
     cfg.vm.user = 'agent'
     cfg_path = tmp_path / 'config.toml'
     host_src = tmp_path / 'repo'
     host_src.mkdir()
-    source_abs = str(host_src.resolve())
+    saved_guest_dst = '/home/agent/code/repo'
 
     store = Store()
     store.attachments.append(
         AttachmentEntry(
-            host_path=source_abs,
+            host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
             mode=AttachmentMode.GIT,
-            guest_dst=source_abs,
+            guest_dst=saved_guest_dst,
             tag='',
         )
     )
@@ -1207,8 +1213,8 @@ def test_resolve_attachment_git_migrates_legacy_host_mirror_guest_dst(
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
     assert resolved.mode == AttachmentMode.GIT
-    assert resolved.guest_dst != source_abs
-    assert resolved.guest_dst.startswith('/home/agent/')
+    # Saved guest_dst is preserved; no migration to exact host path
+    assert resolved.guest_dst == saved_guest_dst
 
 
 def test_vm_attach_git_mode_syncs_guest_repo_when_running(
@@ -1530,3 +1536,554 @@ def test_record_attachment_passes_reason_to_save_store(
             )
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# New tests for unified default guest destination, symlink helpers,
+# mirror-home behavior, and tag generation.
+# ---------------------------------------------------------------------------
+
+
+# --- Default guest destination ---
+
+
+def test_default_primary_guest_dst_non_symlink(tmp_path: Path) -> None:
+    """Non-symlink path returns its lexical absolute form."""
+    d = tmp_path / 'mydir'
+    d.mkdir()
+    result = _default_primary_guest_dst(d)
+    assert result == str(d.expanduser().absolute())
+
+
+def test_default_primary_guest_dst_symlink(tmp_path: Path) -> None:
+    """Symlinked source returns the resolved real path."""
+    real = tmp_path / 'real'
+    real.mkdir()
+    link = tmp_path / 'link'
+    link.symlink_to(real)
+    result = _default_primary_guest_dst(link)
+    assert result == str(real.resolve())
+    assert result != str(link)
+
+
+def test_host_symlink_lexical_path_non_symlink(tmp_path: Path) -> None:
+    d = tmp_path / 'dir'
+    d.mkdir()
+    assert _host_symlink_lexical_path(d) is None
+
+
+def test_host_symlink_lexical_path_symlink(tmp_path: Path) -> None:
+    real = tmp_path / 'real'
+    real.mkdir()
+    link = tmp_path / 'link'
+    link.symlink_to(real)
+    result = _host_symlink_lexical_path(link)
+    assert result == str(link.expanduser().absolute())
+
+
+def test_resolve_attachment_shared_defaults_to_exact_host_path(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-shared-exact'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    save_store(Store(), cfg_path)
+
+    resolved = _resolve_attachment(
+        cfg, cfg_path, host_src, '', AttachmentMode.SHARED
+    )
+
+    assert resolved.mode == AttachmentMode.SHARED
+    assert resolved.guest_dst == str(host_src.expanduser().absolute())
+
+
+def test_resolve_attachment_shared_root_defaults_to_exact_host_path(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-sr-exact'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    save_store(Store(), cfg_path)
+
+    resolved = _resolve_attachment(
+        cfg, cfg_path, host_src, '', AttachmentMode.SHARED_ROOT
+    )
+
+    assert resolved.mode == AttachmentMode.SHARED_ROOT
+    assert resolved.guest_dst == str(host_src.expanduser().absolute())
+
+
+def test_resolve_attachment_explicit_guest_dst_is_preserved(
+    tmp_path: Path,
+) -> None:
+    """Explicit --guest_dst overrides the default for all modes."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-custom-dst'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    save_store(Store(), cfg_path)
+
+    for mode in (AttachmentMode.SHARED, AttachmentMode.SHARED_ROOT, AttachmentMode.GIT):
+        resolved = _resolve_attachment(
+            cfg, cfg_path, host_src, '/custom/path', mode
+        )
+        assert resolved.guest_dst == '/custom/path'
+
+
+# --- Tag generation ---
+
+def test_auto_tag_includes_hash_suffix(tmp_path: Path) -> None:
+    """Fresh generated tags always include a hash to avoid basename collisions."""
+    from aivm.vm.share import _auto_share_tag_for_path
+
+    d = tmp_path / 'myproject'
+    d.mkdir()
+    tag = _auto_share_tag_for_path(d, set())
+    assert tag.startswith('hostcode-myproject-')
+    # Must contain a non-trivial hash portion (8 hex chars)
+    parts = tag.split('-')
+    assert len(parts[-1]) == 8
+    assert all(c in '0123456789abcdef' for c in parts[-1])
+
+
+def test_auto_tag_different_paths_same_basename_get_different_tags(
+    tmp_path: Path,
+) -> None:
+    """Two directories with the same basename produce different tags."""
+    from aivm.vm.share import _auto_share_tag_for_path
+
+    d1 = tmp_path / 'a' / 'repo'
+    d2 = tmp_path / 'b' / 'repo'
+    d1.mkdir(parents=True)
+    d2.mkdir(parents=True)
+    tag1 = _auto_share_tag_for_path(d1, set())
+    tag2 = _auto_share_tag_for_path(d2, set())
+    assert tag1 != tag2
+
+
+def test_resolve_attachment_preserves_existing_saved_tag(
+    tmp_path: Path,
+) -> None:
+    """Existing saved tags are preserved; no forced re-generation."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-tag-preserve'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+
+    saved_tag = 'my-old-custom-tag'
+    store = Store()
+    store.attachments.append(
+        AttachmentEntry(
+            host_path=str(host_src.resolve()),
+            vm_name=cfg.vm.name,
+            mode=AttachmentMode.SHARED,
+            guest_dst='/workspace/proj',
+            tag=saved_tag,
+        )
+    )
+    save_store(store, cfg_path)
+
+    resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
+    assert resolved.tag == saved_tag
+
+
+# --- Host symlink companion symlink ---
+
+
+def test_ensure_guest_symlink_creates_new_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-symlink'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr(
+        'aivm.cli.vm.require_ssh_identity',
+        lambda p: p or '/tmp/id_ed25519',
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id_ed25519'],
+    )
+
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (cmds.append([str(c) for c in cmd]) or _Proc(0, '', '')),
+    )
+
+    _ensure_guest_symlink(
+        cfg,
+        '10.0.0.1',
+        symlink_path='/home/joncrall/code/repo',
+        target_path='/home/joncrall/code/repo',
+    )
+
+    assert len(cmds) == 1
+    assert cmds[0][0] == 'ssh'
+    script = cmds[0][-1]
+    assert "ln -s" in script
+    assert '/home/joncrall/code/repo' in script
+
+
+def test_ensure_guest_symlink_warns_on_wrong_existing_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-symlink-warn'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: p or '/tmp/id_ed25519')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519'])
+
+    messages: list[str] = []
+
+    class _FakeLog:
+        def warning(self, fmt: str, *args: Any) -> None:
+            messages.append(fmt.format(*args) if args else fmt)
+        def info(self, *a: Any, **k: Any) -> None: ...
+        def debug(self, *a: Any, **k: Any) -> None: ...
+        def trace(self, *a: Any, **k: Any) -> None: ...
+        def error(self, *a: Any, **k: Any) -> None: ...
+
+    monkeypatch.setattr('aivm.cli.vm.log', _FakeLog())
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        # exit code 3 = wrong symlink
+        lambda cmd, **kwargs: _Proc(3, '', 'aivm-symlink-warn: /link is a symlink to /other; skipping'),
+    )
+
+    _ensure_guest_symlink(
+        cfg, '10.0.0.1',
+        symlink_path='/link',
+        target_path='/target',
+    )
+
+    assert any('symlink to /other' in m for m in messages)
+
+
+# --- Mirror-home symlink computation ---
+
+
+def test_compute_mirror_home_returns_none_when_not_default_dst(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_compute_mirror_home_symlink returns None when is_default_dst=False (custom --guest_dst)."""
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    host_src = Path('/home/joncrall/code/foobar')
+    result = _compute_mirror_home_symlink(
+        cfg, host_src, '/custom/path', is_default_dst=False
+    )
+    assert result is None
+
+
+def test_compute_mirror_home_returns_none_when_explicit_dst(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    host_src = tmp_path / 'code' / 'foobar'
+    result = _compute_mirror_home_symlink(
+        cfg, host_src, '/custom/path', is_default_dst=False
+    )
+    assert result is None
+
+
+def test_compute_mirror_home_returns_none_when_path_not_under_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    host_src = Path('/data/external/project')
+    result = _compute_mirror_home_symlink(
+        cfg, host_src, str(host_src), is_default_dst=True
+    )
+    assert result is None
+
+
+def test_compute_mirror_home_returns_none_when_guest_home_equals_host_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'joncrall'  # same user
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    host_src = Path('/home/joncrall/code/foobar')
+    result = _compute_mirror_home_symlink(
+        cfg, host_src, str(host_src), is_default_dst=True
+    )
+    assert result is None  # guest home == host home
+
+
+def test_compute_mirror_home_returns_correct_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    host_src = Path('/home/joncrall/code/foobar')
+    guest_dst = '/home/joncrall/code/foobar'
+    result = _compute_mirror_home_symlink(
+        cfg, host_src, guest_dst, is_default_dst=True
+    )
+    assert result == '/home/agent/code/foobar'
+
+
+def test_compute_mirror_home_returns_none_when_mirror_equals_primary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When primary dst already matches the mirror path, skip."""
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/agent'))
+    # host_src is under /home/agent (same as guest home)
+    host_src = Path('/home/agent/code/foobar')
+    guest_dst = '/home/agent/code/foobar'
+    result = _compute_mirror_home_symlink(
+        cfg, host_src, guest_dst, is_default_dst=True
+    )
+    # guest home == host home so returns None
+    assert result is None
+
+
+# --- ensure_guest_symlink safety rules ---
+
+
+def _make_ssh_fake(exit_code: int, stderr: str = '') -> Any:
+    """Return a subprocess.run replacement that always returns the given code."""
+    def fake(cmd: list[str], **kwargs: Any) -> _Proc:
+        return _Proc(exit_code, '', stderr)
+    return fake
+
+
+def test_ensure_guest_symlink_noop_on_correct_existing_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-ok'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = ''
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: '/id')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: [])
+    messages: list[str] = []
+    monkeypatch.setattr('aivm.cli.vm.log', type('L', (), {
+        'warning': lambda s, fmt, *a, **k: messages.append(fmt),
+        'info': lambda s, *a, **k: None,
+        'debug': lambda s, *a, **k: None,
+        'trace': lambda s, *a, **k: None,
+        'error': lambda s, *a, **k: None,
+    })())
+    # exit 0 = already correct
+    monkeypatch.setattr('aivm.commands.subprocess.run', _make_ssh_fake(0))
+    _ensure_guest_symlink(cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt')
+    assert not messages
+
+
+def test_ensure_guest_symlink_warns_on_nonempty_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-warn-dir'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = ''
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: '/id')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: [])
+    messages: list[str] = []
+
+    class _FakeLog:
+        def warning(self, fmt: str, *args: Any) -> None:
+            messages.append(fmt.format(*args) if args else fmt)
+        def info(self, *a: Any, **k: Any) -> None: ...
+        def debug(self, *a: Any, **k: Any) -> None: ...
+        def trace(self, *a: Any, **k: Any) -> None: ...
+        def error(self, *a: Any, **k: Any) -> None: ...
+
+    monkeypatch.setattr('aivm.cli.vm.log', _FakeLog())
+    # exit 4 = non-empty dir, with warning message
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        _make_ssh_fake(4, 'aivm-symlink-warn: /link is a non-empty directory; skipping'),
+    )
+    _ensure_guest_symlink(cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt')
+    assert any('non-empty directory' in m for m in messages)
+
+
+def test_ensure_guest_symlink_warns_on_regular_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-warn-file'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = ''
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: '/id')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: [])
+    messages: list[str] = []
+
+    class _FakeLog:
+        def warning(self, fmt: str, *args: Any) -> None:
+            messages.append(fmt.format(*args) if args else fmt)
+        def info(self, *a: Any, **k: Any) -> None: ...
+        def debug(self, *a: Any, **k: Any) -> None: ...
+        def trace(self, *a: Any, **k: Any) -> None: ...
+        def error(self, *a: Any, **k: Any) -> None: ...
+
+    monkeypatch.setattr('aivm.cli.vm.log', _FakeLog())
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        _make_ssh_fake(5, 'aivm-symlink-warn: /link is a regular file; skipping'),
+    )
+    _ensure_guest_symlink(cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt')
+    assert any('regular file' in m for m in messages)
+
+
+# --- Mirror-home integration via _ensure_attachment_available_in_guest ---
+
+def test_ensure_attachment_creates_mirror_home_symlink_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When mirror_home=True and conditions met, companion symlink is created."""
+    from aivm.cli.vm import _ensure_attachment_available_in_guest
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-mirror'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id'
+
+    host_src = tmp_path / 'code' / 'foobar'
+    host_src.mkdir(parents=True)
+    guest_dst = str(host_src.expanduser().absolute())
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=guest_dst,
+        guest_dst=guest_dst,
+        tag='hostcode-foobar-abc12345',
+    )
+
+    monkeypatch.setattr('aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None)
+
+    symlink_calls: list[dict] = []
+
+    def fake_ensure_guest_symlink(cfg_arg: Any, ip: str, *, symlink_path: str, target_path: str) -> None:
+        symlink_calls.append({'symlink_path': symlink_path, 'target_path': target_path})
+
+    monkeypatch.setattr('aivm.cli.vm._ensure_guest_symlink', fake_ensure_guest_symlink)
+
+    # Patch Path.home to something known so mirror can be computed
+    host_home = tmp_path
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: host_home)
+
+    _activate_manager(monkeypatch)
+
+    _ensure_attachment_available_in_guest(
+        cfg,
+        host_src,
+        attachment,
+        '10.0.0.1',
+        yes=True,
+        dry_run=False,
+        ensure_shared_root_host_side=False,
+        mirror_home=True,
+    )
+
+    # Mirror symlink should have been requested for /home/agent/code/foobar -> guest_dst
+    expected_mirror = '/home/agent/code/foobar'
+    assert any(c['symlink_path'] == expected_mirror for c in symlink_calls), symlink_calls
+
+
+def test_ensure_attachment_no_mirror_when_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When mirror_home=False, no companion symlink call happens."""
+    from aivm.cli.vm import _ensure_attachment_available_in_guest
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-no-mirror'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id'
+
+    host_src = tmp_path / 'code' / 'foobar'
+    host_src.mkdir(parents=True)
+    guest_dst = str(host_src.expanduser().absolute())
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=guest_dst,
+        guest_dst=guest_dst,
+        tag='hostcode-foobar-abc12345',
+    )
+
+    monkeypatch.setattr('aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None)
+
+    symlink_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda *a, **k: symlink_calls.append(k),
+    )
+
+    _activate_manager(monkeypatch)
+
+    _ensure_attachment_available_in_guest(
+        cfg,
+        host_src,
+        attachment,
+        '10.0.0.1',
+        yes=True,
+        dry_run=False,
+        ensure_shared_root_host_side=False,
+        mirror_home=False,
+    )
+
+    assert symlink_calls == []
+
+
+# --- Git exact-path support ---
+
+def test_ensure_guest_git_repo_uses_sudo_for_parent_creation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_ensure_guest_git_repo script includes sudo mkdir for parent dirs."""
+    from aivm.cli.vm import _ensure_guest_git_repo
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git-exact'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id'
+
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: p or '/tmp/id')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id'])
+
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (cmds.append([str(c) for c in cmd]) or _Proc(0, '', '')),
+    )
+
+    _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo', 'main')
+
+    assert len(cmds) == 1
+    script = cmds[0][-1]
+    assert 'sudo -n mkdir -p' in script
+    assert 'sudo -n chown' in script
+    assert '/home/joncrall/code/myrepo' in script

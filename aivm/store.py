@@ -201,6 +201,11 @@ def save_store(
         bool(reg.behavior.auto_approve_readonly_sudo),
     )
     _emit_toml_kv(lines, 'verbose', int(reg.behavior.verbose))
+    _emit_toml_kv(
+        lines,
+        'mirror_shared_home_folders',
+        bool(reg.behavior.mirror_shared_home_folders),
+    )
     lines.append('')
 
     if reg.defaults is not None:

@@ -851,7 +851,7 @@ class VMAttachCLI(_BaseCommand):
             bool(args.dry_run),
             bool(args.yes),
         )
-        host_src = Path(args.host_src).resolve()
+        host_src = Path(args.host_src).expanduser().absolute()
         if not host_src.exists() or not host_src.is_dir():
             raise RuntimeError(
                 f'host_src must be an existing directory: {host_src}'
@@ -871,6 +871,8 @@ class VMAttachCLI(_BaseCommand):
         attachment = _resolve_attachment(
             cfg, cfg_path, host_src, args.guest_dst, args.mode, args.access
         )
+        reg = load_store(cfg_path)
+        mirror_home = bool(reg.behavior.mirror_shared_home_folders)
 
         if args.dry_run:
             print(
@@ -982,6 +984,7 @@ class VMAttachCLI(_BaseCommand):
                 ensure_shared_root_host_side=(
                     attachment.mode == ATTACHMENT_MODE_SHARED_ROOT
                 ),
+                mirror_home=mirror_home,
             )
         print(
             f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode, access={attachment.access})'
@@ -1715,29 +1718,132 @@ def _maybe_restart_vm_after_update(
         print(f'Restarted VM {cfg.vm.name}.')
 
 
+def _default_primary_guest_dst(host_src: Path) -> str:
+    """Compute the default primary guest destination for an attachment.
+
+    Uses the lexical absolute path normally (expanduser + absolute).
+    If the host source is itself a symlink, uses the resolved real path as the
+    primary destination (so the mount target is the canonical location).
+    """
+    lexical = host_src.expanduser().absolute()
+    if lexical.is_symlink():
+        return str(host_src.resolve())
+    return str(lexical)
+
+
 def _resolve_guest_dst(host_src: Path, guest_dst_opt: str) -> str:
     guest_dst_opt = (guest_dst_opt or '').strip()
     if guest_dst_opt:
         return guest_dst_opt
-    return str(host_src)
+    return _default_primary_guest_dst(host_src)
 
 
-def _default_git_guest_dst(cfg: AgentVMConfig, host_src: Path) -> str:
-    """Choose a writable guest path for git-mode attachments.
+def _host_symlink_lexical_path(host_src: Path) -> str | None:
+    """If host_src (after expanduser/absolute) is a symlink, return its lexical path. Else None."""
+    lexical = host_src.expanduser().absolute()
+    if lexical.is_symlink():
+        return str(lexical)
+    return None
 
-    Shared mode can mirror host absolute paths because mount setup runs with
-    guest sudo. Git mode operates as the VM user, so default under /home/<user>.
+
+def _compute_mirror_home_symlink(
+    cfg: AgentVMConfig,
+    host_src: Path,
+    guest_dst: str,
+    *,
+    is_default_dst: bool,
+) -> str | None:
+    """Compute the mirror-home symlink path if behavior.mirror_shared_home_folders is enabled.
+
+    Returns the guest symlink path to create (pointing to guest_dst), or None if
+    the mirror should not be created.
+
+    Skip conditions:
+    - mirror_shared_home_folders setting is false
+    - attachment used an explicit custom guest_dst
+    - host path is not under the host user home
+    - guest home equals host home (no point mirroring)
+    - mirror path would be identical to primary guest_dst
     """
+    if not is_default_dst:
+        return None
+    host_home = Path.home()
     guest_home = PurePosixPath('/home') / cfg.vm.user
-    host_abs = host_src.resolve()
-    rel: Path
+    if str(guest_home) == str(host_home):
+        return None
+    lexical = host_src.expanduser().absolute()
     try:
-        rel = host_abs.relative_to(Path.home().resolve())
-    except Exception:
-        rel = Path('workspaces') / (host_abs.name or 'project')
-    if not rel.parts:
-        rel = Path('workspaces') / (host_abs.name or 'project')
-    return str(guest_home.joinpath(*rel.parts))
+        rel = lexical.relative_to(host_home)
+    except ValueError:
+        return None  # host path not under host home
+    mirror = str(guest_home / rel)
+    if mirror == guest_dst:
+        return None  # mirror path same as primary, no-op
+    return mirror
+
+
+def _ensure_guest_symlink(
+    cfg: AgentVMConfig,
+    ip: str,
+    *,
+    symlink_path: str,
+    target_path: str,
+) -> None:
+    """Safely ensure a symlink exists at symlink_path pointing to target_path on the guest.
+
+    Safety rules:
+    - path does not exist: create symlink
+    - already a correct symlink: no-op
+    - empty directory: remove and replace with symlink
+    - non-empty directory: warn and skip
+    - regular file: warn and skip
+    - symlink to wrong target: warn and skip
+    """
+    ident = require_ssh_identity(cfg.paths.ssh_identity_file)
+    link_q = shlex.quote(symlink_path)
+    tgt_q = shlex.quote(target_path)
+    parent_q = shlex.quote(str(PurePosixPath(symlink_path).parent))
+    script = (
+        'set -euo pipefail; '
+        f'if [ -L {link_q} ]; then '
+        f'  cur=$(readlink {link_q}); '
+        f'  if [ "$cur" = {tgt_q} ]; then exit 0; fi; '
+        f'  echo "aivm-symlink-warn: {symlink_path} is a symlink to $cur not {target_path}; skipping" >&2; '
+        'exit 3; '
+        f'elif [ -d {link_q} ]; then '
+        f'  if [ -n "$(find {link_q} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then '
+        f'    echo "aivm-symlink-warn: {symlink_path} is a non-empty directory; skipping" >&2; '
+        '    exit 4; '
+        '  fi; '
+        f'  rmdir {link_q}; '
+        f'  sudo -n mkdir -p {parent_q}; '
+        f'  ln -s {tgt_q} {link_q}; '
+        f'elif [ -e {link_q} ]; then '
+        f'  echo "aivm-symlink-warn: {symlink_path} is a regular file; skipping" >&2; '
+        'exit 5; '
+        'else '
+        f'  sudo -n mkdir -p {parent_q}; '
+        f'  ln -s {tgt_q} {link_q}; '
+        'fi'
+    )
+    cmd = [
+        'ssh',
+        *ssh_base_args(ident, strict_host_key_checking='accept-new'),
+        f'{cfg.vm.user}@{ip}',
+        script,
+    ]
+    res = CommandManager.current().run(cmd, sudo=False, check=False, capture=True)
+    if res.code not in (0, 3, 4, 5):
+        log.warning(
+            'Guest symlink setup failed for {} -> {}: {}',
+            symlink_path,
+            target_path,
+            (res.stderr or res.stdout or '').strip(),
+        )
+        return
+    stderr = (res.stderr or '').strip()
+    if stderr and 'aivm-symlink-warn' in stderr:
+        log.warning('{}', stderr.replace('aivm-symlink-warn: ', ''))
 
 
 def _shared_root_host_dir(cfg: AgentVMConfig) -> Path:
@@ -2324,6 +2430,7 @@ def _ensure_attachment_available_in_guest(
     dry_run: bool,
     ensure_shared_root_host_side: bool,
     allow_disruptive_shared_root_rebind: bool = True,
+    mirror_home: bool = False,
 ) -> None:
     """Make an attachment available at its guest destination for a running VM.
 
@@ -2339,6 +2446,9 @@ def _ensure_attachment_available_in_guest(
     flows, where disruptive host-side repair is acceptable, and automatic
     restore flows, where we prefer non-disruptive verification before touching
     an existing bind mount.
+
+    If ``mirror_home`` is True and behavior conditions are met, a companion
+    symlink under the guest home mirroring the host-home-relative path is created.
     """
     mgr = CommandManager.current()
     if attachment.mode == ATTACHMENT_MODE_SHARED:
@@ -2350,8 +2460,7 @@ def _ensure_attachment_available_in_guest(
             read_only=(attachment.access == ATTACHMENT_ACCESS_RO),
             dry_run=dry_run,
         )
-        return
-    if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+    elif attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
         with mgr.intent(
             'Attach and reconcile shared-root mapping',
             why='Ensure the requested host folder is exposed to the VM and bound to the requested guest destination.',
@@ -2377,15 +2486,49 @@ def _ensure_attachment_available_in_guest(
                 attachment,
                 dry_run=dry_run,
             )
+    else:
+        _ensure_git_clone_attachment(
+            cfg,
+            host_src,
+            attachment,
+            ip,
+            yes=bool(yes),
+            dry_run=dry_run,
+        )
+
+    if dry_run:
         return
-    _ensure_git_clone_attachment(
-        cfg,
-        host_src,
-        attachment,
-        ip,
-        yes=bool(yes),
-        dry_run=dry_run,
-    )
+
+    # After primary attachment is ready, create companion symlinks.
+    # 1. If the host source was addressed via a symlink, create a guest symlink
+    #    at the lexical host path pointing to the real (resolved) guest_dst.
+    lexical = _host_symlink_lexical_path(host_src)
+    if lexical is not None and lexical != attachment.guest_dst:
+        _ensure_guest_symlink(
+            cfg,
+            ip,
+            symlink_path=lexical,
+            target_path=attachment.guest_dst,
+        )
+
+    # 2. Optionally create a mirror-home symlink when behavior flag is enabled.
+    if mirror_home:
+        is_default_dst = attachment.guest_dst == _default_primary_guest_dst(
+            host_src
+        )
+        mirror_path = _compute_mirror_home_symlink(
+            cfg,
+            host_src,
+            attachment.guest_dst,
+            is_default_dst=is_default_dst,
+        )
+        if mirror_path is not None:
+            _ensure_guest_symlink(
+                cfg,
+                ip,
+                symlink_path=mirror_path,
+                target_path=attachment.guest_dst,
+            )
 
 
 def _upsert_ssh_config_entry(
@@ -2595,22 +2738,6 @@ def _resolve_attachment(
             f"'{ATTACHMENT_MODE_SHARED}' and '{ATTACHMENT_MODE_SHARED_ROOT}' modes. "
             f'Requested mode: {mode}'
         )
-    # Git mode should default to a guest-user writable path rather than host
-    # absolute path mirroring, which may point to an unwritable guest location.
-    if mode == ATTACHMENT_MODE_GIT and not guest_dst_opt:
-        source_abs = str(host_src.resolve())
-        if att is None or not att.guest_dst:
-            guest_dst = _default_git_guest_dst(cfg, host_src)
-        elif att.guest_dst.strip() == source_abs:
-            migrated = _default_git_guest_dst(cfg, host_src)
-            if migrated != att.guest_dst.strip():
-                log.info(
-                    'Auto-migrating git attachment guest destination from {} to {} for VM {}',
-                    att.guest_dst,
-                    migrated,
-                    cfg.vm.name,
-                )
-                guest_dst = migrated
     if mode == ATTACHMENT_MODE_GIT:
         tag = ''
     return ResolvedAttachment(
@@ -3295,6 +3422,7 @@ def _prepare_attached_session(
         wait_for_ssh(cfg, ip, timeout_s=300, dry_run=False)
     if not ip:
         raise RuntimeError('Could not resolve VM IP address.')
+    mirror_home = bool(load_store(cfg_path).behavior.mirror_shared_home_folders)
     if attachment.mode in {ATTACHMENT_MODE_SHARED, ATTACHMENT_MODE_SHARED_ROOT}:
         _ensure_attachment_available_in_guest(
             cfg,
@@ -3307,6 +3435,7 @@ def _prepare_attached_session(
                 attachment.mode == ATTACHMENT_MODE_SHARED_ROOT
                 and not reconcile.shared_root_host_side_ready
             ),
+            mirror_home=mirror_home,
         )
         _restore_saved_vm_attachments(
             cfg,
@@ -3542,17 +3671,25 @@ def _ensure_guest_git_repo(
     branch: str,
 ) -> None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
+    root_q = shlex.quote(guest_repo_root)
+    parent_q = shlex.quote(str(PurePosixPath(guest_repo_root).parent))
+    user_q = shlex.quote(cfg.vm.user)
+    # Use sudo to create parent dirs in case the path is outside the guest home
+    # (e.g. an exact-mirrored path like /home/joncrall/code/repo).  Only chown
+    # the repo root itself — never recursively chown large parent trees.
     script = (
-        f'mkdir -p {shlex.quote(guest_repo_root)} && '
+        f'if ! mkdir -p {root_q} 2>/dev/null; then '
+        f'sudo -n mkdir -p {parent_q} && mkdir -p {root_q} && '
+        f'sudo -n chown {user_q}:{user_q} {root_q}; fi && '
         f'if [ ! -d {shlex.quote(guest_repo_root + "/.git")} ]; then '
-        f'if [ -n "$(find {shlex.quote(guest_repo_root)} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then '
+        f'if [ -n "$(find {root_q} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then '
         f'echo "guest target directory is not empty and is not a git repo: {guest_repo_root}" >&2; '
         f'exit 2; '
         f'fi; '
-        f'git init {shlex.quote(guest_repo_root)} >/dev/null; '
+        f'git init {root_q} >/dev/null; '
         f'fi && '
-        f'git -C {shlex.quote(guest_repo_root)} config receive.denyCurrentBranch updateInstead && '
-        f'git -C {shlex.quote(guest_repo_root)} symbolic-ref HEAD refs/heads/{shlex.quote(branch)}'
+        f'git -C {root_q} config receive.denyCurrentBranch updateInstead && '
+        f'git -C {root_q} symbolic-ref HEAD refs/heads/{shlex.quote(branch)}'
     )
     res = CommandManager.current().run(
         [
