@@ -1,3 +1,36 @@
+## 2026-03-31 20:00:00 +0000
+
+Session implemented Pass 4 of the attachment path policy / mirror-symlink feature (two correctness fixes).
+
+### Issue 1: lexical companion symlinks survive reboot/restore
+
+**Root cause**: `AttachmentEntry.host_path` is stored as the resolved canonical path (via `_norm_dir` → `resolve()`). After a reboot, `_restore_saved_vm_attachments` only had the resolved path, so it could not recreate companion guest symlinks for attachments originally made through a host symlink.
+
+**Fix**: Added `host_lexical_path: str = ''` to `AttachmentEntry` in `aivm/store.py`. This field is only populated when the host source was a symlink (lexical ≠ resolved). It is omitted from the serialized TOML when empty, so existing store files load cleanly with the default empty string (backward compat).
+
+`_record_attachment` in `aivm/cli/vm.py` now computes `host_lexical_path = str(host_src.expanduser().absolute())` when it differs from `str(host_src.resolve())` and passes it to `upsert_attachment`.
+
+`_restore_saved_vm_attachments` now loads a lexical-path map `{source_dir → host_lexical_path}` from the store at the start of the function. In both the shared and shared-root restore paths, it constructs `_restore_src = Path(lexical)` when available, falling back to `Path(aligned.source_dir)` for non-symlink attachments. This `_restore_src` is passed to `_apply_guest_derived_symlinks` and `_ensure_attachment_available_in_guest`.
+
+### Issue 2: explicit custom `guest_dst` suppresses resolved-path mirror
+
+**Root cause**: In `_apply_guest_derived_symlinks`, step 3 (mirror-home for resolved path) unconditionally passed `is_default_dst=True` to `_compute_mirror_home_symlink`, so a user-specified `--guest-dst` did not suppress the resolved-path mirror.
+
+**Fix**: Changed `if lexical is not None:` to `if lexical is not None and is_default_dst:`. The `is_default_dst` value is already computed in step 2 from `guest_dst == _default_primary_guest_dst(host_src)`. The resolved-path mirror now only runs when the attachment used the default computed destination.
+
+### Tests added (6 new)
+
+- `test_record_attachment_persists_lexical_path_for_symlink`: lexical path stored for symlink host_src
+- `test_record_attachment_no_lexical_path_for_non_symlink`: empty string for non-symlink host_src
+- `test_store_backward_compat_missing_lexical_path`: old TOML without `host_lexical_path` loads with default `''`
+- `test_restore_uses_lexical_path_for_companion_symlink`: restore flow passes lexical `host_src` to `_apply_guest_derived_symlinks`
+- `test_restore_non_symlink_attachment_unchanged`: non-symlink restore path still uses `source_dir`
+- `test_apply_guest_derived_symlinks_custom_dst_suppresses_all_mirrors`: no mirror-home created when explicit guest_dst, for both lexical and resolved paths
+
+Full suite: 264 passed, 3 skipped.
+
+---
+
 ## 2026-03-31 19:10:00 +0000
 
 Session completed Pass 3 of the attachment path policy / mirror-symlink feature.

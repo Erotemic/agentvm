@@ -1896,8 +1896,9 @@ def _apply_guest_derived_symlinks(
             target_path=guest_dst,
         )
 
-    # 3. Mirror-home for the resolved host path (only when host_src is a symlink).
-    if lexical is not None:
+    # 3. Mirror-home for the resolved host path (only when host_src is a symlink
+    #    and the attachment did not use an explicit custom guest_dst).
+    if lexical is not None and is_default_dst:
         resolved_src = host_src.resolve()
         resolved_mirror = _compute_mirror_home_symlink(
             cfg, resolved_src, guest_dst, is_default_dst=True
@@ -2693,6 +2694,12 @@ def _record_attachment(
     tag: str,
     force: bool = False,
 ) -> Path:
+    # Persist the lexical (unresolved) host path when it differs from the
+    # resolved path so that restore can recreate companion guest symlinks.
+    lexical_str = str(host_src.expanduser().absolute())
+    resolved_str = str(host_src.resolve())
+    host_lexical_path = lexical_str if lexical_str != resolved_str else ''
+
     reg = load_store(cfg_path)
     before = deepcopy(reg)
     upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
@@ -2705,6 +2712,7 @@ def _record_attachment(
         access=access,
         guest_dst=guest_dst,
         tag=tag,
+        host_lexical_path=host_lexical_path,
         force=force,
     )
     if reg == before:
@@ -2885,6 +2893,16 @@ def _restore_saved_vm_attachments(
         return
 
     secondary_attachments = saved_attachments[1:]
+
+    # Build a map from resolved source_dir -> lexical host path so restore can
+    # recreate companion guest symlinks when the original attachment was made
+    # through a host symlink.
+    _restore_reg = load_store(cfg_path)
+    _lexical_by_source: dict[str, str] = {
+        e.host_path: e.host_lexical_path
+        for e in find_attachments_for_vm(_restore_reg, cfg.vm.name)
+        if e.host_lexical_path
+    }
     shared_secondary = [
         att
         for att in secondary_attachments
@@ -2909,10 +2927,12 @@ def _restore_saved_vm_attachments(
     for att in secondary_attachments:
         if att.mode == ATTACHMENT_MODE_SHARED_ROOT:
             aligned = att
+            _lx = _lexical_by_source.get(aligned.source_dir)
+            _restore_src = Path(_lx) if _lx else Path(aligned.source_dir)
             try:
                 _ensure_attachment_available_in_guest(
                     cfg,
-                    Path(aligned.source_dir),
+                    _restore_src,
                     aligned,
                     ip,
                     yes=bool(yes),
@@ -2924,7 +2944,7 @@ def _restore_saved_vm_attachments(
                 _record_attachment(
                     cfg,
                     cfg_path,
-                    host_src=Path(aligned.source_dir),
+                    host_src=_restore_src,
                     mode=aligned.mode,
                     access=aligned.access,
                     guest_dst=aligned.guest_dst,
@@ -2956,6 +2976,8 @@ def _restore_saved_vm_attachments(
                 )
             continue
 
+        _lx = _lexical_by_source.get(att.source_dir)
+        _restore_src = Path(_lx) if _lx else Path(att.source_dir)
         aligned = drift_align_attachment_tag_with_mappings(
             att, Path(att.source_dir), mappings
         )
@@ -3003,14 +3025,14 @@ def _restore_saved_vm_attachments(
             _apply_guest_derived_symlinks(
                 cfg,
                 ip,
-                Path(aligned.source_dir),
+                _restore_src,
                 aligned,
                 mirror_home=mirror_home,
             )
             _record_attachment(
                 cfg,
                 cfg_path,
-                host_src=Path(aligned.source_dir),
+                host_src=_restore_src,
                 mode=aligned.mode,
                 access=aligned.access,
                 guest_dst=aligned.guest_dst,

@@ -35,6 +35,7 @@ from aivm.status import ProbeOutcome
 from aivm.store import (
     AttachmentEntry,
     Store,
+    load_store,
     save_store,
     upsert_attachment,
     upsert_network,
@@ -2772,3 +2773,331 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     assert ensure_calls[0]['mirror_home'] is True
     # Non-disruptive rebind must remain False during restore
     assert ensure_calls[0]['allow_disruptive'] is False
+
+
+# ---------------------------------------------------------------------------
+# Pass 4: host_lexical_path persistence and custom guest_dst mirror suppression
+# ---------------------------------------------------------------------------
+
+
+def test_record_attachment_persists_lexical_path_for_symlink(
+    tmp_path: Path,
+) -> None:
+    """_record_attachment stores host_lexical_path when host_src is a symlink."""
+    from aivm.cli.vm import _record_attachment
+
+    real_dir = tmp_path / 'real'
+    real_dir.mkdir()
+    link_dir = tmp_path / 'link'
+    link_dir.symlink_to(real_dir)
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-lex-persist'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    _record_attachment(
+        cfg,
+        cfg_path,
+        host_src=link_dir,
+        mode='shared',
+        access='rw',
+        guest_dst=str(real_dir),
+        tag='tag-lex',
+    )
+
+    reg = load_store(cfg_path)
+    entries = [a for a in reg.attachments if a.vm_name == cfg.vm.name]
+    assert len(entries) == 1
+    assert entries[0].host_lexical_path == str(link_dir.expanduser().absolute())
+    # host_path (the resolved canonical key) must be the real path
+    assert entries[0].host_path == str(real_dir.resolve())
+
+
+def test_record_attachment_no_lexical_path_for_non_symlink(
+    tmp_path: Path,
+) -> None:
+    """_record_attachment leaves host_lexical_path empty for non-symlink paths."""
+    from aivm.cli.vm import _record_attachment
+
+    real_dir = tmp_path / 'real'
+    real_dir.mkdir()
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-nolex'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    _record_attachment(
+        cfg,
+        cfg_path,
+        host_src=real_dir,
+        mode='shared',
+        access='rw',
+        guest_dst=str(real_dir),
+        tag='tag-nolex',
+    )
+
+    reg = load_store(cfg_path)
+    entries = [a for a in reg.attachments if a.vm_name == cfg.vm.name]
+    assert len(entries) == 1
+    assert entries[0].host_lexical_path == ''
+
+
+def test_store_backward_compat_missing_lexical_path(
+    tmp_path: Path,
+) -> None:
+    """Store loads cleanly from old TOML files that have no host_lexical_path field."""
+    cfg_path = tmp_path / 'config.toml'
+    # Minimal old-format store with no host_lexical_path
+    cfg_path.write_text(
+        'schema_version = 5\n'
+        'active_vm = ""\n'
+        '[behavior]\n'
+        'yes_sudo = false\n'
+        'auto_approve_readonly_sudo = true\n'
+        'verbose = 1\n'
+        'mirror_shared_home_folders = false\n'
+        '[[attachments]]\n'
+        'host_path = "/some/real/path"\n'
+        'vm_name = "oldvm"\n'
+        'mode = "shared"\n'
+        'access = "rw"\n'
+        'guest_dst = "/some/real/path"\n'
+        'tag = "hostcode-path-abcd1234"\n',
+        encoding='utf-8',
+    )
+
+    reg = load_store(cfg_path)
+    assert len(reg.attachments) == 1
+    att = reg.attachments[0]
+    assert att.host_path == '/some/real/path'
+    assert att.host_lexical_path == ''  # graceful default
+
+
+def test_restore_uses_lexical_path_for_companion_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After restore, companion guest symlink is created using the stored lexical path."""
+    from aivm.cli.vm import _restore_saved_vm_attachments
+
+    _activate_manager(monkeypatch)
+
+    real_dir = tmp_path / 'real' / 'proj'
+    real_dir.mkdir(parents=True)
+    link_dir = tmp_path / 'link' / 'proj'
+    (tmp_path / 'link').mkdir()
+    link_dir.symlink_to(real_dir)
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-lex-restore'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    # Set up store with saved attachment that has host_lexical_path
+    reg = Store()
+    upsert_attachment(
+        reg,
+        host_path=real_dir,  # resolved key
+        vm_name=cfg.vm.name,
+        mode='shared',
+        access='rw',
+        guest_dst=str(real_dir),
+        tag='tag-lex-restore',
+        host_lexical_path=str(link_dir),
+    )
+    save_store(reg, cfg_path)
+
+    primary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(tmp_path / 'primary'),  # different source so secondary runs
+        guest_dst=str(tmp_path / 'primary'),
+        tag='tag-primary',
+    )
+    (tmp_path / 'primary').mkdir()
+
+    secondary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(real_dir),
+        guest_dst=str(real_dir),
+        tag='tag-lex-restore',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._saved_vm_attachments',
+        lambda *a, **k: [primary, secondary],
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.vm_share_mappings',
+        lambda *a, **k: [(str(real_dir), 'tag-lex-restore')],
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.drift_align_attachment_tag_with_mappings',
+        lambda att, *a, **k: att,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.drift_attachment_has_mapping',
+        lambda cfg_a, att, mappings: True,
+    )
+    monkeypatch.setattr('aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None)
+    monkeypatch.setattr('aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path)
+
+    derived_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._apply_guest_derived_symlinks',
+        lambda cfg_a, ip, host_src_a, att, *, mirror_home: derived_calls.append(
+            {'host_src': host_src_a}
+        ),
+    )
+
+    _restore_saved_vm_attachments(
+        cfg,
+        cfg_path,
+        ip='10.0.0.1',
+        primary_attachment=primary,
+        yes=True,
+        mirror_home=False,
+    )
+
+    assert len(derived_calls) == 1
+    # Must have received the lexical path, not the resolved source_dir
+    assert derived_calls[0]['host_src'] == link_dir
+
+
+def test_restore_non_symlink_attachment_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Non-symlink attachments without host_lexical_path use source_dir as before."""
+    from aivm.cli.vm import _restore_saved_vm_attachments
+
+    _activate_manager(monkeypatch)
+
+    real_dir = tmp_path / 'proj'
+    real_dir.mkdir()
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-nolex-restore'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    # No host_lexical_path in store
+    reg = Store()
+    upsert_attachment(
+        reg,
+        host_path=real_dir,
+        vm_name=cfg.vm.name,
+        mode='shared',
+        access='rw',
+        guest_dst=str(real_dir),
+        tag='tag-plain',
+    )
+    save_store(reg, cfg_path)
+
+    primary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(tmp_path / 'primary'),
+        guest_dst=str(tmp_path / 'primary'),
+        tag='tag-primary',
+    )
+    (tmp_path / 'primary').mkdir()
+
+    secondary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(real_dir),
+        guest_dst=str(real_dir),
+        tag='tag-plain',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._saved_vm_attachments',
+        lambda *a, **k: [primary, secondary],
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.vm_share_mappings',
+        lambda *a, **k: [(str(real_dir), 'tag-plain')],
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.drift_align_attachment_tag_with_mappings',
+        lambda att, *a, **k: att,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.drift_attachment_has_mapping',
+        lambda cfg_a, att, mappings: True,
+    )
+    monkeypatch.setattr('aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None)
+    monkeypatch.setattr('aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path)
+
+    derived_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._apply_guest_derived_symlinks',
+        lambda cfg_a, ip, host_src_a, att, *, mirror_home: derived_calls.append(
+            {'host_src': host_src_a}
+        ),
+    )
+
+    _restore_saved_vm_attachments(
+        cfg,
+        cfg_path,
+        ip='10.0.0.1',
+        primary_attachment=primary,
+        yes=True,
+        mirror_home=False,
+    )
+
+    assert len(derived_calls) == 1
+    # Falls back to source_dir (resolved) since no lexical path stored
+    assert derived_calls[0]['host_src'] == Path(str(real_dir))
+
+
+def test_apply_guest_derived_symlinks_custom_dst_suppresses_all_mirrors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Custom guest_dst suppresses both lexical and resolved mirror-home creation."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-custom-dst'
+    cfg.vm.user = 'agent'
+
+    host_home = tmp_path
+    real_dir = tmp_path / 'code' / 'proj'
+    real_dir.mkdir(parents=True)
+    link_dir = tmp_path / 'link' / 'proj'
+    (tmp_path / 'link').mkdir()
+    link_dir.symlink_to(real_dir)
+
+    resolved_dst = str(real_dir)
+    custom_dst = '/custom/guest/path'  # explicit non-default destination
+
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=resolved_dst,
+        guest_dst=custom_dst,
+        tag='tag-custom',
+    )
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda c, ip, *, symlink_path, target_path: calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        ),
+    )
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: host_home)
+
+    _apply_guest_derived_symlinks(
+        cfg, '10.0.0.1', link_dir, attachment, mirror_home=True
+    )
+
+    # Companion symlink (lexical -> custom_dst) is allowed
+    companion_calls = [c for c in calls if '/home/agent' not in c['symlink_path']]
+    mirror_calls = [c for c in calls if '/home/agent' in c['symlink_path']]
+
+    # The companion symlink at the lexical path is expected (it points to custom_dst)
+    assert len(companion_calls) == 1
+    assert companion_calls[0]['symlink_path'] == str(link_dir.expanduser().absolute())
+    # No mirror-home symlinks should be created when guest_dst is custom
+    assert mirror_calls == [], f'Expected no mirror calls, got: {mirror_calls}'
