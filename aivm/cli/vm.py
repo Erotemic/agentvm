@@ -631,7 +631,7 @@ class VMCodeCLI(_BaseCommand):
             session = _prepare_attached_session(
                 config_opt=args.config,
                 vm_opt=args.vm,
-                host_src=Path(args.host_src).resolve(),
+                host_src=Path(args.host_src).expanduser().absolute(),
                 guest_dst_opt=args.guest_dst,
                 attach_mode_opt=args.mode,
                 attach_access_opt=args.access,
@@ -756,7 +756,7 @@ class VMSSHCLI(_BaseCommand):
             session = _prepare_attached_session(
                 config_opt=args.config,
                 vm_opt=args.vm,
-                host_src=Path(args.host_src).resolve(),
+                host_src=Path(args.host_src).expanduser().absolute(),
                 guest_dst_opt=args.guest_dst,
                 attach_mode_opt=args.mode,
                 attach_access_opt=args.access,
@@ -1803,6 +1803,8 @@ def _ensure_guest_symlink(
     link_q = shlex.quote(symlink_path)
     tgt_q = shlex.quote(target_path)
     parent_q = shlex.quote(str(PurePosixPath(symlink_path).parent))
+    # Use sudo for both mkdir and ln -s so companion symlinks work even when
+    # the parent dir is not writable by the guest user (e.g. /home/joncrall/...).
     script = (
         'set -euo pipefail; '
         f'if [ -L {link_q} ]; then '
@@ -1815,15 +1817,15 @@ def _ensure_guest_symlink(
         f'    echo "aivm-symlink-warn: {symlink_path} is a non-empty directory; skipping" >&2; '
         '    exit 4; '
         '  fi; '
-        f'  rmdir {link_q}; '
+        f'  sudo -n rmdir {link_q}; '
         f'  sudo -n mkdir -p {parent_q}; '
-        f'  ln -s {tgt_q} {link_q}; '
+        f'  sudo -n ln -s {tgt_q} {link_q}; '
         f'elif [ -e {link_q} ]; then '
         f'  echo "aivm-symlink-warn: {symlink_path} is a regular file; skipping" >&2; '
         'exit 5; '
         'else '
         f'  sudo -n mkdir -p {parent_q}; '
-        f'  ln -s {tgt_q} {link_q}; '
+        f'  sudo -n ln -s {tgt_q} {link_q}; '
         'fi'
     )
     cmd = [
@@ -3453,6 +3455,33 @@ def _prepare_attached_session(
             yes=bool(yes),
             dry_run=False,
         )
+        # Apply companion-symlink and mirror-home behavior for git mode too.
+        # The git clone creates the primary destination; symlinks come after.
+        lexical = _host_symlink_lexical_path(host_src)
+        if lexical is not None and lexical != attachment.guest_dst:
+            _ensure_guest_symlink(
+                cfg,
+                ip,
+                symlink_path=lexical,
+                target_path=attachment.guest_dst,
+            )
+        if mirror_home:
+            is_default_dst = attachment.guest_dst == _default_primary_guest_dst(
+                host_src
+            )
+            mirror_path = _compute_mirror_home_symlink(
+                cfg,
+                host_src,
+                attachment.guest_dst,
+                is_default_dst=is_default_dst,
+            )
+            if mirror_path is not None:
+                _ensure_guest_symlink(
+                    cfg,
+                    ip,
+                    symlink_path=mirror_path,
+                    target_path=attachment.guest_dst,
+                )
         _restore_saved_vm_attachments(
             cfg,
             cfg_path,
@@ -3672,15 +3701,13 @@ def _ensure_guest_git_repo(
 ) -> None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     root_q = shlex.quote(guest_repo_root)
-    parent_q = shlex.quote(str(PurePosixPath(guest_repo_root).parent))
     user_q = shlex.quote(cfg.vm.user)
-    # Use sudo to create parent dirs in case the path is outside the guest home
-    # (e.g. an exact-mirrored path like /home/joncrall/code/repo).  Only chown
-    # the repo root itself — never recursively chown large parent trees.
+    # Use sudo to create the full repo root path in case the parent dirs are
+    # outside the guest home and not user-writable (e.g. /home/joncrall/code/repo).
+    # Only chown the repo root leaf itself — never recursively chown parent trees.
     script = (
         f'if ! mkdir -p {root_q} 2>/dev/null; then '
-        f'sudo -n mkdir -p {parent_q} && mkdir -p {root_q} && '
-        f'sudo -n chown {user_q}:{user_q} {root_q}; fi && '
+        f'sudo -n mkdir -p {root_q} && sudo -n chown {user_q}:{user_q} {root_q}; fi && '
         f'if [ ! -d {shlex.quote(guest_repo_root + "/.git")} ]; then '
         f'if [ -n "$(find {root_q} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then '
         f'echo "guest target directory is not empty and is not a git repo: {guest_repo_root}" >&2; '

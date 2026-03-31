@@ -10,10 +10,12 @@ from typing import Any
 import pytest
 
 from aivm.cli.vm import (
+    VMSSHCLI,
+    VMAttachCLI,
+    VMCodeCLI,
     AttachmentAccess,
     AttachmentMode,
     ResolvedAttachment,
-    VMAttachCLI,
     _compute_mirror_home_symlink,
     _default_primary_guest_dst,
     _ensure_guest_symlink,
@@ -2087,3 +2089,401 @@ def test_ensure_guest_git_repo_uses_sudo_for_parent_creation(
     assert 'sudo -n mkdir -p' in script
     assert 'sudo -n chown' in script
     assert '/home/joncrall/code/myrepo' in script
+
+
+# ---------------------------------------------------------------------------
+# Follow-up patch tests: unified host-path handling, sudo symlinks, git mirror
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_code_ssh_mocks(
+    monkeypatch: pytest.MonkeyPatch,
+    cfg: AgentVMConfig,
+    cfg_path: Any,
+    host_src: Path,
+    attachment: ResolvedAttachment,
+) -> None:
+    """Wire up the common mocks needed for VMCodeCLI / VMSSHCLI tests."""
+    from aivm.cli._common import PreparedSession
+
+    session = PreparedSession(
+        cfg=cfg,
+        cfg_path=cfg_path,
+        host_src=host_src,
+        attachment_mode=attachment.mode,
+        share_source_dir=attachment.source_dir,
+        share_tag=attachment.tag,
+        share_guest_dst=attachment.guest_dst,
+        ip='10.0.0.1',
+        reg_path=cfg_path,
+        meta_path=None,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._prepare_attached_session',
+        lambda **kw: session,
+    )
+
+
+def _fake_prepare_session(
+    cfg: AgentVMConfig,
+    cfg_path: Any,
+    host_src: Path,
+    attachment: ResolvedAttachment,
+    captured: list,
+) -> Any:
+    """Return a fake _prepare_attached_session callable that records its kwargs."""
+    from aivm.cli._common import PreparedSession
+
+    def fake_prepare(**kw: Any) -> PreparedSession:
+        captured.append(kw)
+        return PreparedSession(
+            cfg=cfg,
+            cfg_path=cfg_path,
+            host_src=kw['host_src'],
+            attachment_mode=attachment.mode,
+            share_source_dir=attachment.source_dir,
+            share_tag=attachment.tag,
+            share_guest_dst=attachment.guest_dst,
+            ip='10.0.0.1',
+            reg_path=cfg_path,
+            meta_path=None,
+        )
+
+    return fake_prepare
+
+
+def test_vm_code_passes_lexical_host_src_to_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """VMCodeCLI should pass the lexical (non-resolved) host_src so symlink detection works."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-code-lexical'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(host_src.resolve()),
+        guest_dst=str(host_src),
+        tag='hostcode-proj-abc12345',
+    )
+
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._prepare_attached_session',
+        _fake_prepare_session(cfg, cfg_path, host_src, attachment, captured),
+    )
+
+    # dry_run=True exits immediately after getting the session — no subprocess needed
+    VMCodeCLI.main(
+        argv=False,
+        config=str(cfg_path),
+        host_src=str(host_src),
+        yes=True,
+        dry_run=True,
+    )
+
+    assert captured, 'expected _prepare_attached_session to be called'
+    passed = captured[0]['host_src']
+    # Must be the lexical absolute path (expanduser+absolute), not pre-resolved
+    assert passed == host_src.expanduser().absolute()
+
+
+def test_vm_ssh_passes_lexical_host_src_to_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """VMSSHCLI should pass the lexical host_src so symlink detection works."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-ssh-lexical'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(host_src.resolve()),
+        guest_dst=str(host_src),
+        tag='hostcode-proj-abc12345',
+    )
+
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._prepare_attached_session',
+        _fake_prepare_session(cfg, cfg_path, host_src, attachment, captured),
+    )
+
+    VMSSHCLI.main(
+        argv=False,
+        config=str(cfg_path),
+        host_src=str(host_src),
+        yes=True,
+        dry_run=True,
+    )
+
+    assert captured, 'expected _prepare_attached_session to be called'
+    passed = captured[0]['host_src']
+    assert passed == host_src.expanduser().absolute()
+
+
+def test_ensure_guest_symlink_uses_sudo_for_ln(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """symlink creation and dir removal must use sudo -n so non-writable parents work."""
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-sudo-ln'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = ''
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: '/id')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: [])
+
+    scripts: list[str] = []
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (scripts.append(cmd[-1]) or _Proc(0, '', '')),
+    )
+
+    _ensure_guest_symlink(
+        cfg, '10.0.0.1',
+        symlink_path='/home/joncrall/code/repo',
+        target_path='/home/joncrall/code/repo',
+    )
+
+    assert scripts, 'expected SSH command'
+    script = scripts[0]
+    assert 'sudo -n ln -s' in script
+    assert 'sudo -n mkdir -p' in script
+    # plain ln -s (without sudo) must NOT appear
+    assert '\nln -s' not in script
+    assert '; ln -s' not in script
+
+
+def test_ensure_guest_git_repo_uses_sudo_mkdir_for_full_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exact-path git repo creation must sudo-mkdir the full root, not just the parent."""
+    from aivm.cli.vm import _ensure_guest_git_repo
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git-sudo'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = ''
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.cli.vm.require_ssh_identity', lambda p: '/id')
+    monkeypatch.setattr('aivm.cli.vm.ssh_base_args', lambda *a, **k: [])
+
+    scripts: list[str] = []
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: (scripts.append(cmd[-1]) or _Proc(0, '', '')),
+    )
+
+    _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo', 'main')
+
+    assert scripts
+    script = scripts[0]
+    # Must sudo the full path, not just the parent
+    assert 'sudo -n mkdir -p' in script
+    assert '/home/joncrall/code/myrepo' in script
+    assert 'sudo -n chown' in script
+    # Confirm no stale parent_q variable reference (parent-only mkdir)
+    assert 'sudo -n mkdir -p /home/joncrall/code\n' not in script
+
+
+def test_git_mode_in_prepare_session_gets_companion_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Git mode in _prepare_attached_session creates a companion symlink for host symlinks."""
+    from aivm.cli.vm import _prepare_attached_session
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git-companion'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    # Set up a real dir and a symlink pointing to it
+    real_dir = tmp_path / 'real'
+    real_dir.mkdir()
+    link_dir = tmp_path / 'link'
+    link_dir.symlink_to(real_dir)
+
+    from aivm.store import Store
+    from aivm.store import save_store as _save_store
+    store = Store()
+    store.attachments.append(
+        AttachmentEntry(
+            host_path=str(real_dir.resolve()),
+            vm_name=cfg.vm.name,
+            mode=AttachmentMode.GIT,
+            guest_dst=str(real_dir.resolve()),
+            tag='',
+        )
+    )
+    _save_store(store, cfg_path)
+
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.GIT,
+        source_dir=str(real_dir.resolve()),
+        guest_dst=str(real_dir.resolve()),
+        tag='',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._load_cfg_with_path', lambda *a, **k: (cfg, cfg_path)
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code', lambda **k: (cfg, cfg_path)
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_attachment', lambda *a, **k: attachment
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_attached_vm',
+        lambda *a, **k: type('R', (), {
+            'attachment': attachment,
+            'cached_ip': '10.0.0.1',
+            'shared_root_host_side_ready': False,
+        })(),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._maybe_offer_create_ssh_identity', lambda *a, **k: False
+    )
+    monkeypatch.setattr('aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_ssh_ready',
+        lambda *a, **k: type('P', (), {'ok': True})(),
+    )
+    monkeypatch.setattr('aivm.cli.vm.load_store', lambda p: store)
+
+    git_calls: list = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_git_clone_attachment',
+        lambda *a, **k: git_calls.append(1) or (tmp_path, 'ssh', 'git'),
+    )
+
+    symlink_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda cfg_a, ip, *, symlink_path, target_path: symlink_calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        ),
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._restore_saved_vm_attachments', lambda *a, **k: None
+    )
+
+    _prepare_attached_session(
+        config_opt=str(cfg_path),
+        vm_opt='',
+        host_src=link_dir,  # lexical symlink path
+        guest_dst_opt='',
+        recreate_if_needed=False,
+        ensure_firewall_opt=False,
+        force=False,
+        dry_run=False,
+        yes=True,
+    )
+
+    assert git_calls, 'git clone should have been called'
+    # companion symlink from lexical link path to resolved real path
+    expected_link = str(link_dir.expanduser().absolute())
+    expected_target = str(real_dir.resolve())
+    assert any(
+        c['symlink_path'] == expected_link and c['target_path'] == expected_target
+        for c in symlink_calls
+    ), f'Expected companion symlink {expected_link} -> {expected_target}, got: {symlink_calls}'
+
+
+def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Git mode in _prepare_attached_session creates a mirror-home symlink when enabled."""
+    from aivm.cli.vm import _prepare_attached_session
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git-mirror'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    host_src = tmp_path / 'code' / 'myproject'
+    host_src.mkdir(parents=True)
+
+    from aivm.store import Store
+    from aivm.store import save_store as _save_store
+    store = Store()
+    store.behavior.mirror_shared_home_folders = True
+    _save_store(store, cfg_path)
+
+    guest_dst = str(host_src.expanduser().absolute())
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.GIT,
+        source_dir=guest_dst,
+        guest_dst=guest_dst,
+        tag='',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code', lambda **k: (cfg, cfg_path)
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_attachment', lambda *a, **k: attachment
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_attached_vm',
+        lambda *a, **k: type('R', (), {
+            'attachment': attachment,
+            'cached_ip': '10.0.0.1',
+            'shared_root_host_side_ready': False,
+        })(),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._maybe_offer_create_ssh_identity', lambda *a, **k: False
+    )
+    monkeypatch.setattr('aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_ssh_ready',
+        lambda *a, **k: type('P', (), {'ok': True})(),
+    )
+    monkeypatch.setattr('aivm.cli.vm.load_store', lambda p: store)
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_git_clone_attachment',
+        lambda *a, **k: (tmp_path, 'ssh', 'git'),
+    )
+
+    symlink_calls: list[dict] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_guest_symlink',
+        lambda cfg_a, ip, *, symlink_path, target_path: symlink_calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._restore_saved_vm_attachments', lambda *a, **k: None
+    )
+
+    # Patch Path.home so we know what the mirror path will be
+    host_home = tmp_path
+    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: host_home)
+
+    _prepare_attached_session(
+        config_opt=str(cfg_path),
+        vm_opt='',
+        host_src=host_src,
+        guest_dst_opt='',
+        recreate_if_needed=False,
+        ensure_firewall_opt=False,
+        force=False,
+        dry_run=False,
+        yes=True,
+    )
+
+    # Mirror symlink should point into /home/agent/code/myproject
+    expected_mirror = '/home/agent/code/myproject'
+    assert any(
+        c['symlink_path'] == expected_mirror for c in symlink_calls
+    ), f'Expected mirror symlink at {expected_mirror}, got: {symlink_calls}'
