@@ -1824,13 +1824,19 @@ def _ensure_shared_root_parent_dir(
 
 
 def _mount_source_compare_candidates(raw_source: str) -> list[str]:
-    """Return normalized comparison candidates extracted from ``findmnt`` output.
+    """Return plausible path-like interpretations of a ``findmnt SOURCE`` value.
 
-    ``findmnt -o SOURCE`` is not stable for bind mounts across filesystems. In
-    practice it may return a literal host path, a ``dataset[/subpath]`` form,
-    or a ``device[/subpath]`` form. This helper expands a raw value into the
-    plausible path-like pieces that should be compared against the requested
-    host source.
+    ``findmnt -o SOURCE`` is not stable across bind-mount backends. For the
+    same host bind mount it may report:
+
+    * a literal source path,
+    * a literal path with a bracketed subpath suffix, or
+    * a backing device or dataset name with a bracketed subpath suffix.
+
+    This helper expands one raw SOURCE string into a short list of candidates
+    that can be compared against the expected host source path. The original
+    value is kept first, and when a ``[...]`` suffix is present we also expose
+    the prefix and the bracket payload.
     """
     raw = str(raw_source or '').strip()
     if not raw:
@@ -1850,51 +1856,19 @@ def _mount_source_compare_candidates(raw_source: str) -> list[str]:
     return candidates
 
 
-@dataclass(frozen=True)
-class FindmntTargetInfo:
-    source: str = ''
-    root: str = ''
-    fstype: str = ''
-    code: int = 1
+def _probe_findmnt_target_source(target: Path) -> CmdResult:
+    """Read the current ``findmnt SOURCE`` for ``target`` using the existing readonly flow.
 
-    @property
-    def is_mountpoint(self) -> bool:
-        return self.code == 0 and bool(
-            self.source or self.root or self.fstype
-        )
-
-
-def _parse_findmnt_pairs(stdout: str) -> dict[str, str]:
-    """Parse ``findmnt -P`` output into an uppercase key/value mapping.
-
-    The shared-root restore logic uses ``findmnt -P`` so paths containing spaces
-    remain machine-readable. Keeping this parser small and local makes it easy
-    to reason about exactly which fields participate in mount-health checks.
-    """
-    values: dict[str, str] = {}
-    for token in shlex.split(stdout or ''):
-        if '=' not in token:
-            continue
-        key, value = token.split('=', 1)
-        values[key.strip().upper()] = value
-    return values
-
-
-def _probe_findmnt_target_source(target: Path) -> FindmntTargetInfo:
-    """Read the current ``findmnt`` metadata for a host bind target.
-
-    This is the host-side probe used by shared-root reconciliation. Unlike the
-    older implementation, it captures ``SOURCE``, ``ROOT``, and ``FSTYPE`` so
-    restore decisions are not based solely on a fragile ``SOURCE`` string.
-
-    The extra metadata is important after host reboots because a previously
-    correct bind mount can be reported as a bracketed dataset/device form rather
-    than the literal source directory path that was originally attached.
+    This helper intentionally preserves the historical probe shape used by the
+    attach/reconcile code and its tests: a single privileged readonly
+    ``findmnt -n -o SOURCE --target ...`` call wrapped in an explicit manager
+    step. That preserves the existing sudo-prompt and auto-approval behavior
+    while still giving shared-root repair logic the mount metadata it needs.
     """
     mgr = CommandManager.current()
     with mgr.intent(
         'Inspect mount metadata',
-        why='Read the current mount metadata before deciding whether host-side repair is needed.',
+        why='Read the current mount source before deciding whether host-side repair is needed.',
         role='read',
         visible=False,
     ):
@@ -1903,16 +1877,8 @@ def _probe_findmnt_target_source(target: Path) -> FindmntTargetInfo:
             why='Determine whether the VM-specific bind target already points at the requested host folder.',
             approval_scope=f'shared-root-host-findmnt:{target}',
         ):
-            res = mgr.run(
-                [
-                    'findmnt',
-                    '-P',
-                    '-n',
-                    '-o',
-                    'SOURCE,ROOT,FSTYPE',
-                    '--target',
-                    str(target),
-                ],
+            return mgr.run(
+                ['findmnt', '-n', '-o', 'SOURCE', '--target', str(target)],
                 sudo=True,
                 role='read',
                 check=False,
@@ -1920,50 +1886,6 @@ def _probe_findmnt_target_source(target: Path) -> FindmntTargetInfo:
                 summary='Inspect current source for host bind target',
                 detail=f'target={target}',
             )
-    values = _parse_findmnt_pairs(res.stdout or '')
-    return FindmntTargetInfo(
-        source=values.get('SOURCE', ''),
-        root=values.get('ROOT', ''),
-        fstype=values.get('FSTYPE', ''),
-        code=res.code,
-    )
-
-
-def _shared_root_host_bind_matches_source(
-    expected_source: Path,
-    target: Path,
-    probe: FindmntTargetInfo,
-) -> bool:
-    """Return ``True`` when an existing shared-root bind already matches.
-
-    Automatic restore should treat a host bind as healthy when any of the
-    following show that the target already exposes the requested source:
-
-    * ``findmnt SOURCE`` resolves to the expected path,
-    * ``findmnt ROOT`` resolves to the expected path, or
-    * the bind target and expected source have the same inode identity.
-
-    The inode fallback is what lets restore accept mounts whose ``SOURCE`` is a
-    backing device or dataset name instead of a literal host directory.
-    """
-    expected = str(expected_source.resolve())
-    for raw_value in (probe.source, probe.root):
-        for candidate in _mount_source_compare_candidates(raw_value):
-            try:
-                candidate_abs = str(Path(candidate).resolve())
-            except Exception:
-                candidate_abs = candidate
-            if candidate_abs == expected:
-                return True
-    try:
-        source_stat = expected_source.stat()
-        target_stat = target.stat()
-    except OSError:
-        return False
-    return (
-        source_stat.st_dev == target_stat.st_dev
-        and source_stat.st_ino == target_stat.st_ino
-    )
 
 
 def _ensure_shared_root_host_bind(
@@ -1974,20 +1896,27 @@ def _ensure_shared_root_host_bind(
     dry_run: bool,
     allow_disruptive_rebind: bool = True,
 ) -> Path:
-    """Ensure the host-side shared-root bind target points at ``attachment``.
+    """Ensure the host-side shared-root bind target exists and points at the requested folder.
 
-    There are two distinct callers for this helper:
+    Shared-root mode exposes one virtiofs export to the guest and then bind
+    mounts per-attachment host folders underneath that export. This helper is
+    responsible for the host-side half of that arrangement:
 
-    * explicit attach/reconcile flows, which are allowed to disrupt and replace
-      a stale bind target, and
-    * automatic restore flows, which should avoid tearing down a bind mount
-      unless we are confident it is actually wrong.
+    * verify the requested source directory exists,
+    * inspect the current bind target state,
+    * accept already-correct binds without disruption, and
+    * otherwise repair the bind target so it points at the requested source.
 
-    The false-negative bug fixed in this patch lived here: automatic restore was
-    previously comparing only the raw ``findmnt SOURCE`` string against the
-    requested host path, which caused valid existing binds to be rejected after
-    reboot. This version accepts semantically equivalent mounts before deciding
-    whether a disruptive rebind is necessary.
+    The key restore bug fixed here is that ``findmnt SOURCE`` may describe a
+    correct bind in non-literal forms such as ``/path[/subpath]`` or
+    ``device[/subpath]``. Automatic restore must treat those as healthy matches
+    instead of assuming the bind is stale and skipping guest-side repair.
+
+    When ``allow_disruptive_rebind`` is ``False`` the function may still accept
+    an already-correct bind, but it will refuse to replace a mismatched mount.
+    That is the behavior used during best-effort automatic restore, where we
+    want to avoid unexpectedly tearing down a mount the user may still care
+    about.
     """
     del yes
     mgr = CommandManager.current()
@@ -2004,21 +1933,25 @@ def _ensure_shared_root_host_bind(
         )
         return target
     probe = _probe_findmnt_target_source(target)
-    current = probe.source
-    is_mountpoint = probe.is_mountpoint
+    mounted_source = (probe.stdout or '').strip().splitlines()
+    current = mounted_source[0] if mounted_source else ''
+    is_mountpoint = probe.code == 0 and bool(current)
     if is_mountpoint:
-        # findmnt SOURCE for bind mounts is not stable across filesystems.
-        # It may be a literal path, a device plus bracketed root, a dataset
-        # plus bracketed root, or just the backing device/dataset name. Accept
-        # the mount as healthy when SOURCE/ROOT candidates or stat identity
-        # show that the existing bind already exposes the requested source.
-        if _shared_root_host_bind_matches_source(source, target, probe):
-            return target
+        # findmnt SOURCE for bind mounts may be:
+        # 1) "/src/path[/subpath]" or
+        # 2) "/dev/sdXN[/src/path]".
+        # Accept either the raw SOURCE, bracket suffix, or prefix path.
+        for candidate in _mount_source_compare_candidates(current):
+            try:
+                candidate_abs = str(Path(candidate).resolve())
+            except Exception:
+                candidate_abs = candidate
+            if candidate_abs == source_dir:
+                return target
         if not allow_disruptive_rebind:
             raise RuntimeError(
                 'Refusing to replace existing shared-root host bind mount during automatic restore '
-                f'(target={target}, expected_source={source_dir}, actual_source={probe.source or "unknown"}, '
-                f'actual_root={probe.root or "unknown"}, actual_fstype={probe.fstype or "unknown"}). '
+                f'(target={target}, expected_source={source_dir}, actual_source={current or "unknown"}). '
                 'Use an explicit attach/detach command to reconcile this mount.'
             )
     with mgr.step(
@@ -2086,14 +2019,13 @@ def _ensure_shared_root_vm_mapping(
     dry_run: bool,
     vm_running: bool | None = None,
 ) -> None:
-    """Ensure the VM definition includes the shared-root virtiofs export.
+    """Ensure the VM exposes the shared-root virtiofs export.
 
-    Shared-root attachments all flow through one virtiofs export rooted at the
-    per-VM shared-root host directory. Individual attachments are then surfaced
-    inside the guest via bind mounts under ``/mnt/aivm-shared/<token>``.
-
-    This helper only manages the domain-level virtiofs mapping. It does not
-    inspect or repair the per-attachment guest bind mounts.
+    In shared-root mode all per-folder guest mounts ultimately come from one
+    libvirt virtiofs mapping rooted at ``_shared_root_host_dir(cfg)`` and tagged
+    with ``SHARED_ROOT_VIRTIOFS_TAG``. This helper checks whether that mapping
+    already exists, first without sudo and then with sudo if needed, and only
+    attaches it when absent.
     """
     del yes
     mgr = CommandManager.current()
@@ -2136,13 +2068,14 @@ def _ensure_shared_root_guest_bind(
     *,
     dry_run: bool,
 ) -> None:
-    """Repair or create the guest-side bind mount for one shared-root item.
+    """Ensure the guest destination is bound to the requested shared-root source.
 
-    Once the host-side shared-root export exists and the VM exposes it through
-    virtiofs, each saved attachment still needs a guest bind mount from
-    ``/mnt/aivm-shared/<token>`` to the requested destination path. This helper
-    performs that final reconciliation step and verifies both source identity
-    and read/write mode inside the guest.
+    This is the guest-side half of shared-root reconciliation. It mounts the
+    shared-root virtiofs export inside the VM if needed, bind-mounts the
+    per-attachment subdirectory to ``attachment.guest_dst``, and verifies both
+    the resulting source and the expected read/write mode. The verification is
+    intentionally defensive because guest ``findmnt`` output for bind mounts can
+    vary across kernels and filesystems.
     """
     mgr = CommandManager.current()
     source_in_guest = str(
@@ -2394,14 +2327,18 @@ def _ensure_attachment_available_in_guest(
 ) -> None:
     """Make an attachment available at its guest destination for a running VM.
 
-    This is the mode-dispatch layer used by attach/code/ssh flows. For regular
-    ``shared`` attachments it mounts the virtiofs tag directly in the guest. For
-    ``shared-root`` attachments it optionally repairs host-side state, ensures
-    the VM-level virtiofs mapping exists, and then repairs the guest bind mount.
+    This dispatcher hides the mode-specific reconciliation details from higher
+    level workflows such as ``aivm attach``, ``aivm ssh``, and ``aivm code``.
+    Depending on the attachment mode it will:
 
-    The ``allow_disruptive_shared_root_rebind`` flag is what lets automatic
-    restore be conservative while explicit attach is allowed to replace stale
-    host bind targets.
+    * ensure a standard virtiofs share is mounted in the guest,
+    * reconcile shared-root host and guest bind mounts, or
+    * synchronize a git-mode clone into the guest.
+
+    The shared-root flags allow callers to distinguish between explicit attach
+    flows, where disruptive host-side repair is acceptable, and automatic
+    restore flows, where we prefer non-disruptive verification before touching
+    an existing bind mount.
     """
     mgr = CommandManager.current()
     if attachment.mode == ATTACHMENT_MODE_SHARED:
@@ -2692,12 +2629,13 @@ def _saved_vm_attachments(
     *,
     primary_attachment: ResolvedAttachment | None = None,
 ) -> list[ResolvedAttachment]:
-    """Return saved shared/shared-root attachments that should be restored.
+    """Return persisted share-like attachments that should be present for this VM.
 
-    ``aivm code .`` and related flows restore more than just the primary folder
-    that triggered the session. This helper materializes the additional saved
-    attachments for the VM, filters out duplicates and missing host paths, and
-    preserves the primary attachment as the first item when provided.
+    ``aivm code`` and related entry points restore the current working folder
+    first and then best-effort restore any other saved shared or shared-root
+    attachments for the same VM. This helper assembles that restore set while
+    de-duplicating by resolved source path and skipping missing or non-directory
+    host paths.
     """
     reg = load_store(cfg_path)
     attachments: list[ResolvedAttachment] = []
@@ -2750,17 +2688,22 @@ def _restore_saved_vm_attachments(
     primary_attachment: ResolvedAttachment | None,
     yes: bool,
 ) -> None:
-    """Best-effort restore of previously saved VM attachments.
+    """Best-effort restore saved non-primary attachments for a running VM session.
 
-    After the primary folder for a session has been prepared, this helper walks
-    the remaining saved attachments for the VM and remounts them inside the
-    guest. For ``shared-root`` attachments it deliberately uses the conservative
-    reconciliation path so automatic restore does not replace a genuinely active
-    host bind unless the existing mount clearly matches the requested source.
+    After the primary folder for the current command has been reconciled, this
+    helper walks the other persisted attachments for the VM and attempts to make
+    them available inside the guest again. Standard shared attachments are
+    restored by ensuring the virtiofs mapping exists and then mounting it in the
+    guest. Shared-root attachments reuse the shared-root reconciliation path but
+    disable disruptive host-side rebinds, because automatic restore should not
+    tear down an unexpected active mount.
 
-    The shared-root regression fixed in this patch surfaced here: false host
-    mismatch detection caused restore to skip valid saved attachments before the
-    guest bind repair step could run.
+    This is the call site that previously logged warnings like
+    "Refusing to replace existing shared-root host bind mount during automatic
+    restore" and then left guest paths empty after a reboot. The relaxed
+    SOURCE-matching logic in ``_ensure_shared_root_host_bind`` allows valid
+    existing host binds to pass through here so guest-side rebind repair can
+    continue.
     """
     saved_attachments = _saved_vm_attachments(
         cfg,
