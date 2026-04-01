@@ -1,3 +1,51 @@
+## 2026-04-01 05:20:00 +0000
+
+Session completed the `aivm/attachments/` package extraction (structural refactor) and fixed all test monkeypatch targets.
+
+### What was done
+
+**Package extraction**: All attachment/session subsystem code extracted from `aivm/cli/vm.py` (3884 lines → ~1728 lines) into `aivm/attachments/`:
+- `resolve.py`: path/tag/normalization helpers, `_resolve_attachment`, `_compute_mirror_home_symlink`
+- `shared_root.py`: host/guest bind mechanics for shared-root mode
+- `guest.py`: guest symlinks, git clone, `_ensure_attachment_available_in_guest`, `_apply_guest_derived_symlinks`
+- `session.py`: `_record_attachment`, `_prepare_attached_session`, `_restore_saved_vm_attachments`, `_reconcile_attached_vm`
+- `__init__.py`: minimal re-exports
+
+`aivm/cli/vm.py` now imports from `..attachments.*` and still re-exports all symbols so existing call sites work without change.
+
+**Test file split**: `tests/test_cli_vm_attach.py` (3103 lines) replaced by four new files:
+- `tests/test_attachment_resolve.py` (26 tests)
+- `tests/test_attachment_guest.py` (19 tests)
+- `tests/test_attachment_shared_root.py` (12 tests)
+- `tests/test_attachment_session.py` (17 tests)
+
+**Monkeypatch fixes**: After the split, all tests that patched `aivm.cli.vm.*` were updated to patch the module where the symbol is looked up at call time:
+- Functions in `guest.py`: patched at `aivm.attachments.guest.*`
+- Functions in `session.py`: patched at `aivm.attachments.session.*`
+- Functions in `shared_root.py`: patched at `aivm.attachments.shared_root.*`
+- `Path.home` (in `_compute_mirror_home_symlink`): patched at `aivm.attachments.resolve.Path.home`
+- `ensure_share_mounted` called from `_ensure_attachment_available_in_guest` (in guest.py): patched at `aivm.attachments.guest.ensure_share_mounted`
+- `ensure_share_mounted` called from `_restore_saved_vm_attachments` (in session.py): patched at `aivm.attachments.session.ensure_share_mounted`
+- Tests in `test_cli_vm_update.py` calling `_prepare_attached_session`: all function references updated to `aivm.attachments.session.*`
+
+**Removed pytest.skip**: `test_vm_attach_mounts_share_when_vm_running` and `test_vm_attach_escalates_when_nonsudo_probe_inconclusive` had `pytest.skip('seems to freeze')` added previously. Once `ensure_share_mounted` was patched correctly at `aivm.attachments.guest`, both tests pass without hangs.
+
+### Helpers left in place (not moved)
+
+The following stay in `aivm/cli/_common.py` and are imported into `session.py` from there (no cycles):
+- `PreparedSession`, `_cfg_path`, `_maybe_offer_create_ssh_identity`, `_record_vm`, `_resolve_cfg_for_code`, `_load_cfg_with_path`
+
+The following stay in `aivm/cli/vm.py` (would cause cycles if moved to attachments):
+- `_resolve_ip_for_ssh_ops`, `_record_attachment` (moved to session.py), `_maybe_install_missing_host_deps`
+
+**Note**: `_record_attachment` was successfully moved to `session.py`. `_resolve_ip_for_ssh_ops` remains in `vm.py` since it's called from `VMAttachCLI.main()` only.
+
+### Full suite result
+
+261 passed, 6 skipped.
+
+---
+
 ## 2026-03-31 20:00:00 +0000
 
 Session implemented Pass 4 of the attachment path policy / mirror-symlink feature (two correctness fixes).
