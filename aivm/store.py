@@ -38,6 +38,7 @@ class AttachmentEntry:
     access: str = 'rw'
     guest_dst: str = ''
     tag: str = ''
+    host_lexical_path: str = ''
 
 
 @dataclass
@@ -179,6 +180,9 @@ def load_store(path: Path | None = None) -> Store:
                 access=str(item.get('access', 'rw') or 'rw'),
                 guest_dst=str(item.get('guest_dst', '')).strip(),
                 tag=str(item.get('tag', '')).strip(),
+                host_lexical_path=str(
+                    item.get('host_lexical_path', '')
+                ).strip(),
             )
         )
     log.trace('Finish load store')
@@ -272,6 +276,10 @@ def save_store(
         lines.append(f'access = "{_toml_escape(att.access)}"')
         lines.append(f'guest_dst = "{_toml_escape(att.guest_dst)}"')
         lines.append(f'tag = "{_toml_escape(att.tag)}"')
+        if att.host_lexical_path:
+            lines.append(
+                f'host_lexical_path = "{_toml_escape(att.host_lexical_path)}"'
+            )
         lines.append('')
 
     log.info('Writing config store to {}', fpath)
@@ -402,6 +410,7 @@ def upsert_attachment(
     access: str = 'rw',
     guest_dst: str = '',
     tag: str = '',
+    host_lexical_path: str = '',
     force: bool = False,
 ) -> None:
     del force
@@ -418,6 +427,7 @@ def upsert_attachment(
         access=access,
         guest_dst=guest_dst,
         tag=tag,
+        host_lexical_path=host_lexical_path,
     )
     if existing:
         i = reg.attachments.index(existing[0])

@@ -85,7 +85,9 @@ def _auto_share_tag_for_path(host_src: Path, existing_tags: set[str]) -> str:
     )
     base_name = f'hostcode-{raw}' if raw else 'hostcode'
     # Always include a stable hash of the resolved path to avoid basename collisions
-    suffix = hashlib.sha1(str(host_src.resolve()).encode('utf-8')).hexdigest()[:8]
+    suffix = hashlib.sha1(str(host_src.resolve()).encode('utf-8')).hexdigest()[
+        :8
+    ]
     # Build: hostcode-<name>-<hash>, truncating the name part to fit max_len
     name_part = base_name[: max_len - 1 - len(suffix)]
     tag = f'{name_part}-{suffix}'

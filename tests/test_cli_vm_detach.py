@@ -6,7 +6,8 @@ from pathlib import Path
 
 from pytest import MonkeyPatch
 
-from aivm.cli.vm import AttachmentMode, VMDetachCLI
+from aivm.cli.vm import VMDetachCLI
+from aivm.vm.share import AttachmentMode
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
 from aivm.store import AttachmentEntry, Store, find_attachment_for_vm

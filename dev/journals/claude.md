@@ -1,3 +1,110 @@
+## 2026-04-01 21:08:53 +0000
+
+Ported the `ae261eba` shared-root host-bind fix from the old monolithic `vm.py` to `aivm/attachments/shared_root.py`, where that code now lives after extraction. Also completed the final cleanup pass on the `split_cli_vm_refactor` branch: removed all attachment re-exports from `vm.py`, moved `_maybe_install_missing_host_deps` out of `vm.py` and into `cli/_common.py` (breaking the `session.py → cli/vm` import cycle), retargeted all stale `aivm.cli.vm.*` monkeypatch targets in the split test files to their new lookup sites, and removed two leftover `pytest.skip('Seems to freeze')` guards that were inert after earlier patch-target fixes.
+
+### The shared-root fix (main bug)
+
+Commit `ae261eba` improved `_ensure_shared_root_host_bind` to use `findmnt -P -n -o SOURCE,ROOT,FSTYPE` (machine-parseable key=value, multiple fields) instead of `findmnt -n -o SOURCE` (plain text, one field). The old code only checked the `SOURCE` field, which is not stable across bind-mount backends — on some filesystems it is a device name like `/dev/nvme0n1p1` with no path information, causing the health check to always fail and the bind to be treated as stale. The fix adds:
+
+- `FindmntTargetInfo` dataclass holding `source`, `root`, `fstype`, `code`, with an `is_mountpoint` property
+- `_parse_findmnt_pairs` to parse `findmnt -P` output into a dict
+- `_shared_root_host_bind_matches_source` which accepts a bind as correct if any of: SOURCE candidate matches, ROOT candidate matches, or inode identity (`st_dev`/`st_ino`) matches
+
+This fix existed in `vm.py` from `ae261eba` but was absent from `shared_root.py` because that module was extracted from an earlier commit. The regression manifested as attached devices not being restored on `aivm code .` or `aivm ssh .` after reboot on hosts where `findmnt SOURCE` returns a device name rather than a path.
+
+### Cycle shim removal
+
+`session.py` had a lazy-import wrapper that called `_maybe_install_missing_host_deps` from `cli.vm` at call time to avoid a module-load-time cycle. Moved the function to `cli/_common.py`, which both `session.py` and `vm.py` already import from. Both now import it normally at module load time. The remaining lazy imports in `session.py` (`VMCreateCLI` for bootstrap flow, `InitCLI`) are a separate pre-existing cycle and were not changed.
+
+### Test patch target rule (reminder)
+
+Patch the module where the symbol is *looked up at call time* — i.e., where it is imported into the calling function's module. Not where it was originally defined, not a re-export location. For `_ensure_shared_root_host_bind` tests: the subprocess mock is on `aivm.commands.subprocess.run`, not on any attachment module, because `CommandManager.run` resolves subprocess through its own module.
+
+### What might be fragile
+
+The `findmnt -P` output format is shell-quoting sensitive — values with spaces or special characters will be quoted by findmnt and must be unquoted by `shlex.split`. This is handled by `_parse_findmnt_pairs` which uses `shlex.split` on the full line. If findmnt on an unusual kernel/distro quotes differently or adds extra fields, the parser may silently drop them (dict lookup returns empty string). The stat-identity fallback provides a safety net for the most common case.
+
+## 2026-04-01 05:20:00 +0000
+
+Session completed the `aivm/attachments/` package extraction (structural refactor) and fixed all test monkeypatch targets.
+
+### What was done
+
+**Package extraction**: All attachment/session subsystem code extracted from `aivm/cli/vm.py` (3884 lines → ~1728 lines) into `aivm/attachments/`:
+- `resolve.py`: path/tag/normalization helpers, `_resolve_attachment`, `_compute_mirror_home_symlink`
+- `shared_root.py`: host/guest bind mechanics for shared-root mode
+- `guest.py`: guest symlinks, git clone, `_ensure_attachment_available_in_guest`, `_apply_guest_derived_symlinks`
+- `session.py`: `_record_attachment`, `_prepare_attached_session`, `_restore_saved_vm_attachments`, `_reconcile_attached_vm`
+- `__init__.py`: minimal re-exports
+
+`aivm/cli/vm.py` now imports from `..attachments.*` and still re-exports all symbols so existing call sites work without change.
+
+**Test file split**: `tests/test_cli_vm_attach.py` (3103 lines) replaced by four new files:
+- `tests/test_attachment_resolve.py` (26 tests)
+- `tests/test_attachment_guest.py` (19 tests)
+- `tests/test_attachment_shared_root.py` (12 tests)
+- `tests/test_attachment_session.py` (17 tests)
+
+**Monkeypatch fixes**: After the split, all tests that patched `aivm.cli.vm.*` were updated to patch the module where the symbol is looked up at call time:
+- Functions in `guest.py`: patched at `aivm.attachments.guest.*`
+- Functions in `session.py`: patched at `aivm.attachments.session.*`
+- Functions in `shared_root.py`: patched at `aivm.attachments.shared_root.*`
+- `Path.home` (in `_compute_mirror_home_symlink`): patched at `aivm.attachments.resolve.Path.home`
+- `ensure_share_mounted` called from `_ensure_attachment_available_in_guest` (in guest.py): patched at `aivm.attachments.guest.ensure_share_mounted`
+- `ensure_share_mounted` called from `_restore_saved_vm_attachments` (in session.py): patched at `aivm.attachments.session.ensure_share_mounted`
+- Tests in `test_cli_vm_update.py` calling `_prepare_attached_session`: all function references updated to `aivm.attachments.session.*`
+
+**Removed pytest.skip**: `test_vm_attach_mounts_share_when_vm_running` and `test_vm_attach_escalates_when_nonsudo_probe_inconclusive` had `pytest.skip('seems to freeze')` added previously. Once `ensure_share_mounted` was patched correctly at `aivm.attachments.guest`, both tests pass without hangs.
+
+### Helpers left in place (not moved)
+
+The following stay in `aivm/cli/_common.py` and are imported into `session.py` from there (no cycles):
+- `PreparedSession`, `_cfg_path`, `_maybe_offer_create_ssh_identity`, `_record_vm`, `_resolve_cfg_for_code`, `_load_cfg_with_path`
+
+The following stay in `aivm/cli/vm.py` (would cause cycles if moved to attachments):
+- `_resolve_ip_for_ssh_ops`, `_record_attachment` (moved to session.py), `_maybe_install_missing_host_deps`
+
+**Note**: `_record_attachment` was successfully moved to `session.py`. `_resolve_ip_for_ssh_ops` remains in `vm.py` since it's called from `VMAttachCLI.main()` only.
+
+### Full suite result
+
+261 passed, 6 skipped.
+
+---
+
+## 2026-03-31 20:00:00 +0000
+
+Session implemented Pass 4 of the attachment path policy / mirror-symlink feature (two correctness fixes).
+
+### Issue 1: lexical companion symlinks survive reboot/restore
+
+**Root cause**: `AttachmentEntry.host_path` is stored as the resolved canonical path (via `_norm_dir` → `resolve()`). After a reboot, `_restore_saved_vm_attachments` only had the resolved path, so it could not recreate companion guest symlinks for attachments originally made through a host symlink.
+
+**Fix**: Added `host_lexical_path: str = ''` to `AttachmentEntry` in `aivm/store.py`. This field is only populated when the host source was a symlink (lexical ≠ resolved). It is omitted from the serialized TOML when empty, so existing store files load cleanly with the default empty string (backward compat).
+
+`_record_attachment` in `aivm/cli/vm.py` now computes `host_lexical_path = str(host_src.expanduser().absolute())` when it differs from `str(host_src.resolve())` and passes it to `upsert_attachment`.
+
+`_restore_saved_vm_attachments` now loads a lexical-path map `{source_dir → host_lexical_path}` from the store at the start of the function. In both the shared and shared-root restore paths, it constructs `_restore_src = Path(lexical)` when available, falling back to `Path(aligned.source_dir)` for non-symlink attachments. This `_restore_src` is passed to `_apply_guest_derived_symlinks` and `_ensure_attachment_available_in_guest`.
+
+### Issue 2: explicit custom `guest_dst` suppresses resolved-path mirror
+
+**Root cause**: In `_apply_guest_derived_symlinks`, step 3 (mirror-home for resolved path) unconditionally passed `is_default_dst=True` to `_compute_mirror_home_symlink`, so a user-specified `--guest-dst` did not suppress the resolved-path mirror.
+
+**Fix**: Changed `if lexical is not None:` to `if lexical is not None and is_default_dst:`. The `is_default_dst` value is already computed in step 2 from `guest_dst == _default_primary_guest_dst(host_src)`. The resolved-path mirror now only runs when the attachment used the default computed destination.
+
+### Tests added (6 new)
+
+- `test_record_attachment_persists_lexical_path_for_symlink`: lexical path stored for symlink host_src
+- `test_record_attachment_no_lexical_path_for_non_symlink`: empty string for non-symlink host_src
+- `test_store_backward_compat_missing_lexical_path`: old TOML without `host_lexical_path` loads with default `''`
+- `test_restore_uses_lexical_path_for_companion_symlink`: restore flow passes lexical `host_src` to `_apply_guest_derived_symlinks`
+- `test_restore_non_symlink_attachment_unchanged`: non-symlink restore path still uses `source_dir`
+- `test_apply_guest_derived_symlinks_custom_dst_suppresses_all_mirrors`: no mirror-home created when explicit guest_dst, for both lexical and resolved paths
+
+Full suite: 264 passed, 3 skipped.
+
+---
+
 ## 2026-03-31 19:10:00 +0000
 
 Session completed Pass 3 of the attachment path policy / mirror-symlink feature.
