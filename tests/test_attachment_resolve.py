@@ -435,7 +435,7 @@ def test_compute_mirror_home_returns_none_when_not_default_dst(
     """_compute_mirror_home_symlink returns None when is_default_dst=False (custom --guest_dst)."""
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
-    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    monkeypatch.setattr('aivm.attachments.resolve.Path.home', lambda: Path('/home/joncrall'))
     host_src = Path('/home/joncrall/code/foobar')
     result = _compute_mirror_home_symlink(
         cfg, host_src, '/custom/path', is_default_dst=False
@@ -461,7 +461,7 @@ def test_compute_mirror_home_returns_none_when_path_not_under_home(
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
-    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    monkeypatch.setattr('aivm.attachments.resolve.Path.home', lambda: Path('/home/joncrall'))
     host_src = Path('/data/external/project')
     result = _compute_mirror_home_symlink(
         cfg, host_src, str(host_src), is_default_dst=True
@@ -475,7 +475,7 @@ def test_compute_mirror_home_returns_none_when_guest_home_equals_host_home(
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.user = 'joncrall'  # same user
-    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    monkeypatch.setattr('aivm.attachments.resolve.Path.home', lambda: Path('/home/joncrall'))
     host_src = Path('/home/joncrall/code/foobar')
     result = _compute_mirror_home_symlink(
         cfg, host_src, str(host_src), is_default_dst=True
@@ -489,7 +489,7 @@ def test_compute_mirror_home_returns_correct_path(
 ) -> None:
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
-    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/joncrall'))
+    monkeypatch.setattr('aivm.attachments.resolve.Path.home', lambda: Path('/home/joncrall'))
     host_src = Path('/home/joncrall/code/foobar')
     guest_dst = '/home/joncrall/code/foobar'
     result = _compute_mirror_home_symlink(
@@ -505,7 +505,7 @@ def test_compute_mirror_home_returns_none_when_mirror_equals_primary(
     """When primary dst already matches the mirror path, skip."""
     cfg = AgentVMConfig()
     cfg.vm.user = 'agent'
-    monkeypatch.setattr('aivm.cli.vm.Path.home', lambda: Path('/home/agent'))
+    monkeypatch.setattr('aivm.attachments.resolve.Path.home', lambda: Path('/home/agent'))
     # host_src is under /home/agent (same as guest home)
     host_src = Path('/home/agent/code/foobar')
     guest_dst = '/home/agent/code/foobar'

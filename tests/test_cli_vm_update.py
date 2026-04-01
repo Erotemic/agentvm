@@ -349,7 +349,7 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
         return cfg, cfg_path
 
     monkeypatch.setattr(
-        'aivm.cli.vm._resolve_cfg_for_code', fake_resolve_cfg_for_code
+        'aivm.attachments.session._resolve_cfg_for_code', fake_resolve_cfg_for_code
     )
 
     def fake_init(*a: object, **k: Any) -> int:
@@ -365,10 +365,10 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
 
     monkeypatch.setattr('aivm.cli.config.InitCLI.main', fake_init)
     monkeypatch.setattr('aivm.cli.vm.VMCreateCLI.main', fake_vm_create)
-    monkeypatch.setattr('aivm.cli.vm.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.cli._common.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr('builtins.input', lambda prompt='': 'y')
     monkeypatch.setattr(
-        'aivm.cli.vm._resolve_attachment',
+        'aivm.attachments.session._resolve_attachment',
         lambda *a, **k: ResolvedAttachment(
             vm_name=cfg.vm.name,
             source_dir=str(host_src),
@@ -377,7 +377,7 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
         ),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._reconcile_attached_vm',
+        'aivm.attachments.session._reconcile_attached_vm',
         lambda *a, **k: ReconcileResult(
             attachment=ResolvedAttachment(
                 vm_name=cfg.vm.name,
@@ -390,15 +390,15 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
         ),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._record_attachment', lambda *a, **k: tmp_path / 'dummy'
+        'aivm.attachments.session._record_attachment', lambda *a, **k: tmp_path / 'dummy'
     )
-    monkeypatch.setattr('aivm.cli.vm.get_ip_cached', lambda *a, **k: '10.0.0.2')
+    monkeypatch.setattr('aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2')
     monkeypatch.setattr(
-        'aivm.cli.vm.probe_ssh_ready',
+        'aivm.attachments.session.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm.ensure_share_mounted', lambda *a, **k: None
+        'aivm.attachments.guest.ensure_share_mounted', lambda *a, **k: None
     )
 
     session = _prepare_attached_session(
