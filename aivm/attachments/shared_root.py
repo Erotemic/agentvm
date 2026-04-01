@@ -601,19 +601,29 @@ def _detach_shared_root_host_bind(
             )
             if res.code != 0:
                 msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
-                if (
-                    'target is busy' in msg
-                    or 'not mounted' in msg
-                    or 'transport endpoint is not connected' in msg
-                ):
-                    if 'not mounted' not in msg:
-                        mgr.run(
-                            ['umount', '-l', str(target)],
-                            sudo=True,
-                            check=True,
-                            capture=True,
-                            summary=f'Lazy-unmount shared-root bind target {target}',
-                        )
+                if 'not mounted' in msg:
+                    # Benign race: the target was observed as mounted but is
+                    # already gone by the time we try to unmount it.
+                    pass
+                elif 'target is busy' in msg:
+                    raise RuntimeError(
+                        'Shared-root host bind target is busy and was not detached. '
+                        f'target={target}. '
+                        'Refusing automatic lazy-unmount during normal detach because it can '
+                        'leave callers in a disconnected working-directory state. '
+                        'Leave the tree / stop any holders and retry detach. '
+                        'Future direction: add an explicit lazy/force detach mode for '
+                        'orphaned mount cleanup.'
+                    )
+                elif 'transport endpoint is not connected' in msg:
+                    raise RuntimeError(
+                        'Shared-root host bind target appears stale and was not detached. '
+                        f'target={target}. '
+                        'Refusing automatic lazy-unmount during normal detach. '
+                        'Clean up the stale mount explicitly and retry. '
+                        'Future direction: add an explicit lazy/force detach mode for '
+                        'orphaned mount cleanup.'
+                    )
                 else:
                     raise RuntimeError(
                         f'Failed to unmount shared-root host bind target {target}: '
@@ -627,6 +637,8 @@ def _detach_shared_root_host_bind(
             capture=True,
             summary=f'Remove shared-root bind target directory {target}',
         )
+
+
 def _detach_shared_root_guest_bind(
     cfg: AgentVMConfig,
     ip: str,

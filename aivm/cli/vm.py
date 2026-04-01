@@ -1109,7 +1109,7 @@ class VMDetachCLI(_BaseCommand):
                 )
 
         if detach_failed:
-            log.warning(
+            log.error(
                 'Detach cleanup was incomplete for {} on VM {}; preserving config record so detach can be retried.',
                 host_src,
                 cfg.vm.name,
