@@ -327,8 +327,6 @@ def test_prepare_attached_session_bootstraps_missing_vm(
 def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
     monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
-    import pytest
-    pytest.skip('FIXME: This test asks for sudo')
     host_src = tmp_path / 'proj'
     host_src.mkdir()
     cfg = AgentVMConfig()
@@ -365,7 +363,7 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
 
     monkeypatch.setattr('aivm.cli.config.InitCLI.main', fake_init)
     monkeypatch.setattr('aivm.cli.vm.VMCreateCLI.main', fake_vm_create)
-    monkeypatch.setattr('aivm.cli._common.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.attachments.session.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr('builtins.input', lambda prompt='': 'y')
     monkeypatch.setattr(
         'aivm.attachments.session._resolve_attachment',
