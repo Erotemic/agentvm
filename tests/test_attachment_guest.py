@@ -8,9 +8,8 @@ from typing import Any
 
 import pytest
 
-from aivm.cli.vm import (
-    AttachmentMode,
-    ResolvedAttachment,
+from aivm.vm.share import AttachmentMode, ResolvedAttachment
+from aivm.attachments.guest import (
     _apply_guest_derived_symlinks,
     _ensure_guest_symlink,
     _git_attachment_remote_name,
@@ -414,9 +413,7 @@ def test_ensure_attachment_creates_mirror_home_symlink_when_enabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When mirror_home=True and conditions met, companion symlink is created."""
-    import pytest
-    pytest.skip('Seems to freeze')
-    from aivm.cli.vm import _ensure_attachment_available_in_guest
+    from aivm.attachments.guest import _ensure_attachment_available_in_guest
 
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-mirror'
@@ -469,8 +466,7 @@ def test_ensure_attachment_no_mirror_when_disabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When mirror_home=False, no companion symlink call happens."""
-    pytest.skip('Seems to freeze')
-    from aivm.cli.vm import _ensure_attachment_available_in_guest
+    from aivm.attachments.guest import _ensure_attachment_available_in_guest
 
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-no-mirror'
@@ -516,7 +512,7 @@ def test_ensure_guest_git_repo_uses_sudo_for_parent_creation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """_ensure_guest_git_repo script includes sudo mkdir for parent dirs."""
-    from aivm.cli.vm import _ensure_guest_git_repo
+    from aivm.attachments.guest import _ensure_guest_git_repo
 
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git-exact'
@@ -579,7 +575,7 @@ def test_ensure_guest_git_repo_uses_sudo_mkdir_for_full_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exact-path git repo creation must sudo-mkdir the full root, not just the parent."""
-    from aivm.cli.vm import _ensure_guest_git_repo
+    from aivm.attachments.guest import _ensure_guest_git_repo
 
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git-sudo'

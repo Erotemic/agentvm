@@ -18,7 +18,6 @@ import scriptconfig as scfg
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
-from ..host import check_commands, host_is_debian_like, install_deps_debian
 from ..net import ensure_network
 from ..resource_checks import (
     vm_resource_impossible_lines,
@@ -81,6 +80,7 @@ from ._common import (
     _cfg_path,
     _load_cfg,
     _load_cfg_with_path,
+    _maybe_install_missing_host_deps,
     _maybe_offer_create_ssh_identity,
     _record_vm,
     _resolve_cfg_for_code,
@@ -88,54 +88,27 @@ from ._common import (
 )
 
 from ..attachments.resolve import (
-    ATTACHMENT_ACCESS_MODES,
-    ATTACHMENT_ACCESS_RO,
-    ATTACHMENT_ACCESS_RW,
-    ATTACHMENT_MODE_GIT,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
-    ATTACHMENT_MODES,
-    _compute_mirror_home_symlink,
-    _default_primary_guest_dst,
-    _host_symlink_lexical_path,
     _normalize_attachment_access,
     _normalize_attachment_mode,
     _resolve_attachment,
-    _resolve_guest_dst,
 )
 from ..attachments.shared_root import (
-    SHARED_ROOT_GUEST_MOUNT_ROOT,
     _detach_shared_root_guest_bind,
     _detach_shared_root_host_bind,
-    _ensure_shared_root_guest_bind,
     _ensure_shared_root_host_bind,
     _ensure_shared_root_vm_mapping,
-    _shared_root_host_dir,
 )
 from ..attachments.guest import (
-    _apply_guest_derived_symlinks,
     _ensure_attachment_available_in_guest,
-    _ensure_git_clone_attachment,
-    _ensure_guest_git_repo,
-    _ensure_guest_symlink,
-    _git_attachment_remote_name,
-    _git_current_branch,
-    _upsert_host_git_remote,
     _upsert_ssh_config_entry,
 )
 from ..attachments.session import (
-    ReconcilePolicy,
-    ReconcileResult,
     _maybe_warn_hardware_drift,
-    _missing_virtiofs_dir_from_error,
     _prepare_attached_session,
-    _probe_vm_running_nonsudo,
-    _reconcile_attached_vm,
     _record_attachment,
     _resolve_ip_for_ssh_ops,
-    _restore_saved_vm_attachments,
-    _saved_vm_attachments,
-    _virtiofs_mapping_for_attachment,
 )
 
 
@@ -1298,60 +1271,6 @@ class VMModalCLI(scfg.ModalCLI):
 
 def _bytes_to_gib(size_bytes: int) -> float:
     return float(size_bytes) / float(1024**3)
-
-
-def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
-    """Best-effort host dependency gate before VM lifecycle operations.
-
-    We keep this prompt local to workflows that actively create/start/reconcile
-    VMs so users see missing prerequisites at the point of need.
-    """
-    missing, _ = check_commands()
-    if not missing:
-        return
-    missing_txt = ', '.join(missing)
-    print(f'Missing required host dependencies: {missing_txt}')
-    print('Suggested command: aivm host install_deps')
-    if yes:
-        print(
-            '--yes was provided; skipping interactive dependency install prompt.'
-        )
-        return
-    if dry_run:
-        print(
-            'DRYRUN: would prompt to install missing dependencies before VM setup.'
-        )
-        return
-    if not host_is_debian_like():
-        raise RuntimeError(
-            'Host is not detected as Debian/Ubuntu. Install dependencies manually, then retry.'
-        )
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            'Missing required host dependencies in non-interactive mode. '
-            'Run `aivm host install_deps` first.'
-        )
-    ans = (
-        input('Install missing dependencies now with apt? [Y/n]: ')
-        .strip()
-        .lower()
-    )
-    do_install = ans in {'', 'y', 'yes'}
-    if not do_install:
-        raise RuntimeError('Aborted by user.')
-    mgr = CommandManager.current()
-    with mgr.intent(
-        'Prepare host dependencies',
-        why='Install the host packages required before VM lifecycle work can proceed.',
-        role='modify',
-    ):
-        install_deps_debian(assume_yes=True)
-    missing_after, _ = check_commands()
-    if missing_after:
-        raise RuntimeError(
-            'Required dependencies are still missing after install attempt: '
-            + ', '.join(missing_after)
-        )
 
 
 def _parse_qemu_img_virtual_size(info_json: str) -> int | None:

@@ -7,15 +7,9 @@ from typing import Any
 
 import pytest
 
-from aivm.cli.vm import (
-    VMSSHCLI,
-    VMAttachCLI,
-    VMCodeCLI,
-    AttachmentAccess,
-    AttachmentMode,
-    ResolvedAttachment,
-    _record_attachment,
-)
+from aivm.cli.vm import VMSSHCLI, VMAttachCLI, VMCodeCLI
+from aivm.vm.share import AttachmentAccess, AttachmentMode, ResolvedAttachment
+from aivm.attachments.session import _record_attachment
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
@@ -512,7 +506,7 @@ def test_git_mode_in_prepare_session_gets_companion_symlink(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Git mode in _prepare_attached_session creates a companion symlink for host symlinks."""
-    from aivm.cli.vm import _prepare_attached_session
+    from aivm.attachments.session import _prepare_attached_session
 
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git-companion'
@@ -615,7 +609,7 @@ def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Git mode in _prepare_attached_session creates a mirror-home symlink when enabled."""
-    from aivm.cli.vm import _prepare_attached_session
+    from aivm.attachments.session import _prepare_attached_session
 
     cfg = AgentVMConfig()
     cfg.vm.name = 'vm-git-mirror'
@@ -707,7 +701,7 @@ def test_restore_shared_attachment_applies_guest_derived_symlinks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """_restore_saved_vm_attachments applies _apply_guest_derived_symlinks for shared mode."""
-    from aivm.cli.vm import _restore_saved_vm_attachments
+    from aivm.attachments.session import _restore_saved_vm_attachments
 
     _activate_manager(monkeypatch)
 
@@ -784,7 +778,7 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """_restore_saved_vm_attachments passes mirror_home to _ensure_attachment_available_in_guest for shared-root."""
-    from aivm.cli.vm import _restore_saved_vm_attachments
+    from aivm.attachments.session import _restore_saved_vm_attachments
 
     _activate_manager(monkeypatch)
 
@@ -851,7 +845,7 @@ def test_record_attachment_persists_lexical_path_for_symlink(
     tmp_path: Path,
 ) -> None:
     """_record_attachment stores host_lexical_path when host_src is a symlink."""
-    from aivm.cli.vm import _record_attachment
+    from aivm.attachments.session import _record_attachment
 
     real_dir = tmp_path / 'real'
     real_dir.mkdir()
@@ -885,7 +879,7 @@ def test_record_attachment_no_lexical_path_for_non_symlink(
     tmp_path: Path,
 ) -> None:
     """_record_attachment leaves host_lexical_path empty for non-symlink paths."""
-    from aivm.cli.vm import _record_attachment
+    from aivm.attachments.session import _record_attachment
 
     real_dir = tmp_path / 'real'
     real_dir.mkdir()
@@ -946,7 +940,7 @@ def test_restore_uses_lexical_path_for_companion_symlink(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """After restore, companion guest symlink is created using the stored lexical path."""
-    from aivm.cli.vm import _restore_saved_vm_attachments
+    from aivm.attachments.session import _restore_saved_vm_attachments
 
     _activate_manager(monkeypatch)
 
@@ -1037,7 +1031,7 @@ def test_restore_non_symlink_attachment_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Non-symlink attachments without host_lexical_path use source_dir as before."""
-    from aivm.cli.vm import _restore_saved_vm_attachments
+    from aivm.attachments.session import _restore_saved_vm_attachments
 
     _activate_manager(monkeypatch)
 

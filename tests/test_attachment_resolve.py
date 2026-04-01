@@ -7,9 +7,8 @@ from typing import Any
 
 import pytest
 
-from aivm.cli.vm import (
-    AttachmentAccess,
-    AttachmentMode,
+from aivm.vm.share import AttachmentAccess, AttachmentMode
+from aivm.attachments.resolve import (
     _compute_mirror_home_symlink,
     _default_primary_guest_dst,
     _host_symlink_lexical_path,

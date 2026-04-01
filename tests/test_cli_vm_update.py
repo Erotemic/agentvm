@@ -8,22 +8,20 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch
 
+from aivm.attachments.session import ReconcileResult, _prepare_attached_session
 from aivm.cli.vm import (
-    AttachmentMode,
-    ReconcileResult,
-    ResolvedAttachment,
     VMUpdateCLI,
     VMUpdateDrift,
     _apply_vm_update,
     _parse_qemu_img_virtual_size,
     _parse_vm_disk_path_from_dumpxml,
     _parse_vm_network_from_dumpxml,
-    _prepare_attached_session,
     _vm_update_drift,
 )
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
 from aivm.util import CmdResult
+from aivm.vm.share import AttachmentMode, ResolvedAttachment
 
 
 def test_parse_qemu_img_virtual_size() -> None:

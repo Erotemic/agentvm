@@ -15,6 +15,7 @@ from loguru import logger
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..detect import detect_ssh_identity
+from ..host import check_commands, host_is_debian_like, install_deps_debian
 from ..store import (
     find_attachments,
     find_vm,
@@ -507,6 +508,60 @@ class PreparedSession:
     ip: str | None
     reg_path: Path | None
     meta_path: Path | None
+
+
+def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
+    """Best-effort host dependency gate before VM lifecycle operations.
+
+    We keep this prompt local to workflows that actively create/start/reconcile
+    VMs so users see missing prerequisites at the point of need.
+    """
+    missing, _ = check_commands()
+    if not missing:
+        return
+    missing_txt = ', '.join(missing)
+    print(f'Missing required host dependencies: {missing_txt}')
+    print('Suggested command: aivm host install_deps')
+    if yes:
+        print(
+            '--yes was provided; skipping interactive dependency install prompt.'
+        )
+        return
+    if dry_run:
+        print(
+            'DRYRUN: would prompt to install missing dependencies before VM setup.'
+        )
+        return
+    if not host_is_debian_like():
+        raise RuntimeError(
+            'Host is not detected as Debian/Ubuntu. Install dependencies manually, then retry.'
+        )
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            'Missing required host dependencies in non-interactive mode. '
+            'Run `aivm host install_deps` first.'
+        )
+    ans = (
+        input('Install missing dependencies now with apt? [Y/n]: ')
+        .strip()
+        .lower()
+    )
+    do_install = ans in {'', 'y', 'yes'}
+    if not do_install:
+        raise RuntimeError('Aborted by user.')
+    mgr = CommandManager.current()
+    with mgr.intent(
+        'Prepare host dependencies',
+        why='Install the host packages required before VM lifecycle work can proceed.',
+        role='modify',
+    ):
+        install_deps_debian(assume_yes=True)
+    missing_after, _ = check_commands()
+    if missing_after:
+        raise RuntimeError(
+            'Required dependencies are still missing after install attempt: '
+            + ', '.join(missing_after)
+        )
 
 
 __all__ = [name for name in globals() if not name.startswith('__')]

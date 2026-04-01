@@ -8,10 +8,8 @@ from typing import Any
 
 import pytest
 
-from aivm.cli.vm import (
-    AttachmentAccess,
-    AttachmentMode,
-    ResolvedAttachment,
+from aivm.vm.share import AttachmentAccess, AttachmentMode, ResolvedAttachment
+from aivm.attachments.shared_root import (
     _ensure_shared_root_guest_bind,
     _ensure_shared_root_host_bind,
 )
@@ -673,7 +671,7 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
 
     monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
 
-    from aivm.cli.vm import _ensure_shared_root_vm_mapping
+    from aivm.attachments.shared_root import _ensure_shared_root_vm_mapping
 
     _ensure_shared_root_vm_mapping(
         cfg,

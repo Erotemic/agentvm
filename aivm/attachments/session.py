@@ -48,7 +48,7 @@ from ..vm.share import (
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
 )
 from ..vm.share import ResolvedAttachment, SHARED_ROOT_VIRTIOFS_TAG
-from ..cli._common import PreparedSession, _cfg_path, _maybe_offer_create_ssh_identity, _record_vm, _resolve_cfg_for_code
+from ..cli._common import PreparedSession, _cfg_path, _maybe_install_missing_host_deps, _maybe_offer_create_ssh_identity, _record_vm, _resolve_cfg_for_code
 from .resolve import (
     ATTACHMENT_ACCESS_RO,
     ATTACHMENT_MODE_GIT,
@@ -950,12 +950,3 @@ def _prepare_attached_session(
     )
 
 
-def _maybe_install_missing_host_deps(*, yes: bool, dry_run: bool) -> None:
-    """Best-effort host dependency gate before VM lifecycle operations.
-
-    Imported from vm.py via circular-import avoidance: session.py calls this
-    during reconcile, so we import it lazily to avoid a circular dependency
-    between session.py and vm.py.
-    """
-    from ..cli.vm import _maybe_install_missing_host_deps as _impl
-    _impl(yes=yes, dry_run=dry_run)
