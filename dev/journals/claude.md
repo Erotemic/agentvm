@@ -1,3 +1,29 @@
+## 2026-04-01 21:08:53 +0000
+
+Ported the `ae261eba` shared-root host-bind fix from the old monolithic `vm.py` to `aivm/attachments/shared_root.py`, where that code now lives after extraction. Also completed the final cleanup pass on the `split_cli_vm_refactor` branch: removed all attachment re-exports from `vm.py`, moved `_maybe_install_missing_host_deps` out of `vm.py` and into `cli/_common.py` (breaking the `session.py → cli/vm` import cycle), retargeted all stale `aivm.cli.vm.*` monkeypatch targets in the split test files to their new lookup sites, and removed two leftover `pytest.skip('Seems to freeze')` guards that were inert after earlier patch-target fixes.
+
+### The shared-root fix (main bug)
+
+Commit `ae261eba` improved `_ensure_shared_root_host_bind` to use `findmnt -P -n -o SOURCE,ROOT,FSTYPE` (machine-parseable key=value, multiple fields) instead of `findmnt -n -o SOURCE` (plain text, one field). The old code only checked the `SOURCE` field, which is not stable across bind-mount backends — on some filesystems it is a device name like `/dev/nvme0n1p1` with no path information, causing the health check to always fail and the bind to be treated as stale. The fix adds:
+
+- `FindmntTargetInfo` dataclass holding `source`, `root`, `fstype`, `code`, with an `is_mountpoint` property
+- `_parse_findmnt_pairs` to parse `findmnt -P` output into a dict
+- `_shared_root_host_bind_matches_source` which accepts a bind as correct if any of: SOURCE candidate matches, ROOT candidate matches, or inode identity (`st_dev`/`st_ino`) matches
+
+This fix existed in `vm.py` from `ae261eba` but was absent from `shared_root.py` because that module was extracted from an earlier commit. The regression manifested as attached devices not being restored on `aivm code .` or `aivm ssh .` after reboot on hosts where `findmnt SOURCE` returns a device name rather than a path.
+
+### Cycle shim removal
+
+`session.py` had a lazy-import wrapper that called `_maybe_install_missing_host_deps` from `cli.vm` at call time to avoid a module-load-time cycle. Moved the function to `cli/_common.py`, which both `session.py` and `vm.py` already import from. Both now import it normally at module load time. The remaining lazy imports in `session.py` (`VMCreateCLI` for bootstrap flow, `InitCLI`) are a separate pre-existing cycle and were not changed.
+
+### Test patch target rule (reminder)
+
+Patch the module where the symbol is *looked up at call time* — i.e., where it is imported into the calling function's module. Not where it was originally defined, not a re-export location. For `_ensure_shared_root_host_bind` tests: the subprocess mock is on `aivm.commands.subprocess.run`, not on any attachment module, because `CommandManager.run` resolves subprocess through its own module.
+
+### What might be fragile
+
+The `findmnt -P` output format is shell-quoting sensitive — values with spaces or special characters will be quoted by findmnt and must be unquoted by `shlex.split`. This is handled by `_parse_findmnt_pairs` which uses `shlex.split` on the full line. If findmnt on an unusual kernel/distro quotes differently or adds extra fields, the parser may silently drop them (dict lookup returns empty string). The stat-identity fallback provides a safety net for the most common case.
+
 ## 2026-04-01 05:20:00 +0000
 
 Session completed the `aivm/attachments/` package extraction (structural refactor) and fixed all test monkeypatch targets.

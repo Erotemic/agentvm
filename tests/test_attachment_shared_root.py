@@ -158,7 +158,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
         calls.append(normalized)
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
-        if normalized[:2] == ['findmnt', '-n']:
+        if normalized[:3] == ['findmnt', '-P', '-n']:
             return _Proc(1, '', '')
         if normalized[:2] == ['mount', '--bind']:
             return _Proc(0, '', '')
@@ -175,7 +175,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
 
     command_text = [' '.join(c) for c in calls]
     assert any(
-        line.startswith('findmnt -n -o SOURCE --target')
+        line.startswith('findmnt -P -n -o SOURCE,ROOT,FSTYPE --target')
         for line in command_text
     )
     assert any(line.startswith('mount --bind') for line in command_text)
@@ -206,8 +206,8 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
         calls.append(normalized)
-        if normalized[:2] == ['findmnt', '-n']:
-            return _Proc(0, f'{source_dir}[/sub]\n', '')
+        if normalized[:3] == ['findmnt', '-P', '-n']:
+            return _Proc(0, f'SOURCE="{source_dir}[/sub]" ROOT="" FSTYPE=""', '')
         if normalized[:2] == ['umount', str(source_dir)]:
             raise AssertionError('unexpected source-path umount')
         if normalized[:2] == ['umount', '-l']:
@@ -227,7 +227,7 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
 
     command_text = [' '.join(c) for c in calls]
     assert any(
-        line.startswith('findmnt -n -o SOURCE --target')
+        line.startswith('findmnt -P -n -o SOURCE,ROOT,FSTYPE --target')
         for line in command_text
     )
     assert all(not line.startswith('umount ') for line in command_text)
@@ -258,8 +258,8 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
         calls.append(normalized)
-        if normalized[:2] == ['findmnt', '-n']:
-            return _Proc(0, f'/dev/vda1[{source_dir}]\n', '')
+        if normalized[:3] == ['findmnt', '-P', '-n']:
+            return _Proc(0, f'SOURCE="/dev/vda1[{source_dir}]" ROOT="" FSTYPE=""', '')
         if normalized[:2] == ['umount', str(source_dir)]:
             raise AssertionError('unexpected source-path umount')
         if normalized[:2] == ['umount', '-l']:
@@ -279,7 +279,7 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
 
     command_text = [' '.join(c) for c in calls]
     assert any(
-        line.startswith('findmnt -n -o SOURCE --target')
+        line.startswith('findmnt -P -n -o SOURCE,ROOT,FSTYPE --target')
         for line in command_text
     )
     assert all(not line.startswith('umount ') for line in command_text)
@@ -315,8 +315,8 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
         calls.append(normalized)
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
-        if normalized[:2] == ['findmnt', '-n']:
-            return _Proc(0, '/other/source\n', '')
+        if normalized[:3] == ['findmnt', '-P', '-n']:
+            return _Proc(0, 'SOURCE="/other/source" ROOT="" FSTYPE=""', '')
         if normalized[:2] == ['bash', '-lc']:
             return _Proc(0, '', '')
         raise AssertionError(f'unexpected command: {cmd}')
@@ -363,8 +363,8 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
         cmd = [str(part) for part in cmd]
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
         calls.append(normalized)
-        if normalized[:2] == ['findmnt', '-n']:
-            return _Proc(0, '/other/source\n', '')
+        if normalized[:3] == ['findmnt', '-P', '-n']:
+            return _Proc(0, 'SOURCE="/other/source" ROOT="" FSTYPE=""', '')
         if normalized[0] == 'umount':
             raise AssertionError('unexpected unmount in non-disruptive mode')
         if normalized[:2] == ['mount', '--bind']:
@@ -386,7 +386,7 @@ def test_shared_root_host_bind_refuses_disruptive_rebind_when_disabled(
 
     command_text = [' '.join(c) for c in calls]
     assert any(
-        line.startswith('findmnt -n -o SOURCE --target')
+        line.startswith('findmnt -P -n -o SOURCE,ROOT,FSTYPE --target')
         for line in command_text
     )
     assert all(not line.startswith('umount ') for line in command_text)
@@ -417,8 +417,8 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
         parts = [str(part) for part in cmd]
         normalized = parts[2:] if parts[:2] == ['sudo', '-n'] else parts
         calls.append(normalized)
-        if normalized[:2] == ['findmnt', '-n']:
-            return _Proc(0, '/dev/nvme0n1p1\n', '')
+        if normalized[:3] == ['findmnt', '-P', '-n']:
+            return _Proc(0, 'SOURCE="/dev/nvme0n1p1" ROOT="" FSTYPE=""', '')
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
         if normalized[:2] == ['bash', '-lc']:
@@ -543,7 +543,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
         if parts[:2] == ['sudo', '-v']:
             return _Proc(0, '', '')
         normalized = parts[1:] if parts[:1] == ['sudo'] else parts
-        if normalized[:2] == ['findmnt', '-n']:
+        if normalized[:3] == ['findmnt', '-P', '-n']:
             return _Proc(1, '', '')
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
@@ -606,7 +606,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
         if parts[:3] == ['sudo', '-n', 'true']:
             return _Proc(0, '', '')
         normalized = parts[1:] if parts[:1] == ['sudo'] else parts
-        if normalized[:2] == ['findmnt', '-n']:
+        if normalized[:3] == ['findmnt', '-P', '-n']:
             return _Proc(1, '', '')
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
@@ -627,7 +627,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
     assert 'Step: Inspect shared-root host bind state' in messages
     assert any(
         msg.startswith(
-            '     command (read-only): sudo findmnt -n -o SOURCE --target '
+            '     command (read-only): sudo findmnt -P -n -o SOURCE,ROOT,FSTYPE --target '
         )
         for msg in messages
     )

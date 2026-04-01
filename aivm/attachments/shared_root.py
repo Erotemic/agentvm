@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import re
 import shlex
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..runtime import require_ssh_identity, ssh_base_args
-from ..util import CmdResult
 from ..vm import attach_vm_share, vm_share_mappings
 from ..vm.share import SHARED_ROOT_VIRTIOFS_TAG, ResolvedAttachment
 from .resolve import ATTACHMENT_ACCESS_RO, ATTACHMENT_ACCESS_RW
@@ -133,19 +133,34 @@ def _mount_source_compare_candidates(raw_source: str) -> list[str]:
     return candidates
 
 
-def _probe_findmnt_target_source(target: Path) -> CmdResult:
-    """Read the current ``findmnt SOURCE`` for ``target`` using the existing readonly flow.
+@dataclass(frozen=True)
+class FindmntTargetInfo:
+    source: str = ''
+    root: str = ''
+    fstype: str = ''
+    code: int = 1
 
-    This helper intentionally preserves the historical probe shape used by the
-    attach/reconcile code and its tests: a single privileged readonly
-    ``findmnt -n -o SOURCE --target ...`` call wrapped in an explicit manager
-    step. That preserves the existing sudo-prompt and auto-approval behavior
-    while still giving shared-root repair logic the mount metadata it needs.
-    """
+    @property
+    def is_mountpoint(self) -> bool:
+        return self.code == 0 and bool(self.source or self.root or self.fstype)
+
+
+def _parse_findmnt_pairs(stdout: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for token in shlex.split(stdout or ''):
+        if '=' not in token:
+            continue
+        key, value = token.split('=', 1)
+        values[key.strip().upper()] = value
+    return values
+
+
+def _probe_findmnt_target_source(target: Path) -> FindmntTargetInfo:
+    """Read the current source/root metadata for a mount target."""
     mgr = CommandManager.current()
     with mgr.intent(
         'Inspect mount metadata',
-        why='Read the current mount source before deciding whether host-side repair is needed.',
+        why='Read the current mount metadata before deciding whether host-side repair is needed.',
         role='read',
         visible=False,
     ):
@@ -154,8 +169,8 @@ def _probe_findmnt_target_source(target: Path) -> CmdResult:
             why='Determine whether the VM-specific bind target already points at the requested host folder.',
             approval_scope=f'shared-root-host-findmnt:{target}',
         ):
-            return mgr.run(
-                ['findmnt', '-n', '-o', 'SOURCE', '--target', str(target)],
+            res = mgr.run(
+                ['findmnt', '-P', '-n', '-o', 'SOURCE,ROOT,FSTYPE', '--target', str(target)],
                 sudo=True,
                 role='read',
                 check=False,
@@ -163,6 +178,38 @@ def _probe_findmnt_target_source(target: Path) -> CmdResult:
                 summary='Inspect current source for host bind target',
                 detail=f'target={target}',
             )
+    values = _parse_findmnt_pairs(res.stdout or '')
+    return FindmntTargetInfo(
+        source=values.get('SOURCE', ''),
+        root=values.get('ROOT', ''),
+        fstype=values.get('FSTYPE', ''),
+        code=res.code,
+    )
+
+
+def _shared_root_host_bind_matches_source(
+    expected_source: Path,
+    target: Path,
+    probe: FindmntTargetInfo,
+) -> bool:
+    expected = str(expected_source.resolve())
+    for raw_value in (probe.source, probe.root):
+        for candidate in _mount_source_compare_candidates(raw_value):
+            try:
+                candidate_abs = str(Path(candidate).resolve())
+            except Exception:
+                candidate_abs = candidate
+            if candidate_abs == expected:
+                return True
+    try:
+        source_stat = expected_source.stat()
+        target_stat = target.stat()
+    except OSError:
+        return False
+    return (
+        source_stat.st_dev == target_stat.st_dev
+        and source_stat.st_ino == target_stat.st_ino
+    )
 
 
 def _ensure_shared_root_host_bind(
@@ -210,25 +257,20 @@ def _ensure_shared_root_host_bind(
         )
         return target
     probe = _probe_findmnt_target_source(target)
-    mounted_source = (probe.stdout or '').strip().splitlines()
-    current = mounted_source[0] if mounted_source else ''
-    is_mountpoint = probe.code == 0 and bool(current)
+    current = probe.source
+    is_mountpoint = probe.is_mountpoint
     if is_mountpoint:
-        # findmnt SOURCE for bind mounts may be:
-        # 1) "/src/path[/subpath]" or
-        # 2) "/dev/sdXN[/src/path]".
-        # Accept either the raw SOURCE, bracket suffix, or prefix path.
-        for candidate in _mount_source_compare_candidates(current):
-            try:
-                candidate_abs = str(Path(candidate).resolve())
-            except Exception:
-                candidate_abs = candidate
-            if candidate_abs == source_dir:
-                return target
+        # findmnt SOURCE for bind mounts is not stable across filesystems.
+        # Accept the mount as healthy when SOURCE/ROOT candidates or stat
+        # identity show that the existing bind already exposes the requested
+        # source.
+        if _shared_root_host_bind_matches_source(source, target, probe):
+            return target
         if not allow_disruptive_rebind:
             raise RuntimeError(
                 'Refusing to replace existing shared-root host bind mount during automatic restore '
-                f'(target={target}, expected_source={source_dir}, actual_source={current or "unknown"}). '
+                f'(target={target}, expected_source={source_dir}, actual_source={probe.source or "unknown"}, '
+                f'actual_root={probe.root or "unknown"}, actual_fstype={probe.fstype or "unknown"}). '
                 'Use an explicit attach/detach command to reconcile this mount.'
             )
     with mgr.step(
@@ -275,7 +317,7 @@ def _ensure_shared_root_host_bind(
                 summary='Replace stale host bind target with requested source',
                 detail=(
                     f'target={target} expected_source={source_dir} '
-                    f'actual_source={current or "unknown"}'
+                    f'actual_source={probe.source or "unknown"}'
                 ),
             )
         else:
