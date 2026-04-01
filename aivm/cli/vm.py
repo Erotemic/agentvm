@@ -1015,21 +1015,19 @@ class VMDetachCLI(_BaseCommand):
             raise RuntimeError(
                 f'host_src must be an existing directory: {host_src}'
             )
-
         cfg, cfg_path = _resolve_cfg_for_code(
             config_opt=args.config,
             vm_opt=args.vm,
             host_src=host_src,
         )
-
         reg = load_store(cfg_path)
         att = find_attachment_for_vm(reg, host_src, cfg.vm.name)
         if att is None:
             print(
-                f'No attachment found for {host_src} on VM {cfg.vm.name}. Nothing to do.'
+                f'No attachment found for {host_src} on VM {cfg.vm.name}. '
+                'Nothing to do.'
             )
             return 0
-
         if args.dry_run:
             print(
                 f'DRYRUN: would detach {host_src} from VM {cfg.vm.name} ({att.mode} mode)'
@@ -1055,6 +1053,8 @@ class VMDetachCLI(_BaseCommand):
         detached_share = False
         detached_shared_root_host_bind = False
         detached_shared_root_guest_bind = False
+        detach_failed = False
+
         if (
             mode == ATTACHMENT_MODE_SHARED
             and vm_defined_probe is True
@@ -1073,13 +1073,11 @@ class VMDetachCLI(_BaseCommand):
                         purpose='Query VM networking state before detaching shared-root guest mount.',
                     )
                     _detach_shared_root_guest_bind(
-                        cfg,
-                        ip,
-                        resolved,
-                        dry_run=False,
+                        cfg, ip, resolved, dry_run=False,
                     )
                     detached_shared_root_guest_bind = True
                 except Exception as ex:
+                    detach_failed = True
                     log.warning(
                         'Could not detach shared-root guest bind mount for VM {} at {}: {}',
                         cfg.vm.name,
@@ -1089,13 +1087,11 @@ class VMDetachCLI(_BaseCommand):
             if resolved.tag:
                 try:
                     _detach_shared_root_host_bind(
-                        cfg,
-                        resolved,
-                        yes=bool(args.yes),
-                        dry_run=False,
+                        cfg, resolved, yes=bool(args.yes), dry_run=False,
                     )
                     detached_shared_root_host_bind = True
                 except Exception as ex:
+                    detach_failed = True
                     log.warning(
                         'Could not detach shared-root host bind mount for VM {} source={} guest_dst={} token={}: {}',
                         cfg.vm.name,
@@ -1105,11 +1101,20 @@ class VMDetachCLI(_BaseCommand):
                         ex,
                     )
             else:
+                detach_failed = True
                 log.warning(
                     'Skipping shared-root host bind cleanup for VM {} source={} because attachment token is missing.',
                     cfg.vm.name,
                     resolved.source_dir,
                 )
+
+        if detach_failed:
+            log.warning(
+                'Detach cleanup was incomplete for {} on VM {}; preserving config record so detach can be retried.',
+                host_src,
+                cfg.vm.name,
+            )
+            return 2
 
         removed = remove_attachment(
             reg, host_path=host_src, vm_name=cfg.vm.name

@@ -592,13 +592,33 @@ def _detach_shared_root_host_bind(
             == 0
         )
         if mounted:
-            mgr.run(
+            res = mgr.run(
                 ['umount', str(target)],
                 sudo=True,
-                check=True,
+                check=False,
                 capture=True,
                 summary=f'Unmount shared-root bind target {target}',
             )
+            if res.code != 0:
+                msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
+                if (
+                    'target is busy' in msg
+                    or 'not mounted' in msg
+                    or 'transport endpoint is not connected' in msg
+                ):
+                    if 'not mounted' not in msg:
+                        mgr.run(
+                            ['umount', '-l', str(target)],
+                            sudo=True,
+                            check=True,
+                            capture=True,
+                            summary=f'Lazy-unmount shared-root bind target {target}',
+                        )
+                else:
+                    raise RuntimeError(
+                        f'Failed to unmount shared-root host bind target {target}: '
+                        f'{(res.stderr or res.stdout).strip()}'
+                    )
         mgr.run(
             ['rmdir', str(target)],
             sudo=True,
@@ -607,8 +627,6 @@ def _detach_shared_root_host_bind(
             capture=True,
             summary=f'Remove shared-root bind target directory {target}',
         )
-
-
 def _detach_shared_root_guest_bind(
     cfg: AgentVMConfig,
     ip: str,
@@ -631,7 +649,13 @@ def _detach_shared_root_guest_bind(
     ]
     if dry_run:
         from loguru import logger
-
         logger.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
-    CommandManager.current().run(cmd, sudo=False, check=False, capture=True)
+    res = CommandManager.current().run(cmd, sudo=False, check=False, capture=True)
+    if res.code != 0:
+        raise RuntimeError(
+            'Failed to unmount shared-root attachment inside guest.\n'
+            f'VM: {cfg.vm.name}\n'
+            f'Guest destination: {attachment.guest_dst}\n'
+            f'Error: {(res.stderr or res.stdout).strip()}'
+        )
