@@ -18,7 +18,6 @@ from ..vm import ssh_config as mk_ssh_config
 from ..vm.share import ResolvedAttachment
 from .resolve import (
     ATTACHMENT_ACCESS_RO,
-    ATTACHMENT_MODE_GIT,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     _compute_mirror_home_symlink,
@@ -86,7 +85,9 @@ def _ensure_guest_symlink(
         f'{cfg.vm.user}@{ip}',
         script,
     ]
-    res = CommandManager.current().run(cmd, sudo=False, check=False, capture=True)
+    res = CommandManager.current().run(
+        cmd, sudo=False, check=False, capture=True
+    )
     if res.code not in (0, 3, 4, 5):
         log.warning(
             'Guest symlink setup failed for {} -> {}: {}',

@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from aivm.vm.share import AttachmentAccess, AttachmentMode, ResolvedAttachment
 from aivm.attachments.shared_root import (
     _ensure_shared_root_guest_bind,
     _ensure_shared_root_host_bind,
@@ -16,10 +15,7 @@ from aivm.attachments.shared_root import (
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
-from aivm.store import (
-    Store,
-    save_store,
-)
+from aivm.vm.share import AttachmentAccess, AttachmentMode, ResolvedAttachment
 
 
 def _activate_manager(

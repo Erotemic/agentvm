@@ -533,7 +533,7 @@ def desired_saved_vm_mappings(
         if mode in ('shared', 'shared-root'):
             if mode == 'shared':
                 # For shared mode, use host_path (the store field) and tag from attachment
-                src = att.host_path 
+                src = att.host_path
                 tag = att.tag
                 if src:  # Only add non-empty sources
                     desired.add((src, tag))

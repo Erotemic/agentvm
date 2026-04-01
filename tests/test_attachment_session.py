@@ -7,9 +7,8 @@ from typing import Any
 
 import pytest
 
-from aivm.cli.vm import VMSSHCLI, VMAttachCLI, VMCodeCLI
-from aivm.vm.share import AttachmentAccess, AttachmentMode, ResolvedAttachment
 from aivm.attachments.session import _record_attachment
+from aivm.cli.vm import VMSSHCLI, VMAttachCLI, VMCodeCLI
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.status import ProbeOutcome
@@ -22,6 +21,7 @@ from aivm.store import (
     upsert_network,
     upsert_vm_with_network,
 )
+from aivm.vm.share import AttachmentAccess, AttachmentMode, ResolvedAttachment
 
 
 def _activate_manager(
@@ -521,6 +521,7 @@ def test_git_mode_in_prepare_session_gets_companion_symlink(
 
     from aivm.store import Store
     from aivm.store import save_store as _save_store
+
     store = Store()
     store.attachments.append(
         AttachmentEntry(
@@ -542,23 +543,32 @@ def test_git_mode_in_prepare_session_gets_companion_symlink(
     )
 
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_cfg_for_code', lambda **k: (cfg, cfg_path)
+        'aivm.attachments.session._resolve_cfg_for_code',
+        lambda **k: (cfg, cfg_path),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_attachment', lambda *a, **k: attachment
+        'aivm.attachments.session._resolve_attachment',
+        lambda *a, **k: attachment,
     )
     monkeypatch.setattr(
         'aivm.attachments.session._reconcile_attached_vm',
-        lambda *a, **k: type('R', (), {
-            'attachment': attachment,
-            'cached_ip': '10.0.0.1',
-            'shared_root_host_side_ready': False,
-        })(),
+        lambda *a, **k: type(
+            'R',
+            (),
+            {
+                'attachment': attachment,
+                'cached_ip': '10.0.0.1',
+                'shared_root_host_side_ready': False,
+            },
+        )(),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._maybe_offer_create_ssh_identity', lambda *a, **k: False
+        'aivm.attachments.session._maybe_offer_create_ssh_identity',
+        lambda *a, **k: False,
     )
-    monkeypatch.setattr('aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path
+    )
     monkeypatch.setattr(
         'aivm.attachments.session.probe_ssh_ready',
         lambda *a, **k: type('P', (), {'ok': True})(),
@@ -580,7 +590,8 @@ def test_git_mode_in_prepare_session_gets_companion_symlink(
     )
 
     monkeypatch.setattr(
-        'aivm.attachments.session._restore_saved_vm_attachments', lambda *a, **k: None
+        'aivm.attachments.session._restore_saved_vm_attachments',
+        lambda *a, **k: None,
     )
 
     _prepare_attached_session(
@@ -600,9 +611,12 @@ def test_git_mode_in_prepare_session_gets_companion_symlink(
     expected_link = str(link_dir.expanduser().absolute())
     expected_target = str(real_dir.resolve())
     assert any(
-        c['symlink_path'] == expected_link and c['target_path'] == expected_target
+        c['symlink_path'] == expected_link
+        and c['target_path'] == expected_target
         for c in symlink_calls
-    ), f'Expected companion symlink {expected_link} -> {expected_target}, got: {symlink_calls}'
+    ), (
+        f'Expected companion symlink {expected_link} -> {expected_target}, got: {symlink_calls}'
+    )
 
 
 def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
@@ -621,6 +635,7 @@ def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
 
     from aivm.store import Store
     from aivm.store import save_store as _save_store
+
     store = Store()
     store.behavior.mirror_shared_home_folders = True
     _save_store(store, cfg_path)
@@ -635,23 +650,32 @@ def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
     )
 
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_cfg_for_code', lambda **k: (cfg, cfg_path)
+        'aivm.attachments.session._resolve_cfg_for_code',
+        lambda **k: (cfg, cfg_path),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_attachment', lambda *a, **k: attachment
+        'aivm.attachments.session._resolve_attachment',
+        lambda *a, **k: attachment,
     )
     monkeypatch.setattr(
         'aivm.attachments.session._reconcile_attached_vm',
-        lambda *a, **k: type('R', (), {
-            'attachment': attachment,
-            'cached_ip': '10.0.0.1',
-            'shared_root_host_side_ready': False,
-        })(),
+        lambda *a, **k: type(
+            'R',
+            (),
+            {
+                'attachment': attachment,
+                'cached_ip': '10.0.0.1',
+                'shared_root_host_side_ready': False,
+            },
+        )(),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._maybe_offer_create_ssh_identity', lambda *a, **k: False
+        'aivm.attachments.session._maybe_offer_create_ssh_identity',
+        lambda *a, **k: False,
     )
-    monkeypatch.setattr('aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path
+    )
     monkeypatch.setattr(
         'aivm.attachments.session.probe_ssh_ready',
         lambda *a, **k: type('P', (), {'ok': True})(),
@@ -671,7 +695,8 @@ def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
         ),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._restore_saved_vm_attachments', lambda *a, **k: None
+        'aivm.attachments.session._restore_saved_vm_attachments',
+        lambda *a, **k: None,
     )
 
     # Patch Path.home so we know what the mirror path will be
@@ -692,9 +717,9 @@ def test_git_mode_in_prepare_session_gets_mirror_home_symlink(
 
     # Mirror symlink should point into /home/agent/code/myproject
     expected_mirror = '/home/agent/code/myproject'
-    assert any(
-        c['symlink_path'] == expected_mirror for c in symlink_calls
-    ), f'Expected mirror symlink at {expected_mirror}, got: {symlink_calls}'
+    assert any(c['symlink_path'] == expected_mirror for c in symlink_calls), (
+        f'Expected mirror symlink at {expected_mirror}, got: {symlink_calls}'
+    )
 
 
 def test_restore_shared_attachment_applies_guest_derived_symlinks(
@@ -815,7 +840,16 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     ensure_calls: list[dict] = []
     monkeypatch.setattr(
         'aivm.attachments.session._ensure_attachment_available_in_guest',
-        lambda cfg_a, host_src_a, att, ip, *, yes, dry_run, ensure_shared_root_host_side, allow_disruptive_shared_root_rebind, mirror_home: ensure_calls.append(
+        lambda cfg_a,
+        host_src_a,
+        att,
+        ip,
+        *,
+        yes,
+        dry_run,
+        ensure_shared_root_host_side,
+        allow_disruptive_shared_root_rebind,
+        mirror_home: ensure_calls.append(
             {
                 'allow_disruptive': allow_disruptive_shared_root_rebind,
                 'mirror_home': mirror_home,
@@ -972,7 +1006,9 @@ def test_restore_uses_lexical_path_for_companion_symlink(
     primary = ResolvedAttachment(
         vm_name=cfg.vm.name,
         mode=AttachmentMode.SHARED,
-        source_dir=str(tmp_path / 'primary'),  # different source so secondary runs
+        source_dir=str(
+            tmp_path / 'primary'
+        ),  # different source so secondary runs
         guest_dst=str(tmp_path / 'primary'),
         tag='tag-primary',
     )
@@ -1002,8 +1038,12 @@ def test_restore_uses_lexical_path_for_companion_symlink(
         'aivm.attachments.session.drift_attachment_has_mapping',
         lambda cfg_a, att, mappings: True,
     )
-    monkeypatch.setattr('aivm.attachments.session.ensure_share_mounted', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.attachments.session.ensure_share_mounted', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path
+    )
 
     derived_calls: list[dict] = []
     monkeypatch.setattr(
@@ -1089,8 +1129,12 @@ def test_restore_non_symlink_attachment_unchanged(
         'aivm.attachments.session.drift_attachment_has_mapping',
         lambda cfg_a, att, mappings: True,
     )
-    monkeypatch.setattr('aivm.attachments.session.ensure_share_mounted', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.attachments.session.ensure_share_mounted', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path
+    )
 
     derived_calls: list[dict] = []
     monkeypatch.setattr(

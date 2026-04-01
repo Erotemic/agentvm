@@ -11,7 +11,7 @@ from ..config import AgentVMConfig
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdResult
 from ..vm import attach_vm_share, vm_share_mappings
-from ..vm.share import ResolvedAttachment, SHARED_ROOT_VIRTIOFS_TAG
+from ..vm.share import SHARED_ROOT_VIRTIOFS_TAG, ResolvedAttachment
 from .resolve import ATTACHMENT_ACCESS_RO, ATTACHMENT_ACCESS_RW
 
 SHARED_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-shared'
@@ -469,6 +469,7 @@ def _ensure_shared_root_guest_bind(
     ]
     if dry_run:
         from loguru import logger
+
         logger.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
     mount_cmd = _shared_root_guest_mount_cmd(
@@ -588,6 +589,7 @@ def _detach_shared_root_guest_bind(
     ]
     if dry_run:
         from loguru import logger
+
         logger.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
     CommandManager.current().run(cmd, sudo=False, check=False, capture=True)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shlex
@@ -10,11 +9,34 @@ import sys
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import scriptconfig as scfg
 
+from ..attachments.guest import (
+    _ensure_attachment_available_in_guest,
+    _upsert_ssh_config_entry,
+)
+from ..attachments.resolve import (
+    ATTACHMENT_MODE_SHARED,
+    ATTACHMENT_MODE_SHARED_ROOT,
+    _normalize_attachment_access,
+    _normalize_attachment_mode,
+    _resolve_attachment,
+)
+from ..attachments.session import (
+    _maybe_warn_hardware_drift,
+    _prepare_attached_session,
+    _record_attachment,
+    _resolve_ip_for_ssh_ops,
+)
+from ..attachments.shared_root import (
+    _detach_shared_root_guest_bind,
+    _detach_shared_root_host_bind,
+    _ensure_shared_root_host_bind,
+    _ensure_shared_root_vm_mapping,
+)
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
@@ -25,14 +47,10 @@ from ..resource_checks import (
 )
 from ..runtime import require_ssh_identity, ssh_base_args, virsh_system_cmd
 from ..status import (
-    probe_firewall,
-    probe_network,
-    probe_ssh_ready,
     probe_vm_state,
 )
 from ..store import (
     find_attachment_for_vm,
-    find_attachments_for_vm,
     find_network,
     find_vm,
     load_store,
@@ -41,7 +59,6 @@ from ..store import (
     remove_attachment,
     remove_vm,
     save_store,
-    upsert_attachment,
     upsert_network,
     upsert_vm_with_network,
 )
@@ -51,31 +68,28 @@ from ..vm import (
     create_or_start_vm,
     destroy_vm,
     detach_vm_share,
-    ensure_share_mounted,
-    get_ip_cached,
     provision,
     sync_settings,
-    vm_has_virtiofs_shared_memory,
     vm_share_mappings,
     vm_status,
     wait_for_ip,
-    wait_for_ssh,
 )
 from ..vm import (
     ssh_config as mk_ssh_config,
 )
 from ..vm.drift import (
     attachment_has_mapping as drift_attachment_has_mapping,
+)
+from ..vm.drift import (
     parse_dominfo_hardware as _parse_dominfo_hardware,
 )
 from ..vm.share import (
-    AttachmentAccess,
-    AttachmentMode,
     ResolvedAttachment,
+)
+from ..vm.share import (
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
 )
 from ._common import (
-    PreparedSession,
     _BaseCommand,
     _cfg_path,
     _load_cfg,
@@ -85,30 +99,6 @@ from ._common import (
     _record_vm,
     _resolve_cfg_for_code,
     log,
-)
-
-from ..attachments.resolve import (
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
-    _normalize_attachment_access,
-    _normalize_attachment_mode,
-    _resolve_attachment,
-)
-from ..attachments.shared_root import (
-    _detach_shared_root_guest_bind,
-    _detach_shared_root_host_bind,
-    _ensure_shared_root_host_bind,
-    _ensure_shared_root_vm_mapping,
-)
-from ..attachments.guest import (
-    _ensure_attachment_available_in_guest,
-    _upsert_ssh_config_entry,
-)
-from ..attachments.session import (
-    _maybe_warn_hardware_drift,
-    _prepare_attached_session,
-    _record_attachment,
-    _resolve_ip_for_ssh_ops,
 )
 
 
@@ -1644,4 +1634,3 @@ def _maybe_restart_vm_after_update(
 def _parse_sync_paths_arg(paths_arg: str) -> list[str]:
     items = [p.strip() for p in (paths_arg or '').split(',')]
     return [p for p in items if p]
-

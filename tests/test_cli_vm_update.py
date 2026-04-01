@@ -262,7 +262,8 @@ def test_prepare_attached_session_bootstraps_missing_vm(
         return cfg, cfg_path
 
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_cfg_for_code', fake_resolve_cfg_for_code
+        'aivm.attachments.session._resolve_cfg_for_code',
+        fake_resolve_cfg_for_code,
     )
     monkeypatch.setattr(
         'aivm.cli.config.InitCLI.main',
@@ -298,9 +299,12 @@ def test_prepare_attached_session_bootstraps_missing_vm(
         ),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._record_attachment', lambda *a, **k: tmp_path / 'dummy'
+        'aivm.attachments.session._record_attachment',
+        lambda *a, **k: tmp_path / 'dummy',
     )
-    monkeypatch.setattr('aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2')
+    monkeypatch.setattr(
+        'aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2'
+    )
     monkeypatch.setattr(
         'aivm.attachments.session.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
@@ -347,7 +351,8 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
         return cfg, cfg_path
 
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_cfg_for_code', fake_resolve_cfg_for_code
+        'aivm.attachments.session._resolve_cfg_for_code',
+        fake_resolve_cfg_for_code,
     )
 
     def fake_init(*a: object, **k: Any) -> int:
@@ -363,7 +368,9 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
 
     monkeypatch.setattr('aivm.cli.config.InitCLI.main', fake_init)
     monkeypatch.setattr('aivm.cli.vm.VMCreateCLI.main', fake_vm_create)
-    monkeypatch.setattr('aivm.attachments.session.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr(
+        'aivm.attachments.session.sys.stdin.isatty', lambda: True
+    )
     monkeypatch.setattr('builtins.input', lambda prompt='': 'y')
     monkeypatch.setattr(
         'aivm.attachments.session._resolve_attachment',
@@ -388,9 +395,12 @@ def test_prepare_attached_session_interactive_bootstrap_preserves_yes_false(
         ),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._record_attachment', lambda *a, **k: tmp_path / 'dummy'
+        'aivm.attachments.session._record_attachment',
+        lambda *a, **k: tmp_path / 'dummy',
     )
-    monkeypatch.setattr('aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2')
+    monkeypatch.setattr(
+        'aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2'
+    )
     monkeypatch.setattr(
         'aivm.attachments.session.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
@@ -461,7 +471,8 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
         return cfg, cfg_path
 
     monkeypatch.setattr(
-        'aivm.attachments.session._resolve_cfg_for_code', fake_resolve_cfg_for_code
+        'aivm.attachments.session._resolve_cfg_for_code',
+        fake_resolve_cfg_for_code,
     )
     monkeypatch.setattr(
         'aivm.cli.config.InitCLI.main',
@@ -497,9 +508,12 @@ def test_prepare_attached_session_bootstraps_create_only_when_defaults_exist(
         ),
     )
     monkeypatch.setattr(
-        'aivm.attachments.session._record_attachment', lambda *a, **k: tmp_path / 'dummy'
+        'aivm.attachments.session._record_attachment',
+        lambda *a, **k: tmp_path / 'dummy',
     )
-    monkeypatch.setattr('aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2')
+    monkeypatch.setattr(
+        'aivm.attachments.session.get_ip_cached', lambda *a, **k: '10.0.0.2'
+    )
     monkeypatch.setattr(
         'aivm.attachments.session.probe_ssh_ready',
         lambda *a, **k: ProbeOutcome(True, 'ready', ''),
@@ -607,7 +621,9 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         del a, k
         return list(mappings)
 
-    monkeypatch.setattr('aivm.attachments.session.vm_share_mappings', fake_vm_share_mappings)
+    monkeypatch.setattr(
+        'aivm.attachments.session.vm_share_mappings', fake_vm_share_mappings
+    )
 
     attached: list[tuple[tuple, dict]] = []
 
@@ -615,7 +631,9 @@ def test_prepare_attached_session_restores_saved_vm_attachments(
         attached.append((a, k))
         mappings.append((str(other_src.resolve()), 'hostcode-docs'))
 
-    monkeypatch.setattr('aivm.attachments.session.attach_vm_share', fake_attach_vm_share)
+    monkeypatch.setattr(
+        'aivm.attachments.session.attach_vm_share', fake_attach_vm_share
+    )
 
     mounted: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(

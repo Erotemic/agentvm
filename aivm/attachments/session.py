@@ -10,17 +10,22 @@ from pathlib import Path
 
 from loguru import logger
 
+from ..cli._common import (
+    PreparedSession,
+    _cfg_path,
+    _maybe_install_missing_host_deps,
+    _maybe_offer_create_ssh_identity,
+    _record_vm,
+    _resolve_cfg_for_code,
+)
 from ..commands import CommandManager
 from ..config import AgentVMConfig
-from ..util import CmdError
 from ..firewall import apply_firewall
 from ..net import ensure_network
-from ..runtime import require_ssh_identity, ssh_base_args
 from ..status import (
     probe_firewall,
     probe_network,
     probe_ssh_ready,
-    probe_vm_state,
 )
 from ..store import (
     find_attachments_for_vm,
@@ -30,6 +35,7 @@ from ..store import (
     upsert_network,
     upsert_vm_with_network,
 )
+from ..util import CmdError
 from ..vm import (
     attach_vm_share,
     create_or_start_vm,
@@ -42,25 +48,25 @@ from ..vm import (
 )
 from ..vm.drift import (
     attachment_has_mapping as drift_attachment_has_mapping,
+)
+from ..vm.drift import (
     hardware_drift_report,
 )
+from ..vm.share import SHARED_ROOT_VIRTIOFS_TAG, ResolvedAttachment
 from ..vm.share import (
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
-)
-from ..vm.share import ResolvedAttachment, SHARED_ROOT_VIRTIOFS_TAG
-from ..cli._common import PreparedSession, _cfg_path, _maybe_install_missing_host_deps, _maybe_offer_create_ssh_identity, _record_vm, _resolve_cfg_for_code
-from .resolve import (
-    ATTACHMENT_ACCESS_RO,
-    ATTACHMENT_MODE_GIT,
-    ATTACHMENT_MODE_SHARED,
-    ATTACHMENT_MODE_SHARED_ROOT,
-    _normalize_attachment_mode,
-    _resolve_attachment,
 )
 from .guest import (
     _apply_guest_derived_symlinks,
     _ensure_attachment_available_in_guest,
     _ensure_git_clone_attachment,
+)
+from .resolve import (
+    ATTACHMENT_ACCESS_RO,
+    ATTACHMENT_MODE_SHARED,
+    ATTACHMENT_MODE_SHARED_ROOT,
+    _normalize_attachment_mode,
+    _resolve_attachment,
 )
 from .shared_root import (
     _ensure_shared_root_host_bind,
@@ -762,7 +768,7 @@ def _prepare_attached_session(
         prefix = 'No VM definitions found in config store: '
         missing_store_path = _cfg_path(config_opt)
         if msg.startswith(prefix):
-            tail = msg[len(prefix):]
+            tail = msg[len(prefix) :]
             # Avoid brittle regex parsing: split at our known guidance suffix.
             store_str = tail.split('. Run `aivm config init`', 1)[0].strip()
             if store_str:
@@ -948,5 +954,3 @@ def _prepare_attached_session(
         reg_path=reg_path,
         meta_path=None,
     )
-
-

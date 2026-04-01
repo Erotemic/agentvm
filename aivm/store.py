@@ -180,7 +180,9 @@ def load_store(path: Path | None = None) -> Store:
                 access=str(item.get('access', 'rw') or 'rw'),
                 guest_dst=str(item.get('guest_dst', '')).strip(),
                 tag=str(item.get('tag', '')).strip(),
-                host_lexical_path=str(item.get('host_lexical_path', '')).strip(),
+                host_lexical_path=str(
+                    item.get('host_lexical_path', '')
+                ).strip(),
             )
         )
     log.trace('Finish load store')

@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from aivm.vm.share import AttachmentMode, ResolvedAttachment
 from aivm.attachments.guest import (
     _apply_guest_derived_symlinks,
     _ensure_guest_symlink,
@@ -19,6 +18,7 @@ from aivm.attachments.guest import (
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
 from aivm.util import CmdResult
+from aivm.vm.share import AttachmentMode, ResolvedAttachment
 
 
 def _activate_manager(
@@ -259,7 +259,9 @@ def test_ensure_guest_symlink_creates_new_symlink(
     cmds: list[list[str]] = []
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (cmds.append([str(c) for c in cmd]) or _Proc(0, '', '')),
+        lambda cmd, **kwargs: (
+            cmds.append([str(c) for c in cmd]) or _Proc(0, '', '')
+        ),
     )
 
     _ensure_guest_symlink(
@@ -272,7 +274,7 @@ def test_ensure_guest_symlink_creates_new_symlink(
     assert len(cmds) == 1
     assert cmds[0][0] == 'ssh'
     script = cmds[0][-1]
-    assert "ln -s" in script
+    assert 'ln -s' in script
     assert '/home/joncrall/code/repo' in script
 
 
@@ -285,14 +287,21 @@ def test_ensure_guest_symlink_warns_on_wrong_existing_symlink(
     cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
 
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: p or '/tmp/id_ed25519')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id_ed25519'])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity',
+        lambda p: p or '/tmp/id_ed25519',
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id_ed25519'],
+    )
 
     messages: list[str] = []
 
     class _FakeLog:
         def warning(self, fmt: str, *args: Any) -> None:
             messages.append(fmt.format(*args) if args else fmt)
+
         def info(self, *a: Any, **k: Any) -> None: ...
         def debug(self, *a: Any, **k: Any) -> None: ...
         def trace(self, *a: Any, **k: Any) -> None: ...
@@ -302,11 +311,14 @@ def test_ensure_guest_symlink_warns_on_wrong_existing_symlink(
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
         # exit code 3 = wrong symlink
-        lambda cmd, **kwargs: _Proc(3, '', 'aivm-symlink-warn: /link is a symlink to /other; skipping'),
+        lambda cmd, **kwargs: _Proc(
+            3, '', 'aivm-symlink-warn: /link is a symlink to /other; skipping'
+        ),
     )
 
     _ensure_guest_symlink(
-        cfg, '10.0.0.1',
+        cfg,
+        '10.0.0.1',
         symlink_path='/link',
         target_path='/target',
     )
@@ -322,19 +334,34 @@ def test_ensure_guest_symlink_noop_on_correct_existing_symlink(
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = ''
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: '/id')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: [])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
     messages: list[str] = []
-    monkeypatch.setattr('aivm.attachments.guest.log', type('L', (), {
-        'warning': lambda s, fmt, *a, **k: messages.append(fmt),
-        'info': lambda s, *a, **k: None,
-        'debug': lambda s, *a, **k: None,
-        'trace': lambda s, *a, **k: None,
-        'error': lambda s, *a, **k: None,
-    })())
+    monkeypatch.setattr(
+        'aivm.attachments.guest.log',
+        type(
+            'L',
+            (),
+            {
+                'warning': lambda s, fmt, *a, **k: messages.append(fmt),
+                'info': lambda s, *a, **k: None,
+                'debug': lambda s, *a, **k: None,
+                'trace': lambda s, *a, **k: None,
+                'error': lambda s, *a, **k: None,
+            },
+        )(),
+    )
     # exit 0 = already correct
-    monkeypatch.setattr('aivm.commands.subprocess.run', lambda cmd, **kwargs: _Proc(0, '', ''))
-    _ensure_guest_symlink(cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt')
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run', lambda cmd, **kwargs: _Proc(0, '', '')
+    )
+    _ensure_guest_symlink(
+        cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt'
+    )
     assert not messages
 
 
@@ -346,13 +373,18 @@ def test_ensure_guest_symlink_warns_on_nonempty_dir(
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = ''
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: '/id')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: [])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
     messages: list[str] = []
 
     class _FakeLog:
         def warning(self, fmt: str, *args: Any) -> None:
             messages.append(fmt.format(*args) if args else fmt)
+
         def info(self, *a: Any, **k: Any) -> None: ...
         def debug(self, *a: Any, **k: Any) -> None: ...
         def trace(self, *a: Any, **k: Any) -> None: ...
@@ -364,13 +396,18 @@ def test_ensure_guest_symlink_warns_on_nonempty_dir(
     def _make_ssh_fake(exit_code: int, stderr: str = '') -> Any:
         def fake(cmd: list[str], **kwargs: Any) -> _Proc:
             return _Proc(exit_code, '', stderr)
+
         return fake
 
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        _make_ssh_fake(4, 'aivm-symlink-warn: /link is a non-empty directory; skipping'),
+        _make_ssh_fake(
+            4, 'aivm-symlink-warn: /link is a non-empty directory; skipping'
+        ),
     )
-    _ensure_guest_symlink(cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt')
+    _ensure_guest_symlink(
+        cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt'
+    )
     assert any('non-empty directory' in m for m in messages)
 
 
@@ -382,13 +419,18 @@ def test_ensure_guest_symlink_warns_on_regular_file(
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = ''
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: '/id')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: [])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
     messages: list[str] = []
 
     class _FakeLog:
         def warning(self, fmt: str, *args: Any) -> None:
             messages.append(fmt.format(*args) if args else fmt)
+
         def info(self, *a: Any, **k: Any) -> None: ...
         def debug(self, *a: Any, **k: Any) -> None: ...
         def trace(self, *a: Any, **k: Any) -> None: ...
@@ -399,13 +441,18 @@ def test_ensure_guest_symlink_warns_on_regular_file(
     def _make_ssh_fake(exit_code: int, stderr: str = '') -> Any:
         def fake(cmd: list[str], **kwargs: Any) -> _Proc:
             return _Proc(exit_code, '', stderr)
+
         return fake
 
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        _make_ssh_fake(5, 'aivm-symlink-warn: /link is a regular file; skipping'),
+        _make_ssh_fake(
+            5, 'aivm-symlink-warn: /link is a regular file; skipping'
+        ),
     )
-    _ensure_guest_symlink(cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt')
+    _ensure_guest_symlink(
+        cfg, '10.0.0.1', symlink_path='/link', target_path='/tgt'
+    )
     assert any('regular file' in m for m in messages)
 
 
@@ -431,14 +478,23 @@ def test_ensure_attachment_creates_mirror_home_symlink_when_enabled(
         tag='hostcode-foobar-abc12345',
     )
 
-    monkeypatch.setattr('aivm.attachments.guest.ensure_share_mounted', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ensure_share_mounted', lambda *a, **k: None
+    )
 
     symlink_calls: list[dict] = []
 
-    def fake_ensure_guest_symlink(cfg_arg: Any, ip: str, *, symlink_path: str, target_path: str) -> None:
-        symlink_calls.append({'symlink_path': symlink_path, 'target_path': target_path})
+    def fake_ensure_guest_symlink(
+        cfg_arg: Any, ip: str, *, symlink_path: str, target_path: str
+    ) -> None:
+        symlink_calls.append(
+            {'symlink_path': symlink_path, 'target_path': target_path}
+        )
 
-    monkeypatch.setattr('aivm.attachments.guest._ensure_guest_symlink', fake_ensure_guest_symlink)
+    monkeypatch.setattr(
+        'aivm.attachments.guest._ensure_guest_symlink',
+        fake_ensure_guest_symlink,
+    )
 
     # Patch Path.home to something known so mirror can be computed
     host_home = tmp_path
@@ -459,7 +515,9 @@ def test_ensure_attachment_creates_mirror_home_symlink_when_enabled(
 
     # Mirror symlink should have been requested for /home/agent/code/foobar -> guest_dst
     expected_mirror = '/home/agent/code/foobar'
-    assert any(c['symlink_path'] == expected_mirror for c in symlink_calls), symlink_calls
+    assert any(c['symlink_path'] == expected_mirror for c in symlink_calls), (
+        symlink_calls
+    )
 
 
 def test_ensure_attachment_no_mirror_when_disabled(
@@ -484,7 +542,9 @@ def test_ensure_attachment_no_mirror_when_disabled(
         tag='hostcode-foobar-abc12345',
     )
 
-    monkeypatch.setattr('aivm.attachments.guest.ensure_share_mounted', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ensure_share_mounted', lambda *a, **k: None
+    )
 
     symlink_calls: list[dict] = []
     monkeypatch.setattr(
@@ -520,13 +580,20 @@ def test_ensure_guest_git_repo_uses_sudo_for_parent_creation(
     cfg.paths.ssh_identity_file = '/tmp/id'
 
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: p or '/tmp/id')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: ['-i', '/tmp/id'])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: p or '/tmp/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id'],
+    )
 
     cmds: list[list[str]] = []
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (cmds.append([str(c) for c in cmd]) or _Proc(0, '', '')),
+        lambda cmd, **kwargs: (
+            cmds.append([str(c) for c in cmd]) or _Proc(0, '', '')
+        ),
     )
 
     _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo', 'main')
@@ -547,8 +614,12 @@ def test_ensure_guest_symlink_uses_sudo_for_ln(
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = ''
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: '/id')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: [])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
 
     scripts: list[str] = []
     monkeypatch.setattr(
@@ -557,7 +628,8 @@ def test_ensure_guest_symlink_uses_sudo_for_ln(
     )
 
     _ensure_guest_symlink(
-        cfg, '10.0.0.1',
+        cfg,
+        '10.0.0.1',
         symlink_path='/home/joncrall/code/repo',
         target_path='/home/joncrall/code/repo',
     )
@@ -582,8 +654,12 @@ def test_ensure_guest_git_repo_uses_sudo_mkdir_for_full_path(
     cfg.vm.user = 'agent'
     cfg.paths.ssh_identity_file = ''
     _activate_manager(monkeypatch)
-    monkeypatch.setattr('aivm.attachments.guest.require_ssh_identity', lambda p: '/id')
-    monkeypatch.setattr('aivm.attachments.guest.ssh_base_args', lambda *a, **k: [])
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
 
     scripts: list[str] = []
     monkeypatch.setattr(
@@ -778,11 +854,15 @@ def test_apply_guest_derived_symlinks_custom_dst_suppresses_all_mirrors(
     )
 
     # Companion symlink (lexical -> custom_dst) is allowed
-    companion_calls = [c for c in calls if '/home/agent' not in c['symlink_path']]
+    companion_calls = [
+        c for c in calls if '/home/agent' not in c['symlink_path']
+    ]
     mirror_calls = [c for c in calls if '/home/agent' in c['symlink_path']]
 
     # The companion symlink at the lexical path is expected (it points to custom_dst)
     assert len(companion_calls) == 1
-    assert companion_calls[0]['symlink_path'] == str(link_dir.expanduser().absolute())
+    assert companion_calls[0]['symlink_path'] == str(
+        link_dir.expanduser().absolute()
+    )
     # No mirror-home symlinks should be created when guest_dst is custom
     assert mirror_calls == [], f'Expected no mirror calls, got: {mirror_calls}'

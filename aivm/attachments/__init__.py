@@ -1,5 +1,20 @@
 """Attachment/session subsystem for aivm."""
 
+from .guest import (
+    _apply_guest_derived_symlinks,
+    _ensure_attachment_available_in_guest,
+    _ensure_git_clone_attachment,
+    _ensure_guest_git_repo,
+    _ensure_guest_symlink,
+    _git_attachment_remote_name,
+    _git_current_branch,
+    _git_repo_context,
+    _guest_repo_root_for_attachment,
+    _push_host_repo_to_guest,
+    _upsert_host_git_remote,
+    _upsert_ssh_config_entry,
+    _warn_if_git_repo_dirty,
+)
 from .resolve import (
     ATTACHMENT_ACCESS_MODES,
     ATTACHMENT_ACCESS_RO,
@@ -16,32 +31,6 @@ from .resolve import (
     _resolve_attachment,
     _resolve_guest_dst,
 )
-from .shared_root import (
-    SHARED_ROOT_GUEST_MOUNT_ROOT,
-    _detach_shared_root_guest_bind,
-    _detach_shared_root_host_bind,
-    _ensure_shared_root_guest_bind,
-    _ensure_shared_root_host_bind,
-    _ensure_shared_root_parent_dir,
-    _ensure_shared_root_vm_mapping,
-    _shared_root_host_dir,
-    _shared_root_host_target,
-)
-from .guest import (
-    _apply_guest_derived_symlinks,
-    _ensure_attachment_available_in_guest,
-    _ensure_git_clone_attachment,
-    _ensure_guest_git_repo,
-    _ensure_guest_symlink,
-    _git_attachment_remote_name,
-    _git_current_branch,
-    _git_repo_context,
-    _guest_repo_root_for_attachment,
-    _push_host_repo_to_guest,
-    _upsert_host_git_remote,
-    _upsert_ssh_config_entry,
-    _warn_if_git_repo_dirty,
-)
 from .session import (
     ReconcilePolicy,
     ReconcileResult,
@@ -55,6 +44,17 @@ from .session import (
     _restore_saved_vm_attachments,
     _saved_vm_attachments,
     _virtiofs_mapping_for_attachment,
+)
+from .shared_root import (
+    SHARED_ROOT_GUEST_MOUNT_ROOT,
+    _detach_shared_root_guest_bind,
+    _detach_shared_root_host_bind,
+    _ensure_shared_root_guest_bind,
+    _ensure_shared_root_host_bind,
+    _ensure_shared_root_parent_dir,
+    _ensure_shared_root_vm_mapping,
+    _shared_root_host_dir,
+    _shared_root_host_target,
 )
 
 __all__ = [

@@ -597,9 +597,7 @@ class CommandManager:
         # TODO: probably a good public method, let the underlying scope handle it.
         plan.closed = True
 
-    def finish_plan(
-        self, plan: CommandPlan, *, _stacklevel: int = 1
-    ) -> None:
+    def finish_plan(self, plan: CommandPlan, *, _stacklevel: int = 1) -> None:
         """Finalize, approve, and execute a plan.
 
         Empty plans are simply marked closed. Non-empty plans are previewed,
@@ -692,9 +690,7 @@ class CommandManager:
 
         self._loose_commands.append(planned)
         if eager:
-            self.flush_through(
-                planned.command_id, _stacklevel=_stacklevel + 1
-            )
+            self.flush_through(planned.command_id, _stacklevel=_stacklevel + 1)
         return handle
 
     def run(
@@ -738,9 +734,7 @@ class CommandManager:
         if self._loose_commands:
             self._flush_loose_commands(_stacklevel=_stacklevel + 1)
 
-    def flush_through(
-        self, command_id: int, *, _stacklevel: int = 1
-    ) -> None:
+    def flush_through(self, command_id: int, *, _stacklevel: int = 1) -> None:
         """Flush execution through the specified command id.
 
         This executes all earlier pending commands needed to reach the
@@ -996,7 +990,9 @@ class CommandManager:
                 .lower()
             )
             if ans in {'s', 'show'}:
-                self._render_plan_full_commands(plan, _stacklevel=_stacklevel + 1)
+                self._render_plan_full_commands(
+                    plan, _stacklevel=_stacklevel + 1
+                )
                 continue
             if ans in {'a', 'all'}:
                 self._approve_all_remaining = True
@@ -1169,9 +1165,7 @@ class CommandManager:
         """Execute one command specification and normalize its result."""
         local_log = log.opt(depth=_stacklevel)
         if spec.sudo and not within_plan:
-            self._confirm_loose_sudo_command(
-                spec, _stacklevel=_stacklevel + 1
-            )
+            self._confirm_loose_sudo_command(spec, _stacklevel=_stacklevel + 1)
         cmd = list(spec.cmd)
         if spec.sudo and os.geteuid() != 0:
             cmd = ['sudo', *cmd] if sys.stdin.isatty() else ['sudo', '-n', *cmd]

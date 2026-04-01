@@ -74,9 +74,7 @@ class _BaseCommand(scfg.DataConfig):
         cfg_auto_approve_readonly_sudo = (
             _resolve_cfg_auto_approve_readonly_sudo(parsed.config)
         )
-        effective_yes_sudo = bool(
-            parsed.yes_sudo or parsed.yes or cfg_yes_sudo
-        )
+        effective_yes_sudo = bool(parsed.yes_sudo or parsed.yes or cfg_yes_sudo)
         setattr(parsed, 'yes_sudo', effective_yes_sudo)
         _CURRENT_YES_SUDO.set(effective_yes_sudo)
         _CURRENT_AUTO_APPROVE_READONLY_SUDO.set(
@@ -145,7 +143,9 @@ def _resolve_cfg_auto_approve_readonly_sudo(config_opt: str | None) -> bool:
         path = _cfg_path(config_opt)
         if path.exists():
             reg = load_store(path)
-            auto_approve_readonly_sudo = bool(reg.behavior.auto_approve_readonly_sudo)
+            auto_approve_readonly_sudo = bool(
+                reg.behavior.auto_approve_readonly_sudo
+            )
     except Exception:
         auto_approve_readonly_sudo = True
     return auto_approve_readonly_sudo
