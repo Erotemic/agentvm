@@ -3,3 +3,9 @@
 The way we tag the names of the folders that we attach might need to be reworked.
 
 We need to add something to the AGENT file to let it know when and when not to care about backwards compatibility. If we are inside a feature branch or dev, we don't need to be backwards compatible with the current feature, only the last released version matters.
+
+
+NOTE: the reattach of mounted drives is still broken, it seemed fixed for a
+bit, but it is certainly still there. Confirmed, even when aivm does the VM
+startup the issue still exists. maybe it was fixed in
+ae261eba4505d06a99d70b2e7bf7a8f61f6ae8fa but then the claude changes broke it?
