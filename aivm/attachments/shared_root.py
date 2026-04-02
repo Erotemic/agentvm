@@ -250,15 +250,17 @@ def _ensure_shared_root_host_bind(
         raise RuntimeError(
             f'shared-root source must be an existing directory: {source_dir}'
         )
+
     target = _shared_root_host_target(cfg, attachment.tag)
     if dry_run:
         print(
             f'DRYRUN: would bind-mount {source_dir} -> {target} for shared-root mode'
         )
         return target
+
     probe = _probe_findmnt_target_source(target)
-    current = probe.source
     is_mountpoint = probe.is_mountpoint
+
     if is_mountpoint:
         # findmnt SOURCE for bind mounts is not stable across filesystems.
         # Accept the mount as healthy when SOURCE/ROOT candidates or stat
@@ -273,6 +275,26 @@ def _ensure_shared_root_host_bind(
                 f'actual_root={probe.root or "unknown"}, actual_fstype={probe.fstype or "unknown"}). '
                 'Use an explicit attach/detach command to reconcile this mount.'
             )
+
+    source_q = shlex.quote(source_dir)
+    target_q = shlex.quote(str(target))
+
+    # Final shell-side idempotence guard: if target is already a mountpoint and
+    # stat(source) == stat(target), do not issue another bind mount. This avoids
+    # stacking duplicate identical layers even if a prior probe was stale or a
+    # concurrent path already repaired the target.
+    mount_if_needed_script = (
+        'set -euo pipefail; '
+        f'if mountpoint -q {target_q}; then '
+        f'src_stat="$(stat -Lc %d:%i {source_q} 2>/dev/null || true)"; '
+        f'dst_stat="$(stat -Lc %d:%i {target_q} 2>/dev/null || true)"; '
+        'if [ -n "$src_stat" ] && [ "$src_stat" = "$dst_stat" ]; then '
+        'exit 0; '
+        'fi; '
+        'fi; '
+        f'mount --bind {source_q} {target_q}'
+    )
+
     with mgr.step(
         'Prepare host bind targets',
         why='Ensure the shared-root export directories exist and the VM-specific bind target points at the requested host folder.',
@@ -292,10 +314,18 @@ def _ensure_shared_root_host_bind(
             summary='Create project-specific host bind target',
             detail=f'target={target}',
         )
+
         if is_mountpoint:
             repair_script = (
                 'set -euo pipefail; '
-                f'msg="$(umount {shlex.quote(str(target))} 2>&1 || true)"; '
+                f'src_stat="$(stat -Lc %d:%i {source_q} 2>/dev/null || true)"; '
+                f'dst_stat="$(stat -Lc %d:%i {target_q} 2>/dev/null || true)"; '
+                'if mountpoint -q ' + target_q + '; then '
+                'if [ -n "$src_stat" ] && [ "$src_stat" = "$dst_stat" ]; then '
+                'exit 0; '
+                'fi; '
+                'fi; '
+                f'msg="$(umount {target_q} 2>&1 || true)"; '
                 'if [ -n "$msg" ]; then '
                 'msg_lc="$(printf "%s" "$msg" | tr "[:upper:]" "[:lower:]")"; '
                 'case "$msg_lc" in '
@@ -303,15 +333,22 @@ def _ensure_shared_root_host_bind(
                 'if printf "%s" "$msg_lc" | grep -q "not mounted"; then '
                 ':; '
                 'else '
-                f'umount -l {shlex.quote(str(target))}; '
+                f'umount -l {target_q}; '
                 'fi ;; '
                 '*) printf "%s\\n" "$msg" >&2; exit 1 ;; '
                 'esac; '
                 'fi; '
-                f'mount --bind {shlex.quote(source_dir)} {shlex.quote(str(target))}'
+                f'if mountpoint -q {target_q}; then '
+                f'src_stat="$(stat -Lc %d:%i {source_q} 2>/dev/null || true)"; '
+                f'dst_stat="$(stat -Lc %d:%i {target_q} 2>/dev/null || true)"; '
+                'if [ -n "$src_stat" ] && [ "$src_stat" = "$dst_stat" ]; then '
+                'exit 0; '
+                'fi; '
+                'fi; '
+                f'mount --bind {source_q} {target_q}'
             )
             mgr.submit(
-                ['bash', '-lc', repair_script],
+                ['bash', '-c', repair_script],
                 sudo=True,
                 role='modify',
                 summary='Replace stale host bind target with requested source',
@@ -322,12 +359,13 @@ def _ensure_shared_root_host_bind(
             )
         else:
             mgr.submit(
-                ['mount', '--bind', source_dir, str(target)],
+                ['bash', '-c', mount_if_needed_script],
                 sudo=True,
                 role='modify',
                 summary='Bind requested host folder to shared-root target',
                 detail=f'source={source_dir} target={target}',
             )
+
     return target
 
 
@@ -555,7 +593,7 @@ def _ensure_shared_root_guest_bind(
         ).result()
     if res.code != 0:
         raise RuntimeError(
-            'Failed to bind-mount shared-root attachment inside guest.\n'
+            'Failed to bind-mount shared-root attachment inside guest. You may need to stop the VM to run detatch\n'
             f'VM: {cfg.vm.name}\n'
             f'Guest source: {source_in_guest}\n'
             f'Guest destination: {attachment.guest_dst}\n'
@@ -647,10 +685,17 @@ def _detach_shared_root_guest_bind(
     dry_run: bool,
 ) -> None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
+    source_in_guest = str(
+        PurePosixPath(SHARED_ROOT_GUEST_MOUNT_ROOT)
+        / (attachment.tag or '').strip()
+    )
     script = (
         'set -euo pipefail; '
         f'if mountpoint -q {shlex.quote(attachment.guest_dst)}; then '
         f'sudo umount {shlex.quote(attachment.guest_dst)}; '
+        'fi; '
+        f'if mountpoint -q {shlex.quote(source_in_guest)}; then '
+        f'sudo umount {shlex.quote(source_in_guest)}; '
         'fi'
     )
     cmd = [
@@ -668,6 +713,7 @@ def _detach_shared_root_guest_bind(
         raise RuntimeError(
             'Failed to unmount shared-root attachment inside guest.\n'
             f'VM: {cfg.vm.name}\n'
+            f'Guest source: {source_in_guest}\n'
             f'Guest destination: {attachment.guest_dst}\n'
             f'Error: {(res.stderr or res.stdout).strip()}'
         )
