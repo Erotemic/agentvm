@@ -160,7 +160,7 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
             return _Proc(0, '', '')
         if normalized[:3] == ['findmnt', '-P', '-n']:
             return _Proc(1, '', '')
-        if normalized[:2] == ['mount', '--bind']:
+        if normalized[:2] == ['bash', '-c']:
             return _Proc(0, '', '')
         raise AssertionError(f'unexpected command: {cmd}')
 
@@ -178,8 +178,8 @@ def test_shared_root_host_bind_does_not_unmount_when_target_not_mountpoint(
         line.startswith('findmnt -P -n -o SOURCE,ROOT,FSTYPE --target')
         for line in command_text
     )
-    assert any(line.startswith('mount --bind') for line in command_text)
-    assert all(not line.startswith('umount ') for line in command_text)
+    assert any('mount --bind' in line for line in command_text)
+    assert all('umount ' not in line for line in command_text)
 
 
 def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
@@ -551,7 +551,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
             return _Proc(1, '', '')
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
-        if normalized[:2] == ['mount', '--bind']:
+        if normalized[:2] == ['bash', '-c']:
             return _Proc(0, '', '')
         raise AssertionError(f'unexpected command: {cmd}')
 
@@ -574,7 +574,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
         msg.startswith('     command: sudo mkdir -p ') for msg in messages
     )
     assert any(
-        msg.startswith('     command: sudo mount --bind ') for msg in messages
+        msg.startswith('     command: sudo bash -c ') for msg in messages
     )
 
 
@@ -614,7 +614,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
             return _Proc(1, '', '')
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
-        if normalized[:2] == ['mount', '--bind']:
+        if normalized[:2] == ['bash', '-c']:
             return _Proc(0, '', '')
         raise AssertionError(f'unexpected command: {cmd}')
 
