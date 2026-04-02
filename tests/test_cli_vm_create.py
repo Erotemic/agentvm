@@ -201,7 +201,7 @@ def test_vm_create_interactive_default_prompt_no_keeps_active(
     asked: list[str] = []
     monkeypatch.setattr(
         'aivm.cli.vm._prompt_set_created_vm_default',
-        lambda vm_name: (asked.append(vm_name) or False),
+        lambda vm_name: asked.append(vm_name) or False,
     )
     monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
     monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)

@@ -11,6 +11,12 @@ from pytest import MonkeyPatch
 from aivm.attachments.session import ReconcileResult, _prepare_attached_session
 from aivm.cli.vm import (
     VMUpdateCLI,
+)
+from aivm.config import AgentVMConfig
+from aivm.status import ProbeOutcome
+from aivm.util import CmdResult
+from aivm.vm.share import AttachmentMode, ResolvedAttachment
+from aivm.vm.update_ops import (
     VMUpdateDrift,
     _apply_vm_update,
     _parse_qemu_img_virtual_size,
@@ -18,10 +24,6 @@ from aivm.cli.vm import (
     _parse_vm_network_from_dumpxml,
     _vm_update_drift,
 )
-from aivm.config import AgentVMConfig
-from aivm.status import ProbeOutcome
-from aivm.util import CmdResult
-from aivm.vm.share import AttachmentMode, ResolvedAttachment
 
 
 def test_parse_qemu_img_virtual_size() -> None:
@@ -791,8 +793,9 @@ def test_prepare_attached_session_restores_saved_shared_root_attachments(
     shared_root_host_binds: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         'aivm.attachments.guest._ensure_shared_root_host_bind',
-        lambda *a, **k: shared_root_host_binds.append((a, k))
-        or Path('/tmp/token'),
+        lambda *a, **k: (
+            shared_root_host_binds.append((a, k)) or Path('/tmp/token')
+        ),
     )
     shared_root_vm_mappings: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(

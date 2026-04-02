@@ -135,7 +135,7 @@ def test_vm_attach_mounts_share_when_vm_running(
     resolved: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         'aivm.cli.vm._resolve_ip_for_ssh_ops',
-        lambda *a, **k: (resolved.append((a, k)) or '10.77.0.55'),
+        lambda *a, **k: resolved.append((a, k)) or '10.77.0.55',
     )
 
     mounted: list[tuple[tuple, dict]] = []
@@ -840,20 +840,13 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     ensure_calls: list[dict] = []
     monkeypatch.setattr(
         'aivm.attachments.session._ensure_attachment_available_in_guest',
-        lambda cfg_a,
-        host_src_a,
-        att,
-        ip,
-        *,
-        yes,
-        dry_run,
-        ensure_shared_root_host_side,
-        allow_disruptive_shared_root_rebind,
-        mirror_home: ensure_calls.append(
-            {
-                'allow_disruptive': allow_disruptive_shared_root_rebind,
-                'mirror_home': mirror_home,
-            }
+        lambda cfg_a, host_src_a, att, ip, *, yes, dry_run, ensure_shared_root_host_side, allow_disruptive_shared_root_rebind, mirror_home: (
+            ensure_calls.append(
+                {
+                    'allow_disruptive': allow_disruptive_shared_root_rebind,
+                    'mirror_home': mirror_home,
+                }
+            )
         ),
     )
     monkeypatch.setattr(

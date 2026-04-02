@@ -536,7 +536,7 @@ def test_shared_root_host_bind_prompts_once_per_privileged_step(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
 
     def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
@@ -601,7 +601,7 @@ def test_shared_root_host_bind_autoapproves_readonly_findmnt_when_auth_cached(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
 
     def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:
@@ -652,7 +652,7 @@ def test_shared_root_vm_mapping_uses_named_steps_and_per_step_prompts(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
 
     def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> _Proc:

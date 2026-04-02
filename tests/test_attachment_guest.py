@@ -624,7 +624,7 @@ def test_ensure_guest_symlink_uses_sudo_for_ln(
     scripts: list[str] = []
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (scripts.append(cmd[-1]) or _Proc(0, '', '')),
+        lambda cmd, **kwargs: scripts.append(cmd[-1]) or _Proc(0, '', ''),
     )
 
     _ensure_guest_symlink(
@@ -664,7 +664,7 @@ def test_ensure_guest_git_repo_uses_sudo_mkdir_for_full_path(
     scripts: list[str] = []
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (scripts.append(cmd[-1]) or _Proc(0, '', '')),
+        lambda cmd, **kwargs: scripts.append(cmd[-1]) or _Proc(0, '', ''),
     )
 
     _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo', 'main')

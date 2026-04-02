@@ -894,9 +894,7 @@ def test_qemu_access_does_not_recurse_vm_root_after_shared_root_bind(
 
     command_text = [' '.join(c) for c in calls]
     base_root = str(Path(cfg.paths.base_dir) / cfg.vm.name)
-    assert any(
-        f'mount --bind {source_dir}' in line for line in command_text
-    )
+    assert any(f'mount --bind {source_dir}' in line for line in command_text)
     assert f'chown -R root:libvirt-qemu {base_root}' not in command_text
     assert f'chown -R root:kvm {base_root}' not in command_text
 

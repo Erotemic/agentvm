@@ -68,11 +68,11 @@ def test_plan_prompts_once_for_multiple_sudo_commands(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
+        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or P(),
     )
 
     mgr = CommandManager.current()
@@ -116,7 +116,7 @@ def test_command_handle_result_flushes_through_handle(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
 
     mgr = CommandManager.current()
@@ -152,7 +152,7 @@ def test_plan_yes_approves_current_block_only(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or next(answers)),
+        lambda prompt: prompts.append(prompt) or next(answers),
     )
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
@@ -187,7 +187,7 @@ def test_plan_all_approves_current_and_future_blocks(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'a'),
+        lambda prompt: prompts.append(prompt) or 'a',
     )
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
@@ -231,7 +231,7 @@ def test_plan_show_full_commands_then_reprompts(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or next(answers)),
+        lambda prompt: prompts.append(prompt) or next(answers),
     )
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
     monkeypatch.setattr(
@@ -272,7 +272,7 @@ def test_manager_run_uses_submit_execution_path(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
 
     mgr.run(['virsh', 'dominfo', 'vm'], sudo=True, check=True, capture=True)
@@ -321,7 +321,7 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
     monkeypatch.setattr('aivm.commands.subprocess.run', fake_run)
@@ -502,7 +502,7 @@ def test_read_only_command_stays_read_inside_modify_intent(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
 
     mgr = CommandManager.current()
