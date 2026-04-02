@@ -396,7 +396,7 @@ def anticipated_status_sudo_commands(
         cmds.extend(
             [
                 list(virsh_system_cmd('net-dumpxml', cfg.network.name)),
-                ['bash', '-lc', f'ls -lh {base_img} 2>&1'],
+                ['bash', '-c', f'ls -lh {base_img} 2>&1'],
                 list(virsh_system_cmd('domiflist', cfg.vm.name)),
                 list(virsh_system_cmd('domifaddr', cfg.vm.name)),
                 list(virsh_system_cmd('net-dhcp-leases', cfg.network.name)),
@@ -703,7 +703,7 @@ def render_status(
 
         lines.append('Image')
         img_stat = mgr.run(
-            ['bash', '-lc', f'ls -lh {base_img} 2>&1'],
+            ['bash', '-c', f'ls -lh {base_img} 2>&1'],
             sudo=use_sudo,
             check=False,
             capture=True,

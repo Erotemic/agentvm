@@ -511,7 +511,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> P:
         del kwargs
         normalized = cmd[1:] if cmd and cmd[0] == 'sudo' else cmd
-        if normalized[:2] == ['bash', '-lc'] and 'cat > ' in normalized[2]:
+        if normalized[:2] == ['bash', '-c'] and 'cat > ' in normalized[2]:
             script = normalized[2]
             if 'user-data' in script:
                 heredocs['user-data'] = script

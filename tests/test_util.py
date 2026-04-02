@@ -32,13 +32,13 @@ def test_shell_join_quotes() -> None:
 
 def test_manager_run_success_and_failure() -> None:
     mgr = _activate_manager()
-    ok = mgr.run(['bash', '-lc', 'printf ok'], check=True, capture=True)
+    ok = mgr.run(['bash', '-c', 'printf ok'], check=True, capture=True)
     assert ok.code == 0
     assert ok.stdout == 'ok'
-    bad = mgr.run(['bash', '-lc', 'exit 7'], check=False, capture=True)
+    bad = mgr.run(['bash', '-c', 'exit 7'], check=False, capture=True)
     assert bad.code == 7
     with pytest.raises(CmdError):
-        mgr.run(['bash', '-lc', 'exit 9'], check=True, capture=True)
+        mgr.run(['bash', '-c', 'exit 9'], check=True, capture=True)
 
 
 def test_nested_intent_breadcrumb_rendering() -> None:
@@ -242,7 +242,7 @@ def test_plan_show_full_commands_then_reprompts(
     mgr = CommandManager.current()
     with PlanScope(mgr, 'Write cloud-init'):
         mgr.submit(
-            ['bash', '-lc', "cat > /tmp/user-data <<'EOF'\nhello\nEOF"],
+            ['bash', '-c', "cat > /tmp/user-data <<'EOF'\nhello\nEOF"],
             sudo=True,
             role='modify',
             summary='Write cloud-init user-data',
@@ -254,7 +254,7 @@ def test_plan_show_full_commands_then_reprompts(
     ]
     joined = '\n'.join(messages)
     assert 'Full commands for step: Write cloud-init' in joined
-    assert "sudo bash -lc 'cat > /tmp/user-data <<'\"'\"'EOF'" in joined
+    assert "sudo bash -c 'cat > /tmp/user-data <<'\"'\"'EOF'" in joined
 
 
 def test_manager_run_uses_submit_execution_path(

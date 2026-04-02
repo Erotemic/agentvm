@@ -1137,7 +1137,7 @@ class CommandManager:
             prev = str(cmd[idx - 1]) if idx > 0 else ''
             prev2 = str(cmd[idx - 2]) if idx > 1 else ''
             if len(text) > 80:
-                if prev == '-lc' and prev2 in {'bash', 'sh'}:
+                if prev == '-c' and prev2 in {'bash', 'sh'}:
                     text = '<shell script omitted>'
                 elif idx == len(cmd) - 1 and 'ssh' in {
                     str(cmd[0]),

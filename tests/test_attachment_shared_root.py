@@ -321,7 +321,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
             return _Proc(0, '', '')
         if normalized[:3] == ['findmnt', '-P', '-n']:
             return _Proc(0, 'SOURCE="/other/source" ROOT="" FSTYPE=""', '')
-        if normalized[:2] == ['bash', '-lc']:
+        if normalized[:2] == ['bash', '-c']:
             return _Proc(0, '', '')
         raise AssertionError(f'unexpected command: {cmd}')
 
@@ -336,7 +336,7 @@ def test_shared_root_host_bind_lazy_unmounts_busy_target(
 
     command_text = [' '.join(c) for c in calls]
     repair_cmd = next(
-        line for line in command_text if line.startswith('bash -lc ')
+        line for line in command_text if line.startswith('bash -c ')
     )
     assert f'umount {target}' in repair_cmd
     assert f'umount -l {target}' in repair_cmd
@@ -425,7 +425,7 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
             return _Proc(0, 'SOURCE="/dev/nvme0n1p1" ROOT="" FSTYPE=""', '')
         if normalized[:2] == ['mkdir', '-p']:
             return _Proc(0, '', '')
-        if normalized[:2] == ['bash', '-lc']:
+        if normalized[:2] == ['bash', '-c']:
             script = normalized[2]
             assert '"not mounted"' in script
             assert 'mount --bind' in script
@@ -443,7 +443,7 @@ def test_shared_root_host_bind_tolerates_not_mounted_during_repair(
 
     assert target.name == attachment.tag
     command_text = [' '.join(c) for c in calls]
-    assert any(line.startswith('bash -lc ') for line in command_text)
+    assert any(line.startswith('bash -c ') for line in command_text)
 
 
 def test_shared_root_guest_bind_read_only_sets_bind_remount_ro(

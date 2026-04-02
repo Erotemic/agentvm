@@ -49,7 +49,7 @@ def check_commands_with_sudo() -> tuple[list[str], str | None]:
     for cmd in REQUIRED_CMDS:
         # Match sudo's effective PATH and shell command lookup behavior.
         probe = mgr.run(
-            ['sudo', '-n', 'sh', '-lc', f'command -v {shlex.quote(cmd)}'],
+            ['sudo', '-n', 'sh', '-c', f'command -v {shlex.quote(cmd)}'],
             check=False,
             capture=True,
             text=True,

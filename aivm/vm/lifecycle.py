@@ -671,7 +671,7 @@ def _write_cloud_init(
         # cloud-localds already seeds NoCloud; repeating datasource keys in the
         # user-data blob only triggers cloud-init schema warnings.
         bootcmd:
-          - [bash, -lc, "systemctl mask systemd-networkd-wait-online.service NetworkManager-wait-online.service || true"]
+          - [bash, -c, "systemctl mask systemd-networkd-wait-online.service NetworkManager-wait-online.service || true"]
 
         package_update: true
         packages:
@@ -764,7 +764,7 @@ def _write_cloud_init(
                 summary='Create cloud-init artifact directory',
             )
             mgr.submit(
-                ['bash', '-lc', f"cat > {user_data} <<'EOF'\n{cloud}\nEOF"],
+                ['bash', '-c', f"cat > {user_data} <<'EOF'\n{cloud}\nEOF"],
                 sudo=True,
                 role='modify',
                 check=True,
@@ -772,7 +772,7 @@ def _write_cloud_init(
                 summary='Write cloud-init user-data',
             )
             mgr.submit(
-                ['bash', '-lc', f"cat > {meta_data} <<'EOF'\n{meta}\nEOF"],
+                ['bash', '-c', f"cat > {meta_data} <<'EOF'\n{meta}\nEOF"],
                 sudo=True,
                 role='modify',
                 check=True,
@@ -782,7 +782,7 @@ def _write_cloud_init(
             mgr.submit(
                 [
                     'bash',
-                    '-lc',
+                    '-c',
                     f"cat > {network_config} <<'EOF'\n{netcfg}\nEOF",
                 ],
                 sudo=True,
