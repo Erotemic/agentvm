@@ -1223,22 +1223,6 @@ class VMUpdateCLI(_BaseCommand):
         return 0
 
 
-class CodeCLI(VMCodeCLI):
-    """Top-level shortcut for `aivm vm code`."""
-
-
-class AttachCLI(VMAttachCLI):
-    """Top-level shortcut for `aivm vm attach`."""
-
-
-class DetachCLI(VMDetachCLI):
-    """Top-level shortcut for `aivm vm detach`."""
-
-
-class SSHCLI(VMSSHCLI):
-    """Top-level shortcut for `aivm vm ssh`."""
-
-
 class VMModalCLI(scfg.ModalCLI):
     """VM lifecycle subcommands."""
 

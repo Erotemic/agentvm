@@ -31,7 +31,7 @@ from ._common import (
 from .config import ConfigModalCLI
 from .help import HelpModalCLI
 from .host import HostModalCLI
-from .vm import SSHCLI, AttachCLI, CodeCLI, DetachCLI, VMModalCLI
+from .vm import VMSSHCLI, VMAttachCLI, VMCodeCLI, VMDetachCLI, VMModalCLI
 
 
 class ListCLI(_BaseCommand):
@@ -180,10 +180,10 @@ class AgentVMModalCLI(scfg.ModalCLI):
     help = HelpModalCLI
     status = StatusCLI
     list = ListCLI
-    code = CodeCLI
-    ssh = SSHCLI
-    attach = AttachCLI
-    detach = DetachCLI
+    code = VMCodeCLI
+    ssh = VMSSHCLI
+    attach = VMAttachCLI
+    detach = VMDetachCLI
     config = ConfigModalCLI
     vm = VMModalCLI
     host = HostModalCLI
