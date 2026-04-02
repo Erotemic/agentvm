@@ -1,6 +1,7 @@
 """
 Patchwork fix for stacked bind mounts
 """
+
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -12,8 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable
 
-
-_OCTAL_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
+_OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
 
 
 def unescape_mountinfo(value: str) -> str:
@@ -34,17 +34,21 @@ class MountInfo:
     super_options: str
 
     @classmethod
-    def parse(cls, line: str) -> "MountInfo":
-        line = line.rstrip("\n")
-        if " - " not in line:
-            raise ValueError(f"mountinfo line missing separator: {line!r}")
-        left, right = line.split(" - ", 1)
+    def parse(cls, line: str) -> 'MountInfo':
+        line = line.rstrip('\n')
+        if ' - ' not in line:
+            raise ValueError(f'mountinfo line missing separator: {line!r}')
+        left, right = line.split(' - ', 1)
         left_parts = left.split()
         right_parts = right.split()
         if len(left_parts) < 6:
-            raise ValueError(f"mountinfo line has too few left fields: {line!r}")
+            raise ValueError(
+                f'mountinfo line has too few left fields: {line!r}'
+            )
         if len(right_parts) < 3:
-            raise ValueError(f"mountinfo line has too few right fields: {line!r}")
+            raise ValueError(
+                f'mountinfo line has too few right fields: {line!r}'
+            )
         return cls(
             mount_id=int(left_parts[0]),
             parent_id=int(left_parts[1]),
@@ -55,13 +59,13 @@ class MountInfo:
             optional_fields=left_parts[6:],
             fstype=right_parts[0],
             source=unescape_mountinfo(right_parts[1]),
-            super_options=" ".join(right_parts[2:]),
+            super_options=' '.join(right_parts[2:]),
         )
 
 
-def read_mountinfo(path: str = "/proc/self/mountinfo") -> list[MountInfo]:
+def read_mountinfo(path: str = '/proc/self/mountinfo') -> list[MountInfo]:
     items: list[MountInfo] = []
-    with open(path, "r", encoding="utf-8") as file:
+    with open(path, 'r', encoding='utf-8') as file:
         for line in file:
             line = line.strip()
             if line:
@@ -70,10 +74,12 @@ def read_mountinfo(path: str = "/proc/self/mountinfo") -> list[MountInfo]:
 
 
 def likely_bind_like(m: MountInfo) -> bool:
-    return m.root != "/" or m.source.startswith("/") or m.source.startswith("[")
+    return m.root != '/' or m.source.startswith('/') or m.source.startswith('[')
 
 
-def group_by_mountpoint(items: Iterable[MountInfo]) -> dict[str, list[MountInfo]]:
+def group_by_mountpoint(
+    items: Iterable[MountInfo],
+) -> dict[str, list[MountInfo]]:
     grouped: dict[str, list[MountInfo]] = defaultdict(list)
     for item in items:
         grouped[item.mount_point].append(item)
@@ -147,16 +153,18 @@ def filter_candidates(
             continue
         if cre and not cre.search(mp):
             continue
-        if aivm_only and "/var/lib/libvirt/aivm/" not in mp:
+        if aivm_only and '/var/lib/libvirt/aivm/' not in mp:
             continue
         out.append(stack)
     return out
 
 
-def current_stack_count(mount_point: str, mountinfo_path: str = "/proc/self/mountinfo") -> int:
+def current_stack_count(
+    mount_point: str, mountinfo_path: str = '/proc/self/mountinfo'
+) -> int:
     count = 0
-    with open(mountinfo_path, "r", encoding="utf-8") as file:
-        needle = f" {mount_point} "
+    with open(mountinfo_path, 'r', encoding='utf-8') as file:
+        needle = f' {mount_point} '
         for line in file:
             if needle in line:
                 count += 1
@@ -168,8 +176,8 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def summarize_fuser(mount_point: str) -> str:
-    res = run(["sudo", "fuser", "-v", mount_point])
-    txt = ((res.stdout or "") + (res.stderr or "")).strip()
+    res = run(['sudo', 'fuser', '-v', mount_point])
+    txt = ((res.stdout or '') + (res.stderr or '')).strip()
     return txt
 
 
@@ -185,24 +193,24 @@ def peel_stack(
 
     while current > keep_layers:
         if verbose:
-            print(f"  attempting: sudo umount {mount_point}")
-        res = run(["sudo", "umount", mount_point])
+            print(f'  attempting: sudo umount {mount_point}')
+        res = run(['sudo', 'umount', mount_point])
         after = current_stack_count(mount_point)
 
         if res.returncode == 0 and after < current:
-            messages.append(f"peeled one layer: {current} -> {after}")
+            messages.append(f'peeled one layer: {current} -> {after}')
             current = after
             continue
 
-        err = ((res.stderr or "") + (res.stdout or "")).strip()
+        err = ((res.stderr or '') + (res.stdout or '')).strip()
         if err:
-            messages.append(f"umount failed: {err}")
+            messages.append(f'umount failed: {err}')
         else:
-            messages.append("umount failed with no output")
+            messages.append('umount failed with no output')
 
         holders = summarize_fuser(mount_point)
         if holders:
-            messages.append("holders:\n" + holders)
+            messages.append('holders:\n' + holders)
         break
 
     return before, current, messages
@@ -210,52 +218,75 @@ def peel_stack(
 
 def print_plan(stacks: list[StackCandidate], *, keep_layers: int) -> None:
     if not stacks:
-        print("No matching identical stacked bind-like mountpoints found.")
+        print('No matching identical stacked bind-like mountpoints found.')
         return
-    print(f"Matched {len(stacks)} stack(s). Planned target: keep {keep_layers} layer(s) each.\n")
+    print(
+        f'Matched {len(stacks)} stack(s). Planned target: keep {keep_layers} layer(s) each.\n'
+    )
     for stack in stacks:
         extra = max(0, stack.count - keep_layers)
-        print(f"MOUNTPOINT: {stack.mount_point}")
-        print(f"  current_layers: {stack.count}")
-        print(f"  layers_to_remove: {extra}")
-        print(f"  root:   {stack.root}")
-        print(f"  source: {stack.source}")
-        print(f"  fstype: {stack.fstype}")
+        print(f'MOUNTPOINT: {stack.mount_point}')
+        print(f'  current_layers: {stack.count}')
+        print(f'  layers_to_remove: {extra}')
+        print(f'  root:   {stack.root}')
+        print(f'  source: {stack.source}')
+        print(f'  fstype: {stack.fstype}')
         print()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Reduce identical stacked bind-like mounts to a smaller number of layers "
-            "while leaving at least one layer in place."
+            'Reduce identical stacked bind-like mounts to a smaller number of layers '
+            'while leaving at least one layer in place.'
         )
     )
-    parser.add_argument("--mountinfo", default="/proc/self/mountinfo")
-    parser.add_argument("--mountpoint", action="append", default=None,
-                        help="Specific mountpoint to target. May be repeated.")
-    parser.add_argument("--prefix", default=None,
-                        help="Only operate on mountpoints with this prefix.")
-    parser.add_argument("--regex", default=None,
-                        help="Only operate on mountpoints matching this regex.")
-    parser.add_argument("--aivm-only", action="store_true",
-                        help="Only operate on /var/lib/libvirt/aivm/... mountpoints.")
-    parser.add_argument("--keep-layers", type=int, default=1,
-                        help="How many identical layers to keep. Default: 1")
-    parser.add_argument("--apply", action="store_true",
-                        help="Actually perform sudo umount operations.")
-    parser.add_argument("--verbose", action="store_true",
-                        help="Print each attempted umount.")
+    parser.add_argument('--mountinfo', default='/proc/self/mountinfo')
+    parser.add_argument(
+        '--mountpoint',
+        action='append',
+        default=None,
+        help='Specific mountpoint to target. May be repeated.',
+    )
+    parser.add_argument(
+        '--prefix',
+        default=None,
+        help='Only operate on mountpoints with this prefix.',
+    )
+    parser.add_argument(
+        '--regex',
+        default=None,
+        help='Only operate on mountpoints matching this regex.',
+    )
+    parser.add_argument(
+        '--aivm-only',
+        action='store_true',
+        help='Only operate on /var/lib/libvirt/aivm/... mountpoints.',
+    )
+    parser.add_argument(
+        '--keep-layers',
+        type=int,
+        default=1,
+        help='How many identical layers to keep. Default: 1',
+    )
+    parser.add_argument(
+        '--apply',
+        action='store_true',
+        help='Actually perform sudo umount operations.',
+    )
+    parser.add_argument(
+        '--verbose', action='store_true', help='Print each attempted umount.'
+    )
     args = parser.parse_args()
 
     if args.keep_layers < 1:
-        print("--keep-layers must be >= 1", file=sys.stderr)
+        print('--keep-layers must be >= 1', file=sys.stderr)
         return 2
 
     try:
         items = read_mountinfo(args.mountinfo)
     except Exception as ex:
-        print(f"Failed to read mountinfo: {ex}", file=sys.stderr)
+        print(f'Failed to read mountinfo: {ex}', file=sys.stderr)
         return 2
 
     stacks = find_identical_stacks(items)
@@ -273,23 +304,23 @@ def main() -> int:
         return 1
 
     if not args.apply:
-        print("Dry run only. Re-run with --apply to peel extra layers.")
+        print('Dry run only. Re-run with --apply to peel extra layers.')
         return 0
 
-    print("Applying changes...\n")
+    print('Applying changes...\n')
     any_changed = False
     any_failed = False
 
     for stack in stacks:
-        print(f"MOUNTPOINT: {stack.mount_point}")
+        print(f'MOUNTPOINT: {stack.mount_point}')
         before, after, messages = peel_stack(
             stack.mount_point,
             keep_layers=args.keep_layers,
             verbose=args.verbose,
         )
         for msg in messages:
-            print("  " + msg.replace("\n", "\n  "))
-        print(f"  result: {before} -> {after} layers")
+            print('  ' + msg.replace('\n', '\n  '))
+        print(f'  result: {before} -> {after} layers')
         if after < before:
             any_changed = True
         if after > args.keep_layers:
@@ -297,15 +328,17 @@ def main() -> int:
         print()
 
     if any_failed:
-        print("Some mountpoints could not be reduced to the requested layer count.")
+        print(
+            'Some mountpoints could not be reduced to the requested layer count.'
+        )
         return 3
     if any_changed:
-        print("All targeted mountpoints were reduced successfully.")
+        print('All targeted mountpoints were reduced successfully.')
         return 0
 
-    print("No changes were made.")
+    print('No changes were made.')
     return 4
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())

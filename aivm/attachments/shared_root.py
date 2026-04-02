@@ -170,7 +170,15 @@ def _probe_findmnt_target_source(target: Path) -> FindmntTargetInfo:
             approval_scope=f'shared-root-host-findmnt:{target}',
         ):
             res = mgr.run(
-                ['findmnt', '-P', '-n', '-o', 'SOURCE,ROOT,FSTYPE', '--target', str(target)],
+                [
+                    'findmnt',
+                    '-P',
+                    '-n',
+                    '-o',
+                    'SOURCE,ROOT,FSTYPE',
+                    '--target',
+                    str(target),
+                ],
                 sudo=True,
                 role='read',
                 check=False,
@@ -706,9 +714,12 @@ def _detach_shared_root_guest_bind(
     ]
     if dry_run:
         from loguru import logger
+
         logger.info('DRYRUN: {}', ' '.join(shlex.quote(c) for c in cmd))
         return
-    res = CommandManager.current().run(cmd, sudo=False, check=False, capture=True)
+    res = CommandManager.current().run(
+        cmd, sudo=False, check=False, capture=True
+    )
     if res.code != 0:
         raise RuntimeError(
             'Failed to unmount shared-root attachment inside guest.\n'

@@ -1073,7 +1073,10 @@ class VMDetachCLI(_BaseCommand):
                         purpose='Query VM networking state before detaching shared-root guest mount.',
                     )
                     _detach_shared_root_guest_bind(
-                        cfg, ip, resolved, dry_run=False,
+                        cfg,
+                        ip,
+                        resolved,
+                        dry_run=False,
                     )
                     detached_shared_root_guest_bind = True
                 except Exception as ex:
@@ -1087,7 +1090,10 @@ class VMDetachCLI(_BaseCommand):
             if resolved.tag:
                 try:
                     _detach_shared_root_host_bind(
-                        cfg, resolved, yes=bool(args.yes), dry_run=False,
+                        cfg,
+                        resolved,
+                        yes=bool(args.yes),
+                        dry_run=False,
                     )
                     detached_shared_root_host_bind = True
                 except Exception as ex:

@@ -207,7 +207,9 @@ def test_shared_root_host_bind_accepts_findmnt_bind_subpath_source(
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
         calls.append(normalized)
         if normalized[:3] == ['findmnt', '-P', '-n']:
-            return _Proc(0, f'SOURCE="{source_dir}[/sub]" ROOT="" FSTYPE=""', '')
+            return _Proc(
+                0, f'SOURCE="{source_dir}[/sub]" ROOT="" FSTYPE=""', ''
+            )
         if normalized[:2] == ['umount', str(source_dir)]:
             raise AssertionError('unexpected source-path umount')
         if normalized[:2] == ['umount', '-l']:
@@ -259,7 +261,9 @@ def test_shared_root_host_bind_accepts_findmnt_device_subpath_source(
         normalized = cmd[2:] if cmd[:2] == ['sudo', '-n'] else cmd
         calls.append(normalized)
         if normalized[:3] == ['findmnt', '-P', '-n']:
-            return _Proc(0, f'SOURCE="/dev/vda1[{source_dir}]" ROOT="" FSTYPE=""', '')
+            return _Proc(
+                0, f'SOURCE="/dev/vda1[{source_dir}]" ROOT="" FSTYPE=""', ''
+            )
         if normalized[:2] == ['umount', str(source_dir)]:
             raise AssertionError('unexpected source-path umount')
         if normalized[:2] == ['umount', '-l']:
