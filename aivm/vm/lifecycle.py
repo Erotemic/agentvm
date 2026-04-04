@@ -1445,7 +1445,18 @@ def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                 )
             # Wait for VM to transition out of pmsuspended
             _wait_for_vm_not_state(name, 'pmsuspended', timeout_s=10, poll_interval_s=1)
-            log.info('VM {} resumed', name)
+            # Re-check state after resume to ensure VM is in a valid state for shutdown
+            code, state, error = _get_vm_state(name)
+            if code != 0:
+                msg = error or 'unknown error'
+                raise RuntimeError(
+                    f'Failed to get state for VM {name} after resume (code={code}). '
+                    f'Error: {msg}'
+                )
+            if not _is_vm_active(state):
+                log.info('VM {} transitioned to inactive state {} after resume; nothing to do.', name, state)
+                return
+            log.info('VM {} resumed (state={})', name, state)
 
         # Send ACPI shutdown signal
         res = mgr.run(
@@ -1519,9 +1530,22 @@ def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                     raise RuntimeError(
                         f'Failed to resume VM {name}.\n{msg}'
                     )
-                # Wait for VM to transition out of pmsuspended (any active state is fine)
+                # Wait for VM to transition out of pmsuspended
                 _wait_for_vm_not_state(name, 'pmsuspended', timeout_s=10, poll_interval_s=1)
-                log.info('VM {} resumed', name)
+                # Re-check state after resume to ensure VM is in a valid state for shutdown
+                code, state, error = _get_vm_state(name)
+                if code != 0:
+                    msg = error or 'unknown error'
+                    raise RuntimeError(
+                        f'Failed to get state for VM {name} after resume (code={code}). '
+                        f'Error: {msg}'
+                    )
+                if not _is_vm_active(state):
+                    log.info('VM {} transitioned to inactive state {} after resume; starting it.', name, state)
+                    _start_vm(name)
+                    log.info('VM {} restarted', name)
+                    return
+                log.info('VM {} resumed (state={})', name, state)
 
             log.info('Sending shutdown signal to VM {} (state={})', name, state)
             # Send ACPI shutdown signal
