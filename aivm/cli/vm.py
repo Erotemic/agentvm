@@ -66,6 +66,8 @@ from ..vm import (
     destroy_vm,
     detach_vm_share,
     provision,
+    restart_vm,
+    shutdown_vm,
     sync_settings,
     vm_share_mappings,
     vm_status,
@@ -132,6 +134,48 @@ class VMUpCLI(_BaseCommand):
             _maybe_warn_hardware_drift(cfg)
         if not args.dry_run:
             _record_vm(cfg, cfg_path)
+        return 0
+
+
+class VMDownCLI(_BaseCommand):
+    """Gracefully shut down the VM."""
+
+    dry_run: Any = scfg.Value(
+        False, isflag=True, help='Print actions without running.'
+    )
+
+    @classmethod
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, cfg_path = _load_cfg_with_path(args.config)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Shut down VM {cfg.vm.name}',
+            why='Gracefully stop the VM by sending an ACPI shutdown signal to the guest OS.',
+            role='modify',
+        ):
+            shutdown_vm(cfg, dry_run=args.dry_run)
+        return 0
+
+
+class VMRestartCLI(_BaseCommand):
+    """Gracefully restart the VM (shutdown then start)."""
+
+    dry_run: Any = scfg.Value(
+        False, isflag=True, help='Print actions without running.'
+    )
+
+    @classmethod
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, cfg_path = _load_cfg_with_path(args.config)
+        mgr = CommandManager.current()
+        with mgr.intent(
+            f'Restart VM {cfg.vm.name}',
+            why='Gracefully stop and then start the VM to apply changes or recover from transient issues.',
+            role='modify',
+        ):
+            restart_vm(cfg, dry_run=args.dry_run)
         return 0
 
 
@@ -1229,6 +1273,8 @@ class VMModalCLI(scfg.ModalCLI):
     list = VMListCLI
     create = VMCreateCLI
     up = VMUpCLI
+    down = VMDownCLI
+    restart = VMRestartCLI
     wait_ip = VMWaitIPCLI
     status = VMStatusCLI
     update = VMUpdateCLI

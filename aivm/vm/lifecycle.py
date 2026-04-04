@@ -1285,6 +1285,219 @@ def wait_for_ip(
     )
 
 
+def _is_vm_active(state: str) -> bool:
+    """Return True if the libvirt state indicates an active domain.
+
+    Active states include 'running', 'idle', 'paused', 'blocked', and
+    transient states like 'in shutdown' or 'shutting down'. Inactive
+    states include 'shut off', 'crashed', 'pmsuspended'.
+    """
+    state = state.lower().strip()
+    # Active states: running, idle, paused, blocked, in shutdown, shutting down
+    active_states = ['running', 'idle', 'paused', 'blocked', 'in shutdown', 'shutting down']
+    return any(s in state for s in active_states)
+
+
+def _get_vm_state(name: str) -> tuple[int, str]:
+    """Get the current state of a VM.
+
+    Returns a tuple of (return_code, state_string).
+    The state string is lowercased and stripped.
+    """
+    mgr = CommandManager.current()
+    res = mgr.run(
+        ['virsh', 'domstate', name],
+        sudo=True,
+        role='read',
+        check=False,
+        capture=True,
+        summary=f'Get state of VM {name}',
+    )
+    state = (res.stdout or '').strip().lower()
+    return (res.code, state)
+
+
+def _wait_for_vm_state(
+    name: str,
+    target_state: str,
+    *,
+    timeout_s: int = 120,
+    poll_interval_s: int = 2,
+) -> None:
+    """Wait for a VM to reach a target state.
+
+    Polls the VM state until it matches ``target_state`` or the timeout
+    expires. Raises ``RuntimeError`` if the timeout is reached before
+    the target state is observed, or if the domstate command fails.
+    """
+    import time
+
+    mgr = CommandManager.current()
+    elapsed = 0
+    last_state = ''
+    last_error = ''
+    while elapsed < timeout_s:
+        code, state = _get_vm_state(name)
+        if code != 0:
+            # Command failed - this is an error, not just a state change
+            last_state = state
+            # Try to get error message
+            res = mgr.run(
+                ['virsh', 'domstate', name],
+                sudo=True,
+                role='read',
+                check=False,
+                capture=True,
+                summary=f'Get state of VM {name}',
+            )
+            last_error = (res.stderr or res.stdout or '').strip()
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). '
+                f'Error: {last_error}'
+            )
+        if target_state in state:
+            return
+        time.sleep(poll_interval_s)
+        elapsed += poll_interval_s
+        last_state = state
+    raise RuntimeError(
+        f'Timeout waiting for VM {name} to reach state {target_state!r} '
+        f'(current state: {last_state!r}) after {timeout_s}s.'
+    )
+
+
+def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
+    """Gracefully shut down the VM using ACPI shutdown signal.
+
+    This sends a graceful shutdown signal to the guest OS. If the guest
+    does not shut down within a reasonable time, callers may need to use
+    ``destroy_vm`` for a forced shutdown.
+    """
+    name = cfg.vm.name
+    if dry_run:
+        log.info('DRYRUN: virsh shutdown {}', name)
+        return
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Shut down VM {name}',
+        why='Gracefully stop the VM by sending an ACPI shutdown signal to the guest OS.',
+        role='modify',
+    ):
+        # First check if VM is active
+        code, state = _get_vm_state(name)
+        if code != 0:
+            msg = (state or 'unknown error').strip()
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). '
+                f'Error: {msg}'
+            )
+        if not _is_vm_active(state):
+            log.info('VM {} is not active (state={}); nothing to do.', name, state)
+            return
+
+        # Send ACPI shutdown signal
+        res = mgr.run(
+            ['virsh', 'shutdown', name],
+            sudo=True,
+            role='modify',
+            check=False,
+            capture=True,
+            summary=f'Send ACPI shutdown signal to VM {name}',
+        )
+        if res.code != 0:
+            msg = (res.stderr or res.stdout or '').strip()
+            raise RuntimeError(
+                f'Failed to send shutdown signal to VM {name}.\n{msg}'
+            )
+        log.info('Shutdown signal sent to VM {}', name)
+
+
+def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
+    """Gracefully restart the VM (shutdown then start).
+
+    This sends a graceful shutdown signal to the guest OS, waits for it to
+    stop, and then starts the VM again. If the guest does not shut down
+    within a reasonable time, this may need to be followed by a forced
+    restart using ``destroy_vm`` and ``create_or_start_vm``.
+
+    This operation requires the VM to already exist; it will not create
+    a new VM.
+    """
+    name = cfg.vm.name
+    if dry_run:
+        log.info('DRYRUN: restart VM {}', name)
+        return
+
+    # Verify the VM exists before attempting restart
+    if not _vm_defined(name):
+        raise RuntimeError(
+            f'VM {name!r} does not exist. Restart requires an existing VM; '
+            f'use `aivm vm up` to create and start it.'
+        )
+
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Restart VM {name}',
+        why='Gracefully stop and then start the VM to apply changes or recover from transient issues.',
+        role='modify',
+    ):
+        # First check if VM is active
+        code, state = _get_vm_state(name)
+        if code != 0:
+            msg = (state or 'unknown error').strip()
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). '
+                f'Error: {msg}'
+            )
+
+        if _is_vm_active(state):
+            log.info('Sending shutdown signal to VM {} (state={})', name, state)
+            # Send ACPI shutdown signal
+            res = mgr.run(
+                ['virsh', 'shutdown', name],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary='Send ACPI shutdown signal to VM',
+            )
+            if res.code != 0:
+                msg = (res.stderr or res.stdout or '').strip()
+                raise RuntimeError(
+                    f'Failed to send shutdown signal to VM {name}.\n{msg}'
+                )
+            # Wait for the VM to actually shut down before starting it again
+            log.info('Waiting for VM {} to shut down...', name)
+            _wait_for_vm_state(name, 'shut off', timeout_s=120, poll_interval_s=2)
+            log.info('VM {} has shut down', name)
+        else:
+            log.info('VM {} is not active (state={}); starting it.', name, state)
+
+        # Start the VM (use start_vm helper, not create_or_start_vm)
+        log.info('Starting VM {}', name)
+        _start_vm(name)
+        log.info('VM {} restarted', name)
+
+
+def _start_vm(name: str) -> None:
+    """Start a defined VM by name.
+
+    This is a low-level helper that only starts an existing domain;
+    it does not create or recreate the VM.
+    """
+    mgr = CommandManager.current()
+    res = mgr.run(
+        ['virsh', 'start', name],
+        sudo=True,
+        role='modify',
+        check=True,
+        summary=f'Start VM {name}',
+    )
+    if res.code != 0:
+        msg = (res.stderr or res.stdout or '').strip()
+        raise RuntimeError(f'Failed to start VM {name}.\n{msg}')
+
+
 def destroy_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     name = cfg.vm.name
     if dry_run:
