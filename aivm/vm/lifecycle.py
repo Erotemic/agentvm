@@ -1288,21 +1288,23 @@ def wait_for_ip(
 def _is_vm_active(state: str) -> bool:
     """Return True if the libvirt state indicates an active domain.
 
-    Active states include 'running', 'idle', 'paused', 'blocked', and
-    transient states like 'in shutdown' or 'shutting down'. Inactive
-    states include 'shut off', 'crashed', 'pmsuspended'.
+    Active states include 'running', 'idle', 'paused', 'blocked', 'pmsuspended',
+    and transient states like 'in shutdown' or 'shutting down'. Inactive
+    states include 'shut off', 'crashed'.
     """
     state = state.lower().strip()
-    # Active states: running, idle, paused, blocked, in shutdown, shutting down
-    active_states = ['running', 'idle', 'paused', 'blocked', 'in shutdown', 'shutting down']
+    # Active states: running, idle, paused, blocked, pmsuspended, in shutdown, shutting down
+    active_states = ['running', 'idle', 'paused', 'blocked', 'pmsuspended', 'in shutdown', 'shutting down']
     return any(s in state for s in active_states)
 
 
-def _get_vm_state(name: str) -> tuple[int, str]:
+def _get_vm_state(name: str) -> tuple[int, str, str]:
     """Get the current state of a VM.
 
-    Returns a tuple of (return_code, state_string).
-    The state string is lowercased and stripped.
+    Returns a tuple of (return_code, state_string, error_string).
+    The state and error strings are lowercased and stripped.
+    On success, state contains the VM state and error is empty.
+    On failure, state is empty and error contains the error message.
     """
     mgr = CommandManager.current()
     res = mgr.run(
@@ -1314,7 +1316,8 @@ def _get_vm_state(name: str) -> tuple[int, str]:
         summary=f'Get state of VM {name}',
     )
     state = (res.stdout or '').strip().lower()
-    return (res.code, state)
+    error = (res.stderr or '').strip().lower()
+    return (res.code, state, error)
 
 
 def _wait_for_vm_state(
@@ -1332,25 +1335,14 @@ def _wait_for_vm_state(
     """
     import time
 
-    mgr = CommandManager.current()
     elapsed = 0
     last_state = ''
     last_error = ''
     while elapsed < timeout_s:
-        code, state = _get_vm_state(name)
+        code, state, error = _get_vm_state(name)
         if code != 0:
             # Command failed - this is an error, not just a state change
-            last_state = state
-            # Try to get error message
-            res = mgr.run(
-                ['virsh', 'domstate', name],
-                sudo=True,
-                role='read',
-                check=False,
-                capture=True,
-                summary=f'Get state of VM {name}',
-            )
-            last_error = (res.stderr or res.stdout or '').strip()
+            last_error = error
             raise RuntimeError(
                 f'Failed to get state for VM {name} (code={code}). '
                 f'Error: {last_error}'
@@ -1363,6 +1355,45 @@ def _wait_for_vm_state(
     raise RuntimeError(
         f'Timeout waiting for VM {name} to reach state {target_state!r} '
         f'(current state: {last_state!r}) after {timeout_s}s.'
+    )
+
+
+def _wait_for_vm_not_state(
+    name: str,
+    exclude_state: str,
+    *,
+    timeout_s: int = 10,
+    poll_interval_s: int = 1,
+) -> None:
+    """Wait for a VM to leave a specific state.
+
+    Polls the VM state until it no longer matches ``exclude_state`` or the
+    timeout expires. Raises ``RuntimeError`` if the timeout is reached or
+    if the domstate command fails.
+    This is useful for waiting for a VM to transition out of a suspended state.
+    """
+    import time
+
+    elapsed = 0
+    last_state = ''
+    last_error = ''
+    while elapsed < timeout_s:
+        code, state, error = _get_vm_state(name)
+        if code != 0:
+            # Command failed - this is an error, not a state change
+            last_error = error
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). '
+                f'Error: {last_error}'
+            )
+        if exclude_state not in state:
+            return
+        time.sleep(poll_interval_s)
+        elapsed += poll_interval_s
+        last_state = state
+    raise RuntimeError(
+        f'Timeout waiting for VM {name} to leave state {exclude_state!r} '
+        f'(still in state: {last_state!r}) after {timeout_s}s.'
     )
 
 
@@ -1384,9 +1415,9 @@ def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         role='modify',
     ):
         # First check if VM is active
-        code, state = _get_vm_state(name)
+        code, state, error = _get_vm_state(name)
         if code != 0:
-            msg = (state or 'unknown error').strip()
+            msg = error or 'unknown error'
             raise RuntimeError(
                 f'Failed to get state for VM {name} (code={code}). '
                 f'Error: {msg}'
@@ -1394,6 +1425,27 @@ def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         if not _is_vm_active(state):
             log.info('VM {} is not active (state={}); nothing to do.', name, state)
             return
+
+        # Handle pmsuspended specially - resume first since ACPI shutdown
+        # requires the guest to be running to receive the signal
+        if 'pmsuspended' in state:
+            log.info('VM {} is pmsuspended; resuming first', name)
+            res = mgr.run(
+                ['virsh', 'resume', name],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary='Resume pmsuspended VM',
+            )
+            if res.code != 0:
+                msg = (res.stderr or res.stdout or '').strip()
+                raise RuntimeError(
+                    f'Failed to resume VM {name}.\n{msg}'
+                )
+            # Wait for VM to transition out of pmsuspended
+            _wait_for_vm_not_state(name, 'pmsuspended', timeout_s=10, poll_interval_s=1)
+            log.info('VM {} resumed', name)
 
         # Send ACPI shutdown signal
         res = mgr.run(
@@ -1442,15 +1494,35 @@ def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         role='modify',
     ):
         # First check if VM is active
-        code, state = _get_vm_state(name)
+        code, state, error = _get_vm_state(name)
         if code != 0:
-            msg = (state or 'unknown error').strip()
+            msg = error or 'unknown error'
             raise RuntimeError(
                 f'Failed to get state for VM {name} (code={code}). '
                 f'Error: {msg}'
             )
 
         if _is_vm_active(state):
+            # Handle pmsuspended specially - resume it first, then shutdown
+            if 'pmsuspended' in state:
+                log.info('VM {} is pmsuspended; resuming first', name)
+                res = mgr.run(
+                    ['virsh', 'resume', name],
+                    sudo=True,
+                    role='modify',
+                    check=False,
+                    capture=True,
+                    summary='Resume pmsuspended VM',
+                )
+                if res.code != 0:
+                    msg = (res.stderr or res.stdout or '').strip()
+                    raise RuntimeError(
+                        f'Failed to resume VM {name}.\n{msg}'
+                    )
+                # Wait for VM to transition out of pmsuspended (any active state is fine)
+                _wait_for_vm_not_state(name, 'pmsuspended', timeout_s=10, poll_interval_s=1)
+                log.info('VM {} resumed', name)
+
             log.info('Sending shutdown signal to VM {} (state={})', name, state)
             # Send ACPI shutdown signal
             res = mgr.run(
@@ -1486,16 +1558,13 @@ def _start_vm(name: str) -> None:
     it does not create or recreate the VM.
     """
     mgr = CommandManager.current()
-    res = mgr.run(
+    mgr.run(
         ['virsh', 'start', name],
         sudo=True,
         role='modify',
         check=True,
         summary=f'Start VM {name}',
     )
-    if res.code != 0:
-        msg = (res.stderr or res.stdout or '').strip()
-        raise RuntimeError(f'Failed to start VM {name}.\n{msg}')
 
 
 def destroy_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
