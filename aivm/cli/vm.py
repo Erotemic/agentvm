@@ -36,12 +36,6 @@ from ..attachments.shared_root import (
 )
 from ..commands import CommandManager
 from ..config import AgentVMConfig
-from ..firewall import apply_firewall
-from ..net import ensure_network
-from ..resource_checks import (
-    vm_resource_impossible_lines,
-    vm_resource_warning_lines,
-)
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..status import (
     probe_vm_state,
@@ -49,15 +43,11 @@ from ..status import (
 from ..store import (
     find_attachment_for_vm,
     find_network,
-    find_vm,
     load_store,
-    materialize_vm_cfg,
     network_users,
     remove_attachment,
     remove_vm,
     save_store,
-    upsert_network,
-    upsert_vm_with_network,
 )
 from ..util import which
 from ..vm import (
@@ -84,6 +74,9 @@ from ..vm.share import (
 )
 from ..vm.share import (
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
+)
+from ..vm.create_ops import (
+    create_vm_from_defaults,
 )
 from ..vm.update_ops import (
     _apply_vm_update,
@@ -209,195 +202,14 @@ class VMCreateCLI(_BaseCommand):
             bool(args.yes),
         )
         cfg_path = _cfg_path(args.config)
-        reg = load_store(cfg_path)
-        if reg.defaults is not None:
-            # Work on a copy so per-create overrides (e.g. --vm) never mutate
-            # persisted defaults in the registry.
-            cfg = deepcopy(reg.defaults).expanded_paths()
-        elif reg.vms:
-            # Fallback for stores that predate/omit [defaults]: use an existing
-            # managed VM definition as the template source for new VM creation.
-            template_name = (
-                reg.active_vm if find_vm(reg, reg.active_vm) is not None else ''
-            )
-            if not template_name:
-                template_name = sorted(v.name for v in reg.vms)[0]
-            cfg = materialize_vm_cfg(reg, template_name).expanded_paths()
-            log.warning(
-                'No config defaults found; using managed VM {} as create template.',
-                template_name,
-            )
-        else:
-            log.error(
-                f'No config defaults found in store: {cfg_path}. '
-                'Run `aivm config init` first.'
-            )
-            return 1
-        if args.vm:
-            cfg.vm.name = str(args.vm).strip()
-        for line in vm_resource_warning_lines(cfg):
-            log.warning(line)
-        if not bool(args.yes):
-            cfg = _review_vm_create_overrides_interactive(cfg, cfg_path)
-        problems = vm_resource_impossible_lines(cfg)
-        if problems:
-            detail = '\n  - '.join(problems)
-            raise RuntimeError(
-                'Requested VM resources are not feasible on this host right now:\n'
-                f'  - {detail}\n'
-                'Lower vm.ram_mb / vm.cpus and retry.'
-            )
-        net = find_network(reg, cfg.network.name)
-        if net is None:
-            upsert_network(reg, network=cfg.network, firewall=cfg.firewall)
-        else:
-            cfg.network = type(net.network)(**asdict(net.network))
-            cfg.firewall = type(net.firewall)(**asdict(net.firewall))
-            cfg.network.name = net.name
-        existing = find_vm(reg, cfg.vm.name)
-        if existing is not None and not args.force:
-            log.error(
-                f"VM '{cfg.vm.name}' already exists in config store. "
-                'Use --force to overwrite. Or use a different name and try again'
-            )
-            return 1
-        _maybe_install_missing_host_deps(
-            yes=bool(args.yes), dry_run=bool(args.dry_run)
+        return create_vm_from_defaults(
+            cfg_path,
+            vm_override=args.vm if args.vm else None,
+            set_default=bool(args.set_default),
+            force=bool(args.force),
+            dry_run=bool(args.dry_run),
+            yes=bool(args.yes),
         )
-        mgr = CommandManager.current()
-        with mgr.intent(
-            f'Create VM {cfg.vm.name}',
-            why='Provision the managed network, firewall, and VM definition from config defaults.',
-            role='modify',
-        ):
-            ensure_network(cfg, recreate=False, dry_run=bool(args.dry_run))
-            if cfg.firewall.enabled:
-                apply_firewall(cfg, dry_run=bool(args.dry_run))
-            create_or_start_vm(
-                cfg,
-                dry_run=bool(args.dry_run),
-                recreate=bool(args.force and existing is not None),
-            )
-        if not args.dry_run:
-            prev_active_vm = reg.active_vm
-            upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
-            set_active = bool(args.set_default)
-            if (
-                not set_active
-                and not bool(args.yes)
-                and prev_active_vm != cfg.vm.name
-            ):
-                set_active = _prompt_set_created_vm_default(cfg.vm.name)
-            if not set_active:
-                reg.active_vm = prev_active_vm
-            save_store(
-                reg,
-                cfg_path,
-                reason=(
-                    f'Persist created VM record for {cfg.vm.name} and update '
-                    'the active default selection.'
-                ),
-            )
-        return 0
-
-
-def _render_vm_create_summary(cfg: AgentVMConfig, path: Path) -> str:
-    lines = [
-        'Create VM from defaults:',
-        f'  config_store: {path}',
-        f'  vm.name: {cfg.vm.name}',
-        f'  vm.user: {cfg.vm.user}',
-        f'  vm.cpus: {cfg.vm.cpus}',
-        f'  vm.ram_mb: {cfg.vm.ram_mb}',
-        f'  vm.disk_gb: {cfg.vm.disk_gb}',
-        f'  network.name: {cfg.network.name}',
-        f'  network.subnet_cidr: {cfg.network.subnet_cidr}',
-        f'  network.gateway_ip: {cfg.network.gateway_ip}',
-        f'  network.dhcp_start: {cfg.network.dhcp_start}',
-        f'  network.dhcp_end: {cfg.network.dhcp_end}',
-    ]
-    return '\n'.join(lines)
-
-
-def _prompt_with_default(prompt: str, default: str) -> str:
-    raw = input(f'{prompt} [{default}]: ').strip()
-    return raw if raw else default
-
-
-def _prompt_int_with_default(prompt: str, default: int) -> int:
-    while True:
-        raw = input(f'{prompt} [{default}]: ').strip()
-        if not raw:
-            return default
-        try:
-            value = int(raw)
-        except ValueError:
-            print('Please enter a valid integer.')
-            continue
-        if value <= 0:
-            print('Please enter a positive integer.')
-            continue
-        return value
-
-
-def _prompt_set_created_vm_default(vm_name: str) -> bool:
-    while True:
-        ans = (
-            input(
-                f'Set "{vm_name}" as the active default VM for folder-based commands? [y/N]: '
-            )
-            .strip()
-            .lower()
-        )
-        if ans in {'', 'n', 'no'}:
-            return False
-        if ans in {'y', 'yes'}:
-            return True
-        print("Please answer 'y' or 'n'.")
-
-
-def _review_vm_create_overrides_interactive(
-    cfg: AgentVMConfig, path: Path
-) -> AgentVMConfig:
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            'VM create defaults require confirmation in interactive mode. '
-            'Re-run with --yes.'
-        )
-    print(_render_vm_create_summary(cfg, path))
-    while True:
-        ans = input('Use these values? [Y/e/n] (e=edit): ').strip().lower()
-        if ans in {'', 'y', 'yes'}:
-            return cfg
-        if ans in {'n', 'no'}:
-            raise RuntimeError('Aborted by user.')
-        if ans in {'e', 'edit'}:
-            cfg.vm.name = _prompt_with_default('vm.name', cfg.vm.name)
-            cfg.vm.user = _prompt_with_default('vm.user', cfg.vm.user)
-            cfg.vm.cpus = _prompt_int_with_default('vm.cpus', cfg.vm.cpus)
-            cfg.vm.ram_mb = _prompt_int_with_default('vm.ram_mb', cfg.vm.ram_mb)
-            cfg.vm.disk_gb = _prompt_int_with_default(
-                'vm.disk_gb', cfg.vm.disk_gb
-            )
-            cfg.network.name = _prompt_with_default(
-                'network.name', cfg.network.name
-            )
-            cfg.network.subnet_cidr = _prompt_with_default(
-                'network.subnet_cidr', cfg.network.subnet_cidr
-            )
-            cfg.network.gateway_ip = _prompt_with_default(
-                'network.gateway_ip', cfg.network.gateway_ip
-            )
-            cfg.network.dhcp_start = _prompt_with_default(
-                'network.dhcp_start', cfg.network.dhcp_start
-            )
-            cfg.network.dhcp_end = _prompt_with_default(
-                'network.dhcp_end', cfg.network.dhcp_end
-            )
-            print('')
-            print(_render_vm_create_summary(cfg, path))
-            continue
-        print("Please answer 'y', 'e', or 'n'.")
 
 
 class VMWaitIPCLI(_BaseCommand):

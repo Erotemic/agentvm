@@ -33,16 +33,24 @@ def test_vm_create_uses_defaults_and_adds_vm(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm._maybe_install_missing_host_deps',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops._maybe_install_missing_host_deps',
         lambda **kwargs: None,
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
     rc = VMCreateCLI.main(
         argv=False, config=str(cfg_path), vm='new-vm', yes=True
@@ -71,16 +79,24 @@ def test_vm_create_falls_back_to_existing_vm_when_defaults_missing(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm._maybe_install_missing_host_deps',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops._maybe_install_missing_host_deps',
         lambda **kwargs: None,
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
 
     rc = VMCreateCLI.main(
@@ -112,16 +128,24 @@ def test_vm_create_yes_preserves_existing_active_vm(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm._maybe_install_missing_host_deps',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops._maybe_install_missing_host_deps',
         lambda **kwargs: None,
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
 
     rc = VMCreateCLI.main(
@@ -153,16 +177,24 @@ def test_vm_create_set_default_opt_in(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm._maybe_install_missing_host_deps',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops._maybe_install_missing_host_deps',
         lambda **kwargs: None,
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
 
     rc = VMCreateCLI.main(
@@ -195,24 +227,32 @@ def test_vm_create_interactive_default_prompt_no_keeps_active(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
     monkeypatch.setattr(
-        'aivm.cli.vm._review_vm_create_overrides_interactive',
+        'aivm.vm.create_ops._review_vm_create_overrides_interactive',
         lambda cfg, path: cfg,
     )
     asked: list[str] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._prompt_set_created_vm_default',
+        'aivm.vm.create_ops._prompt_set_created_vm_default',
         lambda vm_name: asked.append(vm_name) or False,
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm._maybe_install_missing_host_deps',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops._maybe_install_missing_host_deps',
         lambda **kwargs: None,
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
 
     rc = VMCreateCLI.main(
@@ -331,7 +371,7 @@ def test_vm_create_interactive_edit_overrides_defaults(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.vm.create_ops.sys.stdin.isatty', lambda: True)
     answers = iter(
         [
             'e',
@@ -358,16 +398,24 @@ def test_vm_create_interactive_edit_overrides_defaults(
             return 'y'
 
     monkeypatch.setattr('builtins.input', fake_input)
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm._maybe_install_missing_host_deps',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops._maybe_install_missing_host_deps',
         lambda **kwargs: None,
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
 
     rc = VMCreateCLI.main(argv=False, config=str(cfg_path), yes=False)
@@ -393,11 +441,13 @@ def test_vm_create_interactive_abort(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.vm.create_ops.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr('builtins.input', lambda _: 'n')
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
     with pytest.raises(RuntimeError, match='Aborted by user'):
         VMCreateCLI.main(argv=False, config=str(cfg_path), yes=False)
@@ -420,19 +470,25 @@ def test_vm_create_warns_when_requested_resources_look_too_high(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.create_or_start_vm', lambda *a, **k: None)
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_warning_lines',
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.create_or_start_vm', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_warning_lines',
         lambda cfg: ['warn1', 'warn2'],
     )
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
     warns: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm.log.warning',
+        'aivm.vm.create_ops.log.warning',
         lambda *a, **k: warns.append((a, k)),
     )
 
@@ -454,21 +510,23 @@ def test_vm_create_ensures_network_before_vm_create(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines', lambda cfg: []
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines', lambda cfg: []
     )
     calls: list[str] = []
     monkeypatch.setattr(
-        'aivm.cli.vm.ensure_network',
+        'aivm.vm.create_ops.ensure_network',
         lambda *a, **k: calls.append('ensure_network'),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm.apply_firewall',
+        'aivm.vm.create_ops.apply_firewall',
         lambda *a, **k: calls.append('apply_firewall'),
     )
     monkeypatch.setattr(
-        'aivm.cli.vm.create_or_start_vm',
+        'aivm.vm.create_ops.create_or_start_vm',
         lambda *a, **k: calls.append('create_or_start_vm'),
     )
     rc = VMCreateCLI.main(argv=False, config=str(cfg_path), yes=True)
@@ -491,12 +549,18 @@ def test_vm_create_errors_when_resources_physically_impossible(
     monkeypatch.setattr(
         'aivm.cli.vm._cfg_path', lambda p: cfg_path if p else cfg_path
     )
-    monkeypatch.setattr('aivm.cli.vm.vm_resource_warning_lines', lambda cfg: [])
     monkeypatch.setattr(
-        'aivm.cli.vm.vm_resource_impossible_lines',
+        'aivm.vm.create_ops.vm_resource_warning_lines', lambda cfg: []
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.vm_resource_impossible_lines',
         lambda cfg: ['vm.cpus=8 exceeds host CPU count=2'],
     )
-    monkeypatch.setattr('aivm.cli.vm.ensure_network', lambda *a, **k: None)
-    monkeypatch.setattr('aivm.cli.vm.apply_firewall', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.ensure_network', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'aivm.vm.create_ops.apply_firewall', lambda *a, **k: None
+    )
     with pytest.raises(RuntimeError, match='not feasible on this host'):
         VMCreateCLI.main(argv=False, config=str(cfg_path), yes=True)
