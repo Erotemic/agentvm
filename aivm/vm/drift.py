@@ -21,6 +21,7 @@ from pathlib import Path
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
+from ..firewall import read_firewall_tcp_ports
 from ..runtime import virsh_system_cmd
 from ..store import Store, find_attachments_for_vm
 from .share import (
@@ -30,6 +31,65 @@ from .share import (
     align_attachment_tag_with_mappings,
     vm_share_mappings,
 )
+
+
+def _normalize_tcp_ports(values) -> tuple[int, ...]:
+    """
+    Normalize configured / observed TCP ports into a sorted deduped tuple[int].
+    """
+    ports = []
+    for v in values or ():
+        try:
+            ports.append(int(v))
+        except Exception:
+            continue
+    return tuple(sorted(set(ports)))
+
+
+def firewall_drift_report(cfg: AgentVMConfig, *, use_sudo: bool) -> DriftReport:
+    """
+    Compare configured allow_tcp_ports against the live nftables state.
+    """
+    actual_ports, error = read_firewall_tcp_ports(cfg, use_sudo=use_sudo)
+    if actual_ports is None:
+        if 'you must be root' in error or 'not permitted' in error:
+            return DriftReport(
+                available=True,
+                summary='Firewall drift not fully checked',
+                diag=(
+                    'Requires sudo to inspect live nftables state; '
+                    'run `aivm status --sudo` for a complete drift report. '
+                    f'Details: {error}'
+                ),
+                items=(),
+            )
+        else:
+            return DriftReport(
+                available=False,
+                summary='Firewall state unavailable',
+                diag=error,
+            )
+
+    expected_ports = _normalize_tcp_ports(cfg.firewall.allow_tcp_ports)
+    if actual_ports == expected_ports:
+        return DriftReport(
+            available=True,
+            summary='Firewall ports match config',
+            items=(),
+        )
+
+    return DriftReport(
+        available=True,
+        summary='Firewall ports differ from config',
+        items=(
+            DriftItem(
+                key='firewall.allow_tcp_ports',
+                expected=expected_ports,
+                actual=actual_ports,
+                reason='Configured allowed TCP ports differ from live nftables rules',
+            ),
+        ),
+    )
 
 
 def _shared_root_host_dir(cfg: AgentVMConfig) -> Path:
@@ -472,6 +532,10 @@ def vm_config_drift_report(
     if not hw_report.available:
         return hw_report
 
+    # TODO: provide a better status message for when we can't detect firewall
+    # drift because we don't have sudo.
+    fw_report = firewall_drift_report(cfg, use_sudo=use_sudo)
+
     # Get share mapping drift
     if expected_mappings is not None:
         # Use provided expected mappings
@@ -485,6 +549,9 @@ def vm_config_drift_report(
 
         items: list[DriftItem] = list(hw_report.items)
 
+        if fw_report.available:
+            items.extend(fw_report.items)
+
         # Use shared helper for two-way set diff
         items.extend(
             _compare_expected_vs_actual_mappings(
@@ -497,6 +564,8 @@ def vm_config_drift_report(
     else:
         # No expected mappings provided, just report hardware
         items = list(hw_report.items)
+        if fw_report.available:
+            items.extend(fw_report.items)
 
     if not items:
         return DriftReport(

@@ -315,6 +315,8 @@ def _apply_vm_update(
     cfg: AgentVMConfig, drift: VMUpdateDrift, *, dry_run: bool
 ) -> tuple[bool, bool]:
     changed = False
+
+    # TODO: Should we check for network config drift here too?
     restart_required = False
     if drift.cpus is not None:
         _, want = drift.cpus

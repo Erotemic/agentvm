@@ -240,6 +240,157 @@ def firewall_status(cfg: AgentVMConfig) -> str:
     return result.stdout + (result.stderr or '')
 
 
+def read_firewall_tcp_ports(
+    cfg: AgentVMConfig, *, use_sudo: bool
+) -> tuple[tuple[int, ...] | None, str]:
+
+    # TODO: this function can be a lot cleaner and server other use-cases
+    # currently only used in drift detection.
+
+    table = cfg.firewall.table
+    bridge = cfg.network.bridge
+
+    res = CommandManager.current().run(
+        ['nft', '--json', 'list', 'table', 'inet', table],
+        sudo=use_sudo,
+        check=False,
+        capture=True,
+    )
+
+    if res.code != 0:
+        raw = (res.stderr or res.stdout or 'nft list table failed').strip()
+        if 'you must be root' in res.stderr or 'not permitted' in res.stderr:
+            return None, raw
+        return None, raw
+
+    import json
+    text = res.stdout or ''
+    ports = set()
+    data = json.loads(text)
+
+    def _expr_is_iifname_match(expr: object, want_ifname: str) -> bool:
+        if not isinstance(expr, dict):
+            return False
+        match = expr.get('match')
+        if not isinstance(match, dict):
+            return False
+        op = match.get('op')
+        left = match.get('left')
+        right = match.get('right')
+        if op != '==':
+            return False
+        if left != {'meta': {'key': 'iifname'}}:
+            return False
+        return right == want_ifname
+
+    def _extract_tcp_dports(expr: object) -> tuple[int, ...]:
+        """
+        Handles forms like:
+            {"match": {"left": {"payload": {...}}, "op": "==", "right": 22}}
+            {"match": {"left": {"payload": {...}}, "op": "==", "right": {"set": [22, 80]}}}
+        """
+        if not isinstance(expr, dict):
+            return ()
+        match = expr.get('match')
+        if not isinstance(match, dict):
+            return ()
+
+        left = match.get('left')
+        if not isinstance(left, dict):
+            return ()
+
+        payload = left.get('payload')
+        if not isinstance(payload, dict):
+            return ()
+
+        if payload.get('protocol') != 'tcp' or payload.get('field') != 'dport':
+            return ()
+
+        right = match.get('right')
+        vals: list[int] = []
+
+        if isinstance(right, int):
+            vals.append(right)
+        elif isinstance(right, str) and right.isdigit():
+            vals.append(int(right))
+        elif isinstance(right, dict):
+            if 'set' in right and isinstance(right['set'], list):
+                for item in right['set']:
+                    if isinstance(item, int):
+                        vals.append(item)
+                    elif isinstance(item, str) and item.isdigit():
+                        vals.append(int(item))
+
+        return tuple(sorted(set(vals)))
+
+    def _rule_has_ip_daddr_constraint(exprs: list[object]) -> bool:
+        """
+        Reject rules with any explicit ip daddr match, because those are
+        infrastructure/special-case rules (e.g. gateway DNS), not the user
+        allow_tcp_ports rule we want.
+        """
+        for expr in exprs:
+            if not isinstance(expr, dict):
+                continue
+            match = expr.get('match')
+            if not isinstance(match, dict):
+                continue
+            left = match.get('left')
+            if not isinstance(left, dict):
+                continue
+            payload = left.get('payload')
+            if not isinstance(payload, dict):
+                continue
+            if payload.get('protocol') == 'ip' and payload.get('field') == 'daddr':
+                return True
+        return False
+
+    ports = set()
+
+    for item in data.get('nftables', []):
+        rule = item.get('rule')
+        if not isinstance(rule, dict):
+            continue
+
+        if rule.get('family') != 'inet' or rule.get('table') != table:
+            continue
+
+        exprs = rule.get('expr')
+        if not isinstance(exprs, list) or not exprs:
+            continue
+
+        # Only consider rules bound to the VM bridge.
+        if not any(_expr_is_iifname_match(expr, bridge) for expr in exprs):
+            continue
+
+        # Exclude gateway/service-specific rules like tcp dport 53 to gateway.
+        if _rule_has_ip_daddr_constraint(exprs):
+            continue
+
+        # Find a plain tcp dport match in the rule.
+        rule_ports: tuple[int, ...] = ()
+        for expr in exprs:
+            extracted = _extract_tcp_dports(expr)
+            if extracted:
+                rule_ports = extracted
+                break
+
+        if not rule_ports:
+            continue
+
+        # Require terminal verdict accept.
+        has_accept = any(
+            isinstance(expr, dict) and expr.get('accept') is None and 'accept' in expr
+            for expr in exprs
+        )
+        if not has_accept:
+            continue
+
+        ports.update(rule_ports)
+
+    return tuple(sorted(ports)), ''
+
+
 def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     table = cfg.firewall.table
     if dry_run:

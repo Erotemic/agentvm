@@ -554,6 +554,9 @@ def render_status(
         drift = saved_vm_drift_report(cfg, reg, use_sudo=use_sudo)
         if drift.available:
             if drift.ok is True:
+                # TODO: if we don't have sudo or we can only do a partial
+                # check, we should inform the user about that here. (e.g.
+                # firewall drift)
                 lines.append(status_line(True, 'Config drift', 'in sync'))
             else:
                 # drift.ok is False here (drift detected)
