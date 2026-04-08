@@ -12,25 +12,42 @@ python dev/devcheck/aivm_mount_mwe.py info \
 
 python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py  cycle   --ssh-target aivm-2404   --vm-name aivm-2404   --guest-shared-base /mnt/aivm-shared   --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root   --runid stacktest1   --order host-first
 
+
+aivm vm restart
+# in the aivm code dir to get the shared root
+aivm code .
+
+ssh aivm-2404 'findmnt -T /mnt/aivm-shared'
+sudo test -d /var/lib/libvirt/aivm/aivm-2404/shared-root && echo ok
+
+sudo findmnt -M /var/lib/libvirt/aivm/aivm-2404/shared-root/__mwe__/stacktest-clean-1/stage || true
+ssh aivm-2404 'findmnt -M /tmp/aivm-mwe/stacktest-clean-1/dst || true'
+
+# TEST HOST FIRST (USE A UNIQUE RUNID)
+
 python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py cycle \
   --ssh-target aivm-2404 \
   --vm-name aivm-2404 \
   --guest-shared-base /mnt/aivm-shared \
   --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
-  --runid stacktest1 \
+  --runid stacktest-clean-1 \
   --order host-first \
   --reconcile-retries 10 \
   --reconcile-sleep 1.0 \
   --keep-on-cleanup-fail
 
-python dev/devcheck/aivm_mount_mwe.py cycle \
+# TEST GUEST FIRST (USE A UNIQUE RUNID)
+
+python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py cycle \
   --ssh-target aivm-2404 \
   --vm-name aivm-2404 \
   --guest-shared-base /mnt/aivm-shared \
   --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
-  --runid stacktest1 \
-  --order host-first
-
+  --runid stacktest--guest-clean-2 \
+  --order guest-first \
+  --reconcile-retries 10 \
+  --reconcile-sleep 1.0 \
+  --keep-on-cleanup-fail
 
 RUNID=stacktest1
 for i in $(seq 1 20); do
@@ -434,14 +451,14 @@ def host_fuser(args: argparse.Namespace, path: str) -> CmdResult:
 
 def host_busy_holders(args: argparse.Namespace, path: str) -> CmdResult:
     script = (
-        f"fuser -vm {q(path)} 2>/dev/null | "
-        "grep -E 'virtiofsd|qemu-system|COMMAND|PID|USER' || true"
+        f"fuser -vm {q(path)} 2>&1 | "
+        "grep -E 'virtiofsd|qemu-system|COMMAND|PID|USER|/var/lib/libvirt|/mnt/aivm-shared' || true"
     )
     return host_run(args, ["bash", "-lc", script])
 
 
 def host_lsof_mount(args: argparse.Namespace, path: str) -> CmdResult:
-    script = f"lsof +f -- {q(path)} 2>/dev/null | sed -n '1,80p' || true"
+    script = f"findmnt -M {q(path)} -o TARGET -n >/dev/null 2>&1 && lsof +D {q(path)} 2>/dev/null | sed -n '1,120p' || true"
     return host_run(args, ["bash", "-lc", script])
 
 
