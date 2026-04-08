@@ -1,17 +1,195 @@
 #!/usr/bin/env python3
 r"""
+Standalone MWE for AIVM attachment lifecycle over a live virtiofs export.
 
-Developer Usage
+Purpose
+-------
+This script isolates the mount topology used by AIVM attachments without
+requiring the full product path.  It is intended to answer one narrow question:
+
+    What happens if we stage a host directory under the VM's existing shared
+    virtiofs export, bind-mount that staged directory again inside the guest,
+    exercise the mounted tree, and then try to detach it?
+
+The script models the attachment stack as:
+
+    host_src
+        real host directory containing test content
+
+    host_stage
+        bind mount of host_src placed *inside* the host virtiofs export tree
+
+    guest_stage
+        the same staged directory as seen from inside the guest via the
+        already-existing virtiofs mount
+
+    guest_dst
+        an optional second bind mount inside the guest pointing at guest_stage
+
+In path form the model is:
+
+    host_src   = /tmp/aivm-mwe/<runid>/src
+    host_stage = <host_export_dir>/__mwe__/<runid>/stage
+    guest_stage = <guest_shared_base>/__mwe__/<runid>/stage
+    guest_dst   = /tmp/aivm-mwe/<runid>/dst
+
+This is deliberately close to the AIVM attachment design:
+a long-lived host export is already mounted into the guest by virtiofs, and
+attachments are introduced by creating additional bind-mounted directories
+inside that export.
+
+Preconditions
+-------------
+This script does *not* create the base virtiofs export.  It assumes all of the
+following are already true before it is run:
+
+1. The VM is up and reachable over SSH.
+2. The guest already has a virtiofs mount such as /mnt/aivm-shared.
+3. The host already has the matching export directory, such as
+   /var/lib/libvirt/aivm/<vm-name>/shared-root.
+4. The export remains live for the duration of the test.
+
+In other words, this script tests attachment behavior *inside* an existing
+shared-root export; it does not test export creation.
+
+What the script creates
+-----------------------
+For each runid the script creates a fresh host scratch directory and populates
+host_src with easily recognizable content:
+
+* MWE_SENTINEL.txt
+* a small Git repository
+* one tracked file
+* one untracked file
+
+The Git repo and sentinel file are intentional.  They make it easy to prove
+that the guest is seeing the exact staged directory rather than an ordinary
+empty directory or some other fallback path.
+
+Subcommands
+-----------
+info
+    Resolve and print the discovered host/guest paths without changing mounts.
+
+attach
+    Prepare host_src, create host_stage, bind host_src -> host_stage on the
+    host, then bind guest_stage -> guest_dst inside the guest.
+
+probe
+    Inspect both sides using stat/findmnt/fuser and Git probes.
+
+detach
+    Detach in one of four orders:
+        guest-first
+        host-first
+        guest-only
+        host-only
+
+cycle
+    Run attach, then probe, then detach in the requested order, then probe
+    again, then cleanup.
+
+What "success" means during attach
+----------------------------------
+Attach is considered successful when all of the following are true:
+
+* host_stage is an actual mountpoint backed by host_src
+* guest_stage is visible through virtiofs
+* guest_dst is an actual mountpoint inside the guest
+* the Git repo is visible and usable from guest_dst
+
+The Git and sentinel probes exist specifically to verify this.
+
+What this MWE is trying to prove
+--------------------------------
+The MWE is not primarily about correctness of the file contents.  It is about
+mount *lifecycle*.
+
+The question is whether a host bind mount created inside a live virtiofs export
+can be detached cleanly while the VM is still running and after the guest has
+already stopped using the mount.
+
+The working hypothesis is that once guest access occurs, processes servicing
+the virtiofs export may continue to hold references to host_stage, making the
+host unmount fail with "target is busy".
+
+How to interpret outcomes
+-------------------------
+The most important cases are:
+
+A. guest detach succeeds, but host unmount later fails with "target is busy"
+   repeatedly
+   This means the guest-side bind can be cleaned up, but the host-side staged
+   bind inside the live export is still held open by something outside the
+   script.
+
+B. both guest-first and host-first show the same busy host unmount
+   This means the problem is not primarily detach ordering.
+
+C. the next run starts with host_stage already mounted
+   This usually means the prior run left behind a busy host mount, so the next
+   run is no longer a clean slate and should not be used as first-pass evidence.
+
+What this MWE does NOT prove
+----------------------------
+This script demonstrates mount retention / busy-unmount behavior.  It does not,
+by itself, prove a monotonic file-descriptor leak or fully explain
+"Too many open files".  It provides a plausible mechanism for that larger
+problem by showing that staged host mounts inside the live export may not be
+reaped cleanly.
+
+Recommended clean-slate procedure
+---------------------------------
+1. Restart the VM if needed.
+2. Re-establish the base shared-root export used by AIVM.
+3. Use a fresh runid for every first-pass test.
+4. Prefer one clean host-first run and one clean guest-first run before doing
+   loops.
+5. Do not reuse a contaminated runid unless you intentionally want to inspect a
+   stale state.
+
+Example commands
+----------------
+Show discovered paths only:
+
+    python dev/devcheck/aivm_mount_mwe.py info \
+      --ssh-target aivm-2404 \
+      --vm-name aivm-2404 \
+      --guest-shared-base /mnt/aivm-shared \
+      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root
+
+Clean host-first cycle:
+
+    python dev/devcheck/aivm_mount_mwe.py cycle \
+      --ssh-target aivm-2404 \
+      --vm-name aivm-2404 \
+      --guest-shared-base /mnt/aivm-shared \
+      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+      --runid stacktest-clean-host \
+      --order host-first
+
+Clean guest-first cycle:
+
+    python dev/devcheck/aivm_mount_mwe.py cycle \
+      --ssh-target aivm-2404 \
+      --vm-name aivm-2404 \
+      --guest-shared-base /mnt/aivm-shared \
+      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+      --runid stacktest-clean-guest \
+      --order guest-first
+
+Current empirical result that motivated freezing this MWE
+---------------------------------------------------------
+In clean runs, attach succeeds and the guest sees the staged Git repo correctly.
+Guest-side unmount can succeed, but the later host unmount of host_stage may
+remain busy for repeated retries.  This has been observed in both host-first
+and guest-first orderings, which suggests the core problem is the lifetime of
+the host bind mount inside the live virtiofs export rather than the detach
+order alone.
+
+
+Developer Notes
 ---------------
-
-python dev/devcheck/aivm_mount_mwe.py info \
-  --ssh-target aivm-2404 \
-  --vm-name aivm-2404 \
-  --guest-shared-base /mnt/aivm-shared \
-  --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root
-
-python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py  cycle   --ssh-target aivm-2404   --vm-name aivm-2404   --guest-shared-base /mnt/aivm-shared   --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root   --runid stacktest1   --order host-first
-
 
 aivm vm restart
 # in the aivm code dir to get the shared root
@@ -48,49 +226,8 @@ python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py cycle \
   --reconcile-retries 10 \
   --reconcile-sleep 1.0 \
   --keep-on-cleanup-fail
-
-RUNID=stacktest1
-for i in $(seq 1 20); do
-  echo "=== cycle $i guest-first ==="
-  python dev/devcheck/aivm_mount_mwe.py cycle \
-    --ssh-target aivm-2404 \
-    --vm-name aivm-2404 \
-    --guest-shared-base /mnt/aivm-shared \
-    --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
-    --runid "$RUNID" \
-    --order guest-first || break
-done
-
-
-RUNID=stacktest2
-for i in $(seq 1 30); do
-  echo "=== cycle $i host-first ==="
-  python dev/devcheck/aivm_mount_mwe.py cycle \
-    --ssh-target aivm-2404 \
-    --vm-name aivm-2404 \
-    --guest-shared-base /mnt/aivm-shared \
-    --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
-    --runid "$RUNID" \
-    --order host-first || break
-done
-
-
-RUNID=stacktest3
-for i in $(seq 1 30); do
-  echo "=== cycle $i lazy guest+host ==="
-  python dev/devcheck/aivm_mount_mwe.py cycle \
-    --ssh-target aivm-2404 \
-    --vm-name aivm-2404 \
-    --guest-shared-base /mnt/aivm-shared \
-    --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
-    --runid "$RUNID" \
-    --order guest-first \
-    --lazy-host \
-    --lazy-guest || break
-done
-
-
 """
+
 from __future__ import annotations
 
 import argparse
