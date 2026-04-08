@@ -1,4 +1,79 @@
 #!/usr/bin/env python3
+r"""
+
+Developer Usage
+---------------
+
+python dev/devcheck/aivm_mount_mwe.py info \
+  --ssh-target aivm-2404 \
+  --vm-name aivm-2404 \
+  --guest-shared-base /mnt/aivm-shared \
+  --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root
+
+python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py  cycle   --ssh-target aivm-2404   --vm-name aivm-2404   --guest-shared-base /mnt/aivm-shared   --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root   --runid stacktest1   --order host-first
+
+python ~/code/aivm/dev/devcheck/aivm_mount_mwe.py cycle \
+  --ssh-target aivm-2404 \
+  --vm-name aivm-2404 \
+  --guest-shared-base /mnt/aivm-shared \
+  --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+  --runid stacktest1 \
+  --order host-first \
+  --reconcile-retries 10 \
+  --reconcile-sleep 1.0 \
+  --keep-on-cleanup-fail
+
+python dev/devcheck/aivm_mount_mwe.py cycle \
+  --ssh-target aivm-2404 \
+  --vm-name aivm-2404 \
+  --guest-shared-base /mnt/aivm-shared \
+  --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+  --runid stacktest1 \
+  --order host-first
+
+
+RUNID=stacktest1
+for i in $(seq 1 20); do
+  echo "=== cycle $i guest-first ==="
+  python dev/devcheck/aivm_mount_mwe.py cycle \
+    --ssh-target aivm-2404 \
+    --vm-name aivm-2404 \
+    --guest-shared-base /mnt/aivm-shared \
+    --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+    --runid "$RUNID" \
+    --order guest-first || break
+done
+
+
+RUNID=stacktest2
+for i in $(seq 1 30); do
+  echo "=== cycle $i host-first ==="
+  python dev/devcheck/aivm_mount_mwe.py cycle \
+    --ssh-target aivm-2404 \
+    --vm-name aivm-2404 \
+    --guest-shared-base /mnt/aivm-shared \
+    --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+    --runid "$RUNID" \
+    --order host-first || break
+done
+
+
+RUNID=stacktest3
+for i in $(seq 1 30); do
+  echo "=== cycle $i lazy guest+host ==="
+  python dev/devcheck/aivm_mount_mwe.py cycle \
+    --ssh-target aivm-2404 \
+    --vm-name aivm-2404 \
+    --guest-shared-base /mnt/aivm-shared \
+    --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+    --runid "$RUNID" \
+    --order guest-first \
+    --lazy-host \
+    --lazy-guest || break
+done
+
+
+"""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +81,7 @@ import json
 import shlex
 import subprocess
 import textwrap
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -63,8 +139,15 @@ def ssh_argv(args: argparse.Namespace) -> list[str]:
     return argv
 
 
-def guest_run(args: argparse.Namespace, script: str, check: bool = False) -> CmdResult:
-    return run(ssh_argv(args) + ["bash", "-lc", script], check=check)
+def guest_run(
+    args: argparse.Namespace,
+    script: str,
+    check: bool = False,
+    use_sudo: bool = False,
+) -> CmdResult:
+    prefix = "sudo " if use_sudo else ""
+    remote_cmd = f"{prefix}bash -lc {shlex.quote(script)}"
+    return run(ssh_argv(args) + [remote_cmd], check=check)
 
 
 def show(label: str, res: CmdResult) -> None:
@@ -162,37 +245,45 @@ def guest_discovery_report(args: argparse.Namespace) -> dict:
         "errors": [],
     }
 
-    res_json = guest_run(args, "findmnt -J -t virtiofs -o TARGET,SOURCE,FSTYPE,OPTIONS")
+    res_json = guest_run(args, "command findmnt --json --list -t virtiofs -o TARGET,SOURCE,FSTYPE,OPTIONS")
     report["findmnt_json"] = {"ok": res_json.ok, "stdout": res_json.stdout, "stderr": res_json.stderr}
     if res_json.ok and res_json.stdout.strip():
         try:
-            for item in _parse_findmnt_json(res_json.stdout):
-                tgt = item.get("target")
-                src = item.get("source")
-                fstype = item.get("fstype")
-                if tgt and src:
-                    report["candidates"].append(
-                        {"strategy": "findmnt_json", "target": str(tgt), "source": str(src), "fstype": str(fstype or "")}
-                    )
+            s = res_json.stdout.lstrip()
+            if not s.startswith("{"):
+                report["errors"].append(f"findmnt_json_not_json: first_bytes={s[:80]!r}")
+            else:
+                for item in _parse_findmnt_json(res_json.stdout):
+                    tgt = item.get("target")
+                    src = item.get("source")
+                    fstype = item.get("fstype")
+                    if tgt and src:
+                        report["candidates"].append(
+                            {"strategy": "findmnt_json", "target": str(tgt), "source": str(src), "fstype": str(fstype or "")}
+                        )
         except Exception as ex:
             report["errors"].append(f"findmnt_json_parse: {ex}")
 
-    res_pairs = guest_run(args, "findmnt -P -t virtiofs -o TARGET,SOURCE,FSTYPE,OPTIONS")
+    res_pairs = guest_run(args, "command findmnt --pairs --list -t virtiofs -o TARGET,SOURCE,FSTYPE,OPTIONS")
     report["findmnt_pairs"] = {"ok": res_pairs.ok, "stdout": res_pairs.stdout, "stderr": res_pairs.stderr}
     if res_pairs.ok and res_pairs.stdout.strip():
         try:
-            for item in _parse_findmnt_pairs(res_pairs.stdout):
-                tgt = item.get("target")
-                src = item.get("source")
-                fstype = item.get("fstype")
-                if tgt and src:
-                    report["candidates"].append(
-                        {"strategy": "findmnt_pairs", "target": str(tgt), "source": str(src), "fstype": str(fstype or "")}
-                    )
+            first = next((ln.strip() for ln in res_pairs.stdout.splitlines() if ln.strip()), "")
+            if "=" not in first:
+                report["errors"].append(f"findmnt_pairs_not_pairs: first_line={first[:120]!r}")
+            else:
+                for item in _parse_findmnt_pairs(res_pairs.stdout):
+                    tgt = item.get("target")
+                    src = item.get("source")
+                    fstype = item.get("fstype")
+                    if tgt and src:
+                        report["candidates"].append(
+                            {"strategy": "findmnt_pairs", "target": str(tgt), "source": str(src), "fstype": str(fstype or "")}
+                        )
         except Exception as ex:
             report["errors"].append(f"findmnt_pairs_parse: {ex}")
 
-    res_mountinfo = guest_run(args, "grep ' virtiofs ' /proc/self/mountinfo || true")
+    res_mountinfo = guest_run(args, "command awk '$0 ~ / - virtiofs / { print }' /proc/self/mountinfo")
     report["mountinfo"] = {"ok": res_mountinfo.ok, "stdout": res_mountinfo.stdout, "stderr": res_mountinfo.stderr}
     if res_mountinfo.stdout.strip():
         try:
@@ -207,7 +298,7 @@ def guest_discovery_report(args: argparse.Namespace) -> dict:
         except Exception as ex:
             report["errors"].append(f"mountinfo_parse: {ex}")
 
-    res_mount = guest_run(args, "mount | grep ' type virtiofs ' || true")
+    res_mount = guest_run(args, "command mount | command grep ' type virtiofs ' || true", use_sudo=True)
     report["mount_cmd"] = {"ok": res_mount.ok, "stdout": res_mount.stdout, "stderr": res_mount.stderr}
 
     seen = set()
@@ -233,8 +324,9 @@ def discover_guest_shared_base(args: argparse.Namespace) -> tuple[str, str, dict
         res = guest_run(args, f"findmnt -P -T {q(args.guest_shared_base)} -o TARGET,SOURCE,FSTYPE,OPTIONS")
         if res.ok and res.stdout.strip():
             pairs = _parse_findmnt_pairs(res.stdout)
-            if pairs:
-                item = pairs[0]
+            good_pairs = [p for p in pairs if p.get("target") and p.get("source")]
+            if good_pairs:
+                item = good_pairs[0]
                 return str(item["target"]), str(item["source"]), report
         raise RuntimeError(f"could not inspect explicit guest shared base {args.guest_shared_base!r}")
 
@@ -340,6 +432,19 @@ def host_fuser(args: argparse.Namespace, path: str) -> CmdResult:
     return host_run(args, ["fuser", "-vm", path])
 
 
+def host_busy_holders(args: argparse.Namespace, path: str) -> CmdResult:
+    script = (
+        f"fuser -vm {q(path)} 2>/dev/null | "
+        "grep -E 'virtiofsd|qemu-system|COMMAND|PID|USER' || true"
+    )
+    return host_run(args, ["bash", "-lc", script])
+
+
+def host_lsof_mount(args: argparse.Namespace, path: str) -> CmdResult:
+    script = f"lsof +f -- {q(path)} 2>/dev/null | sed -n '1,80p' || true"
+    return host_run(args, ["bash", "-lc", script])
+
+
 def host_stat(args: argparse.Namespace, path: str) -> CmdResult:
     return host_run(args, ["stat", "-Lc", "mode=%A uid=%u gid=%g dev=%d ino=%i type=%F path=%n", path])
 
@@ -364,9 +469,17 @@ def host_git_probe(args: argparse.Namespace, path: str) -> list[CmdResult]:
 
 
 def guest_git_probe(args: argparse.Namespace, path: str) -> list[CmdResult]:
-    out = [guest_run(args, f"git -C {q(path)} rev-parse --is-inside-work-tree")]
+    out = [guest_run(args, f"git -C {q(path)} rev-parse --is-inside-work-tree", use_sudo=True)]
     if out[-1].ok and out[-1].stdout.strip() == "true":
-        out.append(guest_run(args, f"git -C {q(path)} status --short --branch"))
+        out.append(guest_run(args, f"git -C {q(path)} status --short --branch", use_sudo=True))
+    return out
+
+
+def guest_repo_probe(args: argparse.Namespace, path: str) -> list[CmdResult]:
+    out = [
+        guest_run(args, f"bash -lc 'test -d {q(str(Path(path) / '.git'))} && echo yes || echo no'", use_sudo=True),
+        guest_run(args, f"ls -la {q(path)} | sed -n '1,40p'", use_sudo=True),
+    ]
     return out
 
 
@@ -406,22 +519,23 @@ def attach(args: argparse.Namespace, env: dict[str, str], host: dict[str, str], 
 
     banner("HOST ATTACH")
     show("mkdir host stage", host_run(args, ["mkdir", "-p", host["stage"]]))
-    existing = host_findmnt(args, host["stage"])
-    if existing.ok:
-        show("findmnt host stage (already mounted)", existing)
+    if host_is_exact_mountpoint(args, host["stage"]):
+        res = host_findmnt(args, host["stage"])
+        show("findmnt host stage (already mounted)", res)
+        if "//deleted" in res.stdout:
+            raise RuntimeError(f"stale host mount detected at {host['stage']}")
     else:
         show("mount --bind host_src -> host_stage", host_run(args, ["mount", "--bind", host["src"], host["stage"]]))
         show_if_any("findmnt host stage", host_findmnt(args, host["stage"]))
 
     banner("GUEST ATTACH")
     show("mkdir guest dst", guest_run(args, f"mkdir -p {q(guest['dst'])}"))
-    existing_guest = guest_findmnt(args, guest["dst"])
-    if existing_guest.ok:
-        show("findmnt guest dst (already mounted)", existing_guest)
+    if guest_is_exact_mountpoint(args, guest["dst"]):
+        show("findmnt guest dst (already mounted)", guest_findmnt(args, guest["dst"]))
     else:
-        show("mount --bind guest_stage -> guest_dst", guest_run(args, f"mount --bind {q(guest['stage'])} {q(guest['dst'])}"))
+        show("mount --bind guest_stage -> guest_dst", guest_run(args, f"mount --bind {q(guest['stage'])} {q(guest['dst'])}", use_sudo=True))
         if args.access == "ro":
-            show("remount guest dst ro", guest_run(args, f"mount -o remount,bind,ro {q(guest['dst'])}"))
+            show("remount guest dst ro", guest_run(args, f"mount -o remount,bind,ro {q(guest['dst'])}", use_sudo=True))
         show_if_any("findmnt guest dst", guest_findmnt(args, guest["dst"]))
 
 
@@ -431,6 +545,8 @@ def probe(args: argparse.Namespace, host: dict[str, str], guest: dict[str, str])
     show_if_any("stat host stage", host_stat(args, host["stage"]))
     show_if_any("findmnt host stage", host_findmnt(args, host["stage"]))
     show_if_any("fuser host stage", host_fuser(args, host["stage"]))
+    show_if_any("focused host holders", host_busy_holders(args, host["stage"]))
+    show_if_any("lsof host stage", host_lsof_mount(args, host["stage"]))
     for res in host_git_probe(args, host["src"]):
         show_if_any("git host src", res)
 
@@ -443,6 +559,8 @@ def probe(args: argparse.Namespace, host: dict[str, str], guest: dict[str, str])
     show_if_any("fuser guest dst", guest_fuser(args, guest["dst"]))
     for res in guest_git_probe(args, guest["dst"]):
         show_if_any("git guest dst", res)
+    for res in guest_repo_probe(args, guest["dst"]):
+        show_if_any("repo guest dst", res)
 
 
 def detach_guest(args: argparse.Namespace, guest: dict[str, str]) -> None:
@@ -450,7 +568,7 @@ def detach_guest(args: argparse.Namespace, guest: dict[str, str]) -> None:
     show_if_any("findmnt guest dst (before)", guest_findmnt(args, guest["dst"]))
     show_if_any("fuser guest dst (before)", guest_fuser(args, guest["dst"]))
     flag = "-l " if args.lazy_guest else ""
-    show("umount guest dst", guest_run(args, f"umount {flag}{q(guest['dst'])}"))
+    show("umount guest dst", guest_run(args, f"umount {flag}{q(guest['dst'])}", use_sudo=True))
     show_if_any("findmnt guest dst (after)", guest_findmnt(args, guest["dst"]))
 
 
@@ -466,11 +584,52 @@ def detach_host(args: argparse.Namespace, host: dict[str, str]) -> None:
     show_if_any("findmnt host stage (after)", host_findmnt(args, host["stage"]))
 
 
+def reconcile_detach(args: argparse.Namespace, host: dict[str, str], guest: dict[str, str]) -> None:
+    banner("DETACH RECONCILE")
+
+    if guest_is_exact_mountpoint(args, guest["dst"]):
+        flag = "-l " if args.lazy_guest else ""
+        show("retry umount guest dst", guest_run(args, f"umount {flag}{q(guest['dst'])}", use_sudo=True))
+        show_if_any("findmnt guest dst (reconcile)", guest_findmnt(args, guest["dst"]))
+
+    if host_is_exact_mountpoint(args, host["stage"]):
+        retries = max(1, int(args.reconcile_retries))
+        sleep_s = max(0.0, float(args.reconcile_sleep))
+        for attempt in range(1, retries + 1):
+            argv = ["umount"]
+            if args.lazy_host:
+                argv.append("-l")
+            argv.append(host["stage"])
+            show(f"retry umount host stage attempt={attempt}/{retries}", host_run(args, argv))
+            show_if_any(f"findmnt host stage (reconcile attempt={attempt})", host_findmnt(args, host["stage"]))
+            if not host_is_exact_mountpoint(args, host["stage"]):
+                break
+            if attempt != retries and sleep_s > 0:
+                time.sleep(sleep_s)
+
+
 def cleanup(args: argparse.Namespace, host: dict[str, str], guest: dict[str, str]) -> None:
     if args.keep:
         banner("KEEP")
         print("keeping scratch paths for manual inspection")
         return
+    if guest_is_exact_mountpoint(args, guest["dst"]):
+        if args.keep_on_cleanup_fail:
+            banner("KEEP")
+            print(f"keeping scratch paths because guest dst is still mounted: {guest['dst']}")
+            return
+        raise RuntimeError(f"refusing cleanup: guest dst still mounted: {guest['dst']}")
+    if host_is_exact_mountpoint(args, host["stage"]):
+        if args.cleanup_lazy_host_on_fail:
+            banner("CLEANUP HOST LAZY UMOUNT")
+            show("lazy umount host stage for cleanup", host_run(args, ["umount", "-l", host["stage"]]))
+            show_if_any("findmnt host stage (after lazy cleanup)", host_findmnt(args, host["stage"]))
+        if host_is_exact_mountpoint(args, host["stage"]):
+            if args.keep_on_cleanup_fail:
+                banner("KEEP")
+                print(f"keeping scratch paths because host stage is still mounted: {host['stage']}")
+                return
+            raise RuntimeError(f"refusing cleanup: host stage still mounted: {host['stage']}")
     banner("CLEANUP")
     show_if_any("rmdir guest dst", guest_run(args, f"rmdir {q(guest['dst'])}"))
     show_if_any("rmdir host stage", host_run(args, ["rmdir", host["stage"]]))
@@ -520,15 +679,33 @@ def build_parser() -> argparse.ArgumentParser:
     detach_cmd.add_argument("--lazy-guest", action="store_true")
     detach_cmd.add_argument("--probe", action="store_true")
     detach_cmd.add_argument("--post-probe", action="store_true")
+    detach_cmd.add_argument("--reconcile-retries", type=int, default=5)
+    detach_cmd.add_argument("--reconcile-sleep", type=float, default=0.5)
+    detach_cmd.add_argument("--cleanup-lazy-host-on-fail", action="store_true")
+    detach_cmd.add_argument("--keep-on-cleanup-fail", action="store_true")
 
     cycle_cmd = sub.add_parser("cycle")
     add_common(cycle_cmd)
     cycle_cmd.add_argument("--order", choices=["guest-first", "host-first", "guest-only", "host-only"], default="guest-first")
     cycle_cmd.add_argument("--lazy-host", action="store_true")
     cycle_cmd.add_argument("--lazy-guest", action="store_true")
+    cycle_cmd.add_argument("--reconcile-retries", type=int, default=5)
+    cycle_cmd.add_argument("--reconcile-sleep", type=float, default=0.5)
+    cycle_cmd.add_argument("--cleanup-lazy-host-on-fail", action="store_true")
+    cycle_cmd.add_argument("--keep-on-cleanup-fail", action="store_true")
 
     return p
 
+
+
+def host_is_exact_mountpoint(args: argparse.Namespace, path: str) -> bool:
+    res = host_run(args, ["findmnt", "-M", path, "-o", "TARGET", "-n"])
+    return res.ok and res.stdout.strip() == path
+
+
+def guest_is_exact_mountpoint(args: argparse.Namespace, path: str) -> bool:
+    res = guest_run(args, f"findmnt -M {q(path)} -o TARGET -n")
+    return res.ok and res.stdout.strip() == path
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
@@ -610,6 +787,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             detach_host(args, host)
         else:
             raise AssertionError(args.order)
+        reconcile_detach(args, host, guest)
         if args.post_probe:
             probe(args, host, guest)
         cleanup(args, host, guest)
@@ -632,6 +810,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             detach_host(args, host)
         else:
             raise AssertionError(args.order)
+        reconcile_detach(args, host, guest)
         probe(args, host, guest)
         cleanup(args, host, guest)
         return 0
@@ -641,4 +820,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
