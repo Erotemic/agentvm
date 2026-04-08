@@ -14,7 +14,16 @@ from .commands import CommandManager
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
 
+from collections.abc import Mapping, Sequence
+from typing import TypeAlias, TypeGuard
+
+JsonObj: TypeAlias = Mapping[str, object]
+
 log = logger
+
+
+def _is_json_obj(value: object) -> TypeGuard[JsonObj]:
+    return isinstance(value, Mapping)
 
 
 def _normalize_port_list(ports: list[int]) -> list[int]:
@@ -269,17 +278,20 @@ def read_firewall_tcp_ports(
     data = json.loads(text)
 
     def _expr_is_iifname_match(expr: object, want_ifname: str) -> bool:
-        if not isinstance(expr, dict):
+        if not _is_json_obj(expr):
             return False
-        match = expr.get('match')
-        if not isinstance(match, dict):
+
+        match = expr.get("match")
+        if not _is_json_obj(match):
             return False
-        op = match.get('op')
-        left = match.get('left')
-        right = match.get('right')
-        if op != '==':
+
+        op = match.get("op")
+        left = match.get("left")
+        right = match.get("right")
+
+        if op != "==":
             return False
-        if left != {'meta': {'key': 'iifname'}}:
+        if left != {"meta": {"key": "iifname"}}:
             return False
         return right == want_ifname
 
@@ -289,33 +301,35 @@ def read_firewall_tcp_ports(
             {"match": {"left": {"payload": {...}}, "op": "==", "right": 22}}
             {"match": {"left": {"payload": {...}}, "op": "==", "right": {"set": [22, 80]}}}
         """
-        if not isinstance(expr, dict):
-            return ()
-        match = expr.get('match')
-        if not isinstance(match, dict):
+        if not _is_json_obj(expr):
             return ()
 
-        left = match.get('left')
-        if not isinstance(left, dict):
+        match = expr.get("match")
+        if not _is_json_obj(match):
             return ()
 
-        payload = left.get('payload')
-        if not isinstance(payload, dict):
+        left = match.get("left")
+        if not _is_json_obj(left):
             return ()
 
-        if payload.get('protocol') != 'tcp' or payload.get('field') != 'dport':
+        payload = left.get("payload")
+        if not _is_json_obj(payload):
             return ()
 
-        right = match.get('right')
+        if payload.get("protocol") != "tcp" or payload.get("field") != "dport":
+            return ()
+
+        right = match.get("right")
         vals: list[int] = []
 
         if isinstance(right, int):
             vals.append(right)
         elif isinstance(right, str) and right.isdigit():
             vals.append(int(right))
-        elif isinstance(right, dict):
-            if 'set' in right and isinstance(right['set'], list):
-                for item in right['set']:
+        elif _is_json_obj(right):
+            set_items = right.get("set")
+            if isinstance(set_items, list):
+                for item in set_items:
                     if isinstance(item, int):
                         vals.append(item)
                     elif isinstance(item, str) and item.isdigit():
@@ -323,39 +337,46 @@ def read_firewall_tcp_ports(
 
         return tuple(sorted(set(vals)))
 
-    def _rule_has_ip_daddr_constraint(exprs: list[object]) -> bool:
+    def _rule_has_ip_daddr_constraint(exprs: Sequence[object]) -> bool:
         """
         Reject rules with any explicit ip daddr match, because those are
         infrastructure/special-case rules (e.g. gateway DNS), not the user
         allow_tcp_ports rule we want.
         """
         for expr in exprs:
-            if not isinstance(expr, dict):
+            if not _is_json_obj(expr):
                 continue
-            match = expr.get('match')
-            if not isinstance(match, dict):
+
+            match = expr.get("match")
+            if not _is_json_obj(match):
                 continue
-            left = match.get('left')
-            if not isinstance(left, dict):
+
+            left = match.get("left")
+            if not _is_json_obj(left):
                 continue
-            payload = left.get('payload')
-            if not isinstance(payload, dict):
+
+            payload = left.get("payload")
+            if not _is_json_obj(payload):
                 continue
-            if payload.get('protocol') == 'ip' and payload.get('field') == 'daddr':
+
+            if payload.get("protocol") == "ip" and payload.get("field") == "daddr":
                 return True
         return False
 
     ports = set()
 
     for item in data.get('nftables', []):
-        rule = item.get('rule')
-        if not isinstance(rule, dict):
+        if not _is_json_obj(item):
             continue
 
-        if rule.get('family') != 'inet' or rule.get('table') != table:
+        rule = item.get("rule")
+        if not _is_json_obj(rule):
             continue
 
-        exprs = rule.get('expr')
+        if rule.get("family") != "inet" or rule.get("table") != table:
+            continue
+
+        exprs = rule.get("expr")
         if not isinstance(exprs, list) or not exprs:
             continue
 
@@ -380,7 +401,7 @@ def read_firewall_tcp_ports(
 
         # Require terminal verdict accept.
         has_accept = any(
-            isinstance(expr, dict) and expr.get('accept') is None and 'accept' in expr
+            _is_json_obj(expr) and 'accept' in expr and expr.get('accept') is None
             for expr in exprs
         )
         if not has_accept:
