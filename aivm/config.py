@@ -39,6 +39,7 @@ class FirewallConfig:
     enabled: bool = True
     table: str = 'aivm_sandbox'
     block_cidrs: list[str] = field(
+        # TODO: document why these are the defaults
         default_factory=lambda: [
             '0.0.0.0/8',
             '10.0.0.0/8',
