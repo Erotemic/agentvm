@@ -12,6 +12,8 @@ from aivm.config import (
     AgentVMConfig,
     PathsConfig,
     VMConfig,
+    NetworkConfig,
+    FirewallConfig,
 )
 from aivm.vm.drift import (
     SHARED_ROOT_VIRTIOFS_TAG,
@@ -433,6 +435,8 @@ class TestVmConfigDriftReport:
         """Test when no drift exists."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
+        cfg.firewall = FirewallConfig()
+        cfg.network = NetworkConfig()
 
         with patch('aivm.vm.drift.hardware_drift_report') as mock_hw:
             mock_hw.return_value = DriftReport(
@@ -446,6 +450,8 @@ class TestVmConfigDriftReport:
         """Test combined hardware and share drift."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
+        cfg.firewall = FirewallConfig()
+        cfg.network = NetworkConfig()
 
         with patch('aivm.vm.drift.hardware_drift_report') as mock_hw:
             mock_hw.return_value = DriftReport(
@@ -462,6 +468,8 @@ class TestVmConfigDriftReport:
         """Test with explicit expected mappings."""
         cfg = MagicMock(spec=AgentVMConfig)
         cfg.vm = VMConfig(name='test-vm', cpus=4, ram_mb=8192, disk_gb=50)
+        cfg.firewall = FirewallConfig()
+        cfg.network = NetworkConfig()
 
         # Patch hardware_drift_report to avoid hitting real virsh
         with patch('aivm.vm.drift.hardware_drift_report') as mock_hw:
