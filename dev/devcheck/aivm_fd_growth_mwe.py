@@ -62,7 +62,11 @@ What this script verifies
 4. Guest bind attach/detach succeeds repeatedly.
 5. Relevant virtiofsd / qemu processes serving the shared-root export can be
    identified from the host side.
-6. FD counts for those processes can be sampled after each iteration.
+6. Both process-global FD counts and run-scoped FD counts under this
+   runid's subtree can be sampled after each iteration.
+7. Baseline-relative deltas can be reported for the current policy, which is
+   more informative than comparing absolute totals from long-lived worker
+   processes.
 
 Preconditions
 -------------
@@ -77,8 +81,10 @@ Typical workflow
 ----------------
 1. Start from a clean VM.
 2. Re-establish the base shared-root export used by your environment.
-3. Run one stable-host loop and inspect whether FD counts plateau.
-4. Optionally run the same loop with --host-policy churn-host and compare.
+3. Run one stable-host loop and inspect whether run-scoped post-detach
+   counts remain near the stable-host baseline.
+4. Run a separate churn-host loop from a fresh VM or otherwise equivalent
+   clean baseline and compare the post-detach deltas.
 
 Examples
 --------
@@ -134,42 +140,38 @@ This MWE was built to answer one design question:
 Does FD usage behave better when host-side shared-root bind mounts are kept
 stable and only guest-visible bind mounts churn?
 
-In this environment, the answer appears to be yes.
+The current state is more cautious than an earlier reading of this artifact.
+The process-global ``total_fd_count`` metric, by itself, is too coarse to
+cleanly distinguish the two policies, because the same long-lived ``virtiofsd``
+/ qemu processes can survive across runs and accumulate unrelated history.
 
-For the ``stable-host`` policy, the tracked holder set stayed the same and the
-measured aggregate ``total_fd_count`` rose slightly at first and then remained
-flat for the rest of the run. Across later iterations, guest-visible mounting,
-unmounting, and bidirectional host/guest file visibility all continued to work.
+This version of the MWE therefore reports additional run-scoped measurements:
 
-For the ``churn-host`` policy, the same basic file-visibility checks continued
-to work, but host-side unmounts repeatedly failed with ``target is busy`` and
-the tracked ``total_fd_count`` increased substantially relative to the early
-iterations. The increase appeared to be dominated by one ``virtiofsd`` worker,
-while the other tracked holder processes stayed comparatively flat. In later
-iterations, the host-stage paths remained mounted and were observed as already
-mounted at the start of the next cycle.
+* process-global FD counts for the relevant holders, for continuity
+* run-scoped FD counts filtered to this runid's host-stage subtree and host
+  scratch subtree
+* baseline-relative deltas for both the active phase and the post-detach phase
+* post-detach mount state for host stages and guest-visible binds
 
 Interpretation
 ~~~~~~~~~~~~~~
-This result does not, by itself, prove the root cause of a later
-``Too many open files`` failure. The absolute difference in the aggregated
-``total_fd_count`` is not enormous, so some amount of measurement noise or
-normal background variation is still possible.
+This MWE still supports several important conclusions:
 
-However, this MWE does provide meaningful design evidence:
+* ``stable-host`` is functionally viable: guest attach/detach cycles work and
+  bidirectional host/guest visibility works.
+* ``churn-host`` still reproduces host-side busy-unmount behavior under the
+  live shared-root export.
+* fast interactive unshare should not depend on host-side bind teardown under
+  the live export.
 
-* Keeping host-side binds stable and churning only guest-visible binds appears
-  to produce a plateau rather than ongoing growth.
-* Churning host-side bind mounts inside the live shared-root virtiofs export
-  appears to create persistent busy-unmount behavior and measurable additional
-  FD pressure.
-* Therefore, if the product must continue to use a single shared-root export,
-  the safer design is to treat host-side staged binds as long-lived and make
-  fast unshare a guest-side operation.
+What this MWE does **not** yet prove automatically is that ``stable-host`` has
+lower final process-global FD pressure than ``churn-host``. A stronger claim
+now requires looking at the run-scoped measurements from clean baselines.
 
 Design implication
+------------------
 
-The main design recommendation supported by this MWE is:
+The main design recommendation that remains supported is:
 
 Do not make rapid host-side bind mount teardown under the live shared-root
 export part of the normal interactive attach/detach lifecycle.
@@ -180,10 +182,10 @@ Instead, prefer:
 * guest-side bind mount attach/detach as the fast visibility control
 * deferred host-side garbage collection or teardown outside the interactive path
 
-This MWE should therefore be treated as evidence in favor of a
-`stable-host / guest-only churn` sharing design, and as evidence against a
-design that repeatedly creates and tears down host-side bind mounts under the
-live shared-root export.
+If repeated runs from fresh or equivalent baselines show that ``stable-host``
+returns to a flat post-detach run-scoped baseline while ``churn-host`` leaves
+behind growing run-scoped counts or mounted residue, that would be stronger
+support for the ``stable-host / guest-only churn`` design direction.
 """
 from __future__ import annotations
 
@@ -300,6 +302,16 @@ def guest_is_exact_mountpoint(args: argparse.Namespace, path: str) -> bool:
     return res.ok and res.stdout.strip() == path
 
 
+def host_path_exists(args: argparse.Namespace, path: str) -> bool:
+    res = host_run(args, ["bash", "-lc", f"test -e {q(path)}"])
+    return res.ok
+
+
+def guest_path_exists(args: argparse.Namespace, path: str, use_sudo: bool = False) -> bool:
+    res = guest_run(args, f"test -e {q(path)}", use_sudo=use_sudo)
+    return res.ok
+
+
 def parse_fuser_pids(stdout: str) -> dict[str, str]:
     """
     Parse fuser -vm output into {pid: command}.
@@ -337,21 +349,325 @@ def fd_count_for_pid(args: argparse.Namespace, pid: str) -> int | None:
         return None
 
 
-def relevant_holder_snapshot(args: argparse.Namespace, probe_path: str) -> dict[str, Any]:
-    holders = holder_pids_for_path(args, probe_path)
+def command_for_pid(args: argparse.Namespace, pid: str) -> str | None:
+    res = host_run(args, ["ps", "-p", pid, "-o", "args="])
+    text = (res.stdout or "").strip()
+    return text or None
+
+
+def fd_entries_for_pid(args: argparse.Namespace, pid: str) -> list[dict[str, str]]:
+    code = """
+import json
+import os
+import sys
+
+pid = sys.argv[1]
+fd_dir = f"/proc/{pid}/fd"
+items = []
+
+if os.path.isdir(fd_dir):
+    def sort_key(name: str):
+        return (0, int(name)) if name.isdigit() else (1, name)
+
+    for name in sorted(os.listdir(fd_dir), key=sort_key):
+        path = os.path.join(fd_dir, name)
+        try:
+            target = os.readlink(path)
+        except OSError:
+            continue
+        items.append({"fd": name, "target": target})
+
+print(json.dumps(items))
+"""
+    res = host_run(args, ["python3", "-c", code, pid])
+    if not res.ok or not (res.stdout or "").strip():
+        return []
+    try:
+        data = json.loads(res.stdout)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def normalize_fd_target(target: str) -> str:
+    text = target.strip()
+    if text.endswith(" (deleted)"):
+        text = text[:-10]
+    return text
+
+
+def fd_target_matches_prefix(target: str, prefix: str) -> bool:
+    norm = normalize_fd_target(target)
+    return norm == prefix or norm.startswith(prefix + "/")
+
+
+def fd_target_matches_any_prefix(target: str, prefixes: Sequence[str]) -> bool:
+    return any(fd_target_matches_prefix(target, prefix) for prefix in prefixes)
+
+
+def discover_relevant_holders(
+    args: argparse.Namespace,
+    state: dict[str, Any],
+    pid_hints: Sequence[str] | None = None,
+) -> dict[str, str]:
+    holders: dict[str, str] = {}
+    probe_paths = [state["paths"]["host_stage_root"]] + [slot["host_stage"] for slot in state["slots"]]
+    for path in probe_paths:
+        holders.update(holder_pids_for_path(args, path))
     relevant = {
         pid: cmd
         for pid, cmd in holders.items()
         if ("virtiofsd" in cmd) or ("qemu-system" in cmd)
     }
-    fd_counts = {pid: fd_count_for_pid(args, pid) for pid in sorted(relevant)}
-    total = sum(v for v in fd_counts.values() if isinstance(v, int))
+    for pid in pid_hints or []:
+        if pid in relevant:
+            continue
+        cmd = command_for_pid(args, pid)
+        if cmd and (("virtiofsd" in cmd) or ("qemu-system" in cmd)):
+            relevant[pid] = cmd
+    return {pid: relevant[pid] for pid in sorted(relevant)}
+
+
+def scoped_fd_metrics(
+    entries_by_pid: dict[str, list[dict[str, str]]],
+    state: dict[str, Any],
+    sample_limit: int = 5,
+) -> dict[str, Any]:
+    stage_root = state["paths"]["host_stage_root"]
+    scratch_root = state["paths"]["host_scratch_root"]
+    run_prefixes = [stage_root, scratch_root]
+
+    stage_root_fd_counts: dict[str, int] = {}
+    scratch_root_fd_counts: dict[str, int] = {}
+    run_scoped_fd_counts: dict[str, int] = {}
+    run_scoped_targets_sample: dict[str, list[str]] = {}
+    slot_stage_fd_totals: dict[str, int] = {slot["name"]: 0 for slot in state["slots"]}
+
+    for pid, entries in entries_by_pid.items():
+        stage_count = 0
+        scratch_count = 0
+        run_count = 0
+        run_samples: list[str] = []
+        for entry in entries:
+            raw_target = str(entry.get("target", ""))
+            target = normalize_fd_target(raw_target)
+            if fd_target_matches_prefix(target, stage_root):
+                stage_count += 1
+            if fd_target_matches_prefix(target, scratch_root):
+                scratch_count += 1
+            if fd_target_matches_any_prefix(target, run_prefixes):
+                run_count += 1
+                if len(run_samples) < sample_limit:
+                    run_samples.append(target)
+            for slot in state["slots"]:
+                if fd_target_matches_prefix(target, slot["host_stage"]):
+                    slot_stage_fd_totals[slot["name"]] += 1
+        stage_root_fd_counts[pid] = stage_count
+        scratch_root_fd_counts[pid] = scratch_count
+        run_scoped_fd_counts[pid] = run_count
+        if run_samples:
+            run_scoped_targets_sample[pid] = run_samples
+
     return {
-        "probe_path": probe_path,
+        "scoped_prefixes": {
+            "host_stage_root": stage_root,
+            "host_scratch_root": scratch_root,
+        },
+        "stage_root_fd_counts": stage_root_fd_counts,
+        "stage_root_total_fd_count": sum(stage_root_fd_counts.values()),
+        "scratch_root_fd_counts": scratch_root_fd_counts,
+        "scratch_root_total_fd_count": sum(scratch_root_fd_counts.values()),
+        "run_scoped_fd_counts": run_scoped_fd_counts,
+        "run_scoped_total_fd_count": sum(run_scoped_fd_counts.values()),
+        "run_scoped_targets_sample": run_scoped_targets_sample,
+        "slot_stage_fd_totals": slot_stage_fd_totals,
+    }
+
+
+def relevant_holder_snapshot(
+    args: argparse.Namespace,
+    state: dict[str, Any],
+    label: str,
+    pid_hints: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    relevant = discover_relevant_holders(args, state, pid_hints=pid_hints)
+    entries_by_pid = {pid: fd_entries_for_pid(args, pid) for pid in sorted(relevant)}
+    fd_counts = {
+        pid: len(entries_by_pid.get(pid, [])) if entries_by_pid.get(pid) is not None else None
+        for pid in sorted(relevant)
+    }
+    total = sum(v for v in fd_counts.values() if isinstance(v, int))
+
+    relevant_pids = set(relevant)
+    lsof_stage_root_entries = lsof_entries_under_path(args, state["paths"]["host_stage_root"])
+    lsof_scratch_root_entries = lsof_entries_under_path(args, state["paths"]["host_scratch_root"])
+    slot_lsof_counts: dict[str, Any] = {}
+    for slot in state["slots"]:
+        slot_lsof_counts[slot["name"]] = {
+            "host_stage": summarize_lsof_entries(
+                lsof_entries_under_path(args, slot["host_stage"]),
+                relevant_pids,
+            ),
+            "host_src": summarize_lsof_entries(
+                lsof_entries_under_path(args, slot["host_src"]),
+                relevant_pids,
+            ),
+        }
+
+    lsof_stage_root = summarize_lsof_entries(lsof_stage_root_entries, relevant_pids)
+    lsof_scratch_root = summarize_lsof_entries(lsof_scratch_root_entries, relevant_pids)
+    return {
+        "label": label,
+        "probe_paths": [state["paths"]["host_stage_root"]] + [slot["host_stage"] for slot in state["slots"]],
         "holders": relevant,
         "fd_counts": fd_counts,
         "total_fd_count": total,
+        "lsof_stage_root": lsof_stage_root,
+        "lsof_scratch_root": lsof_scratch_root,
+        "lsof_run_total_count": lsof_stage_root["record_count"] + lsof_scratch_root["record_count"],
+        "lsof_run_relevant_total_count": (
+            lsof_stage_root["relevant_record_count"] + lsof_scratch_root["relevant_record_count"]
+        ),
+        "slot_lsof_counts": slot_lsof_counts,
     }
+
+
+def snapshot_delta(current: dict[str, Any], baseline: dict[str, Any] | None) -> dict[str, Any] | None:
+    if baseline is None:
+        return None
+    metrics = [
+        "total_fd_count",
+        "lsof_run_total_count",
+        "lsof_run_relevant_total_count",
+    ]
+    out = {"baseline_label": baseline.get("label")}
+    for metric in metrics:
+        cur = current.get(metric)
+        base = baseline.get(metric)
+        if isinstance(cur, int) and isinstance(base, int):
+            out[f"{metric}_delta"] = cur - base
+
+    current_stage = current.get("lsof_stage_root", {})
+    baseline_stage = baseline.get("lsof_stage_root", {})
+    current_scratch = current.get("lsof_scratch_root", {})
+    baseline_scratch = baseline.get("lsof_scratch_root", {})
+    for prefix, cur_block, base_block in [
+        ("lsof_stage_root", current_stage, baseline_stage),
+        ("lsof_scratch_root", current_scratch, baseline_scratch),
+    ]:
+        for field in ["record_count", "relevant_record_count"]:
+            cur = cur_block.get(field)
+            base = base_block.get(field)
+            if isinstance(cur, int) and isinstance(base, int):
+                out[f"{prefix}_{field}_delta"] = cur - base
+    return out
+
+
+def current_mount_state(args: argparse.Namespace, state: dict[str, Any]) -> dict[str, Any]:
+    host_stage_mounted = {
+        slot["name"]: host_is_exact_mountpoint(args, slot["host_stage"])
+        for slot in state["slots"]
+    }
+    guest_dst_mounted = {
+        slot["name"]: guest_is_exact_mountpoint(args, slot["guest_dst"])
+        for slot in state["slots"]
+    }
+    return {
+        "host_stage_mounted": host_stage_mounted,
+        "guest_dst_mounted": guest_dst_mounted,
+        "num_host_stage_mounted": sum(1 for mounted in host_stage_mounted.values() if mounted),
+        "num_guest_dst_mounted": sum(1 for mounted in guest_dst_mounted.values() if mounted),
+    }
+
+
+def lsof_entries_under_path(args: argparse.Namespace, path: str) -> list[dict[str, str]]:
+    if not host_path_exists(args, path):
+        return []
+    res = host_run(
+        args,
+        [
+            "bash",
+            "-lc",
+            f"lsof -n -w -Fpcfn0 +D {q(path)} 2>/dev/null || true",
+        ],
+    )
+    fields = [part for part in res.stdout.split("\x00") if part]
+    entries: list[dict[str, str]] = []
+    current_pid = ""
+    current_cmd = ""
+    current_fd = ""
+    for field in fields:
+        tag = field[:1]
+        value = field[1:]
+        if tag == "p":
+            current_pid = value
+            current_fd = ""
+        elif tag == "c":
+            current_cmd = value
+        elif tag == "f":
+            current_fd = value
+        elif tag == "n":
+            entries.append(
+                {
+                    "pid": current_pid,
+                    "command": current_cmd,
+                    "fd": current_fd,
+                    "name": value,
+                }
+            )
+    return entries
+
+
+def summarize_lsof_entries(
+    entries: list[dict[str, str]],
+    relevant_pids: set[str],
+    sample_limit: int = 12,
+) -> dict[str, Any]:
+    total_count = len(entries)
+    by_pid: dict[str, int] = {}
+    relevant_count = 0
+    relevant_by_pid: dict[str, int] = {}
+    samples: list[dict[str, str]] = []
+    for entry in entries:
+        pid = entry.get("pid", "")
+        by_pid[pid] = by_pid.get(pid, 0) + 1
+        if pid in relevant_pids:
+            relevant_count += 1
+            relevant_by_pid[pid] = relevant_by_pid.get(pid, 0) + 1
+            if len(samples) < sample_limit:
+                samples.append(entry)
+    return {
+        "record_count": total_count,
+        "by_pid": by_pid,
+        "relevant_record_count": relevant_count,
+        "relevant_by_pid": relevant_by_pid,
+        "relevant_samples": samples,
+    }
+
+
+def collect_dirty_state(args: argparse.Namespace, state: dict[str, Any]) -> dict[str, Any]:
+    mount_state = current_mount_state(args, state)
+    dirty: dict[str, Any] = {
+        "host_stage_root_exists": host_path_exists(args, state["paths"]["host_stage_root"]),
+        "host_scratch_root_exists": host_path_exists(args, state["paths"]["host_scratch_root"]),
+        "guest_dst_root_exists": guest_path_exists(args, state["paths"]["guest_dst_root"], use_sudo=True),
+        "mount_state": mount_state,
+        "dirty_reasons": [],
+    }
+    if dirty["host_stage_root_exists"]:
+        dirty["dirty_reasons"].append("host_stage_root_exists")
+    if dirty["host_scratch_root_exists"]:
+        dirty["dirty_reasons"].append("host_scratch_root_exists")
+    if dirty["guest_dst_root_exists"]:
+        dirty["dirty_reasons"].append("guest_dst_root_exists")
+    if mount_state["num_host_stage_mounted"] > 0:
+        dirty["dirty_reasons"].append("host_stage_already_mounted")
+    if mount_state["num_guest_dst_mounted"] > 0:
+        dirty["dirty_reasons"].append("guest_dst_already_mounted")
+    dirty["is_dirty"] = bool(dirty["dirty_reasons"])
+    return dirty
 
 
 def guest_ls_probe(args: argparse.Namespace, path: str) -> CmdResult:
@@ -412,7 +728,7 @@ def derive_state(args: argparse.Namespace) -> dict[str, Any]:
             "host_export_dir": args.host_export_dir,
             "runid": runid,
             "num_slots": args.num_slots,
-            "host_policy": args.host_policy,
+            "host_policy": getattr(args, "host_policy", None),
         },
         "paths": {
             "host_scratch_root": str(host_scratch_root),
@@ -441,6 +757,10 @@ def preflight(args: argparse.Namespace, state: dict[str, Any]) -> None:
         "host export dir exists",
         host_run(args, ["bash", "-lc", f"test -d {q(args.host_export_dir)} && echo ok || (echo missing; exit 1)"]),
     )
+    show_if_any(
+        "host lsof available",
+        host_run(args, ["bash", "-lc", "command -v lsof >/dev/null && echo ok || (echo missing; exit 1)"]),
+    )
     if state["slots"]:
         first = state["slots"][0]
         show_if_any(
@@ -450,6 +770,18 @@ def preflight(args: argparse.Namespace, state: dict[str, Any]) -> None:
         show_if_any(
             "guest dst mount state",
             guest_findmnt(args, first["guest_dst"]),
+        )
+
+    dirty = collect_dirty_state(args, state)
+    banner("DIRTY PREFLIGHT STATE")
+    print(json.dumps(dirty, indent=2))
+
+    should_fail = getattr(args, "fail_dirty_preflight", False) and args.cmd in {"setup", "loop"}
+    if should_fail and dirty["is_dirty"]:
+        raise RuntimeError(
+            "dirty preflight for comparison run: "
+            + ", ".join(dirty["dirty_reasons"])
+            + ". Use a fresh runid / clean state, or pass --allow-dirty-preflight to inspect anyway."
         )
 
 
@@ -555,11 +887,11 @@ def sync_probe_for_slot(args: argparse.Namespace, slot: dict[str, str], iteratio
 
 def iteration_probe(args: argparse.Namespace, state: dict[str, Any], iteration: int) -> dict[str, Any]:
     slot_results = [sync_probe_for_slot(args, slot, iteration) for slot in state["slots"]]
-    snapshot = relevant_holder_snapshot(args, state["slots"][0]["host_stage"])
+    active_snapshot = relevant_holder_snapshot(args, state, label=f"iter-{iteration}-active")
     return {
         "iteration": iteration,
         "slot_results": slot_results,
-        "snapshot": snapshot,
+        "active_snapshot": active_snapshot,
     }
 
 
@@ -571,14 +903,14 @@ def summarize_iteration(result: dict[str, Any]) -> None:
 def loop(args: argparse.Namespace, state: dict[str, Any]) -> int:
     prepare_host_sources(args, state)
 
+    baseline_label = "pre-loop-no-stages"
     if args.host_policy == "stable-host":
         ensure_host_stages(args, state)
+        baseline_label = "post-stable-setup-pre-loop"
 
-    baseline = None
-    if args.host_policy == "stable-host":
-        baseline = relevant_holder_snapshot(args, state["slots"][0]["host_stage"])
-        banner("BASELINE HOLDER SNAPSHOT")
-        print(json.dumps(baseline, indent=2))
+    baseline = relevant_holder_snapshot(args, state, label=baseline_label)
+    banner("BASELINE HOLDER SNAPSHOT")
+    print(json.dumps(baseline, indent=2))
 
     results: list[dict[str, Any]] = []
     for iteration in range(1, args.iterations + 1):
@@ -588,19 +920,32 @@ def loop(args: argparse.Namespace, state: dict[str, Any]) -> int:
 
         attach_guest_exposures(args, state)
         result = iteration_probe(args, state, iteration)
-        results.append(result)
-        summarize_iteration(result)
         detach_guest_exposures(args, state, lazy=args.lazy_guest)
 
         if args.host_policy == "churn-host":
             detach_host_stages(args, state, lazy=args.lazy_host)
+
+        pid_hints = list(result["active_snapshot"]["holders"].keys())
+        post_detach_snapshot = relevant_holder_snapshot(
+            args,
+            state,
+            label=f"iter-{iteration}-post-detach",
+            pid_hints=pid_hints,
+        )
+        result["active_delta_from_baseline"] = snapshot_delta(result["active_snapshot"], baseline)
+        result["post_detach_snapshot"] = post_detach_snapshot
+        result["post_detach_delta_from_baseline"] = snapshot_delta(post_detach_snapshot, baseline)
+        result["post_detach_mount_state"] = current_mount_state(args, state)
+
+        results.append(result)
+        summarize_iteration(result)
 
         if args.iteration_sleep > 0:
             time.sleep(args.iteration_sleep)
 
     banner("FINAL SUMMARY")
     summary = {
-        "host_policy": args.host_policy,
+        "host_policy": getattr(args, "host_policy", None),
         "iterations": args.iterations,
         "num_slots": args.num_slots,
         "baseline": baseline,
@@ -660,7 +1005,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(cleanup_cmd)
 
     return p
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
