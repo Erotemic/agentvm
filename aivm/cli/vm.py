@@ -16,11 +16,16 @@ from ..attachments.guest import (
     _upsert_ssh_config_entry,
 )
 from ..attachments.resolve import (
+    ATTACHMENT_MODE_DECLARED,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     _normalize_attachment_access,
     _normalize_attachment_mode,
     _resolve_attachment,
+)
+from ..attachments.declared import (
+    _reconcile_declared_attachments_in_guest,
+    _sync_declared_attachment_manifest_on_host,
 )
 from ..attachments.session import (
     _maybe_warn_hardware_drift,
@@ -418,11 +423,11 @@ class VMCodeCLI(_BaseCommand):
     )
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode override: shared, shared-root, declared, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
-        help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
+        help='Attachment access override: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and declared modes.',
     )
     recreate_if_needed: Any = scfg.Value(
         False,
@@ -555,11 +560,11 @@ class VMSSHCLI(_BaseCommand):
     )
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode override: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode override: shared, shared-root, declared, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
-        help='Attachment access override: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
+        help='Attachment access override: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and declared modes.',
     )
     recreate_if_needed: Any = scfg.Value(
         False,
@@ -661,11 +666,11 @@ class VMAttachCLI(_BaseCommand):
     guest_dst: Any = scfg.Value('', help='Guest mount path override.')
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode: shared, shared-root, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode: shared, shared-root, declared, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
-        help='Attachment access: rw or ro (default: saved access or rw). ro is currently supported only for shared mode.',
+        help='Attachment access: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and declared modes.',
     )
     force: Any = scfg.Value(
         False,
@@ -754,7 +759,10 @@ class VMAttachCLI(_BaseCommand):
                         attachment.tag,
                         dry_run=False,
                     )
-            elif attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+            elif attachment.mode in {
+                ATTACHMENT_MODE_SHARED_ROOT,
+                ATTACHMENT_MODE_DECLARED,
+            }:
                 if not vm_running:
                     mgr = CommandManager.current()
                     with mgr.intent(
@@ -784,6 +792,12 @@ class VMAttachCLI(_BaseCommand):
             tag=attachment.tag,
             force=bool(args.force),
         )
+        if attachment.mode == ATTACHMENT_MODE_DECLARED:
+            _sync_declared_attachment_manifest_on_host(
+                cfg,
+                cfg_path,
+                dry_run=False,
+            )
         if vm_running:
             if _maybe_offer_create_ssh_identity(
                 cfg,
@@ -821,14 +835,23 @@ class VMAttachCLI(_BaseCommand):
                 yes=bool(args.yes),
                 dry_run=False,
                 ensure_shared_root_host_side=(
-                    attachment.mode == ATTACHMENT_MODE_SHARED_ROOT
+                    attachment.mode
+                    in {ATTACHMENT_MODE_SHARED_ROOT, ATTACHMENT_MODE_DECLARED}
                 ),
                 mirror_home=mirror_home,
             )
+            if attachment.mode == ATTACHMENT_MODE_DECLARED:
+                _reconcile_declared_attachments_in_guest(
+                    cfg,
+                    cfg_path,
+                    ip,
+                    dry_run=False,
+                )
         print(
             f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode, access={attachment.access})'
         )
         if vm_running and attachment.mode in {
+            ATTACHMENT_MODE_DECLARED,
             ATTACHMENT_MODE_SHARED,
             ATTACHMENT_MODE_SHARED_ROOT,
         }:
@@ -837,6 +860,7 @@ class VMAttachCLI(_BaseCommand):
             print(f'Guest clone ready at {attachment.guest_dst}')
         elif vm_defined:
             if attachment.mode in {
+                ATTACHMENT_MODE_DECLARED,
                 ATTACHMENT_MODE_SHARED,
                 ATTACHMENT_MODE_SHARED_ROOT,
             }:
@@ -969,6 +993,47 @@ class VMDetachCLI(_BaseCommand):
                     cfg.vm.name,
                     resolved.source_dir,
                 )
+        elif mode == ATTACHMENT_MODE_DECLARED:
+            removed = remove_attachment(
+                reg, host_path=host_src, vm_name=cfg.vm.name
+            )
+            if removed:
+                save_store(
+                    reg,
+                    cfg_path,
+                    reason=(
+                        f'Remove declared attachment record for {host_src} from VM '
+                        f'{cfg.vm.name}.'
+                    ),
+                )
+                _sync_declared_attachment_manifest_on_host(
+                    cfg,
+                    cfg_path,
+                    dry_run=False,
+                )
+            if vm_running:
+                try:
+                    ip = _resolve_ip_for_ssh_ops(
+                        cfg,
+                        yes=bool(args.yes),
+                        purpose='Query VM networking state before reconciling declared attachment removal.',
+                    )
+                    _reconcile_declared_attachments_in_guest(
+                        cfg,
+                        cfg_path,
+                        ip,
+                        dry_run=False,
+                    )
+                except Exception as ex:
+                    detach_failed = True
+                    log.warning(
+                        'Could not reconcile declared attachment removal for VM {} source={} guest_dst={} token={}: {}',
+                        cfg.vm.name,
+                        resolved.source_dir,
+                        resolved.guest_dst,
+                        resolved.tag,
+                        ex,
+                    )
 
         if detach_failed:
             log.error(
@@ -978,18 +1043,19 @@ class VMDetachCLI(_BaseCommand):
             )
             return 2
 
-        removed = remove_attachment(
-            reg, host_path=host_src, vm_name=cfg.vm.name
-        )
-        if removed:
-            save_store(
-                reg,
-                cfg_path,
-                reason=(
-                    f'Remove attachment record for {host_src} from VM '
-                    f'{cfg.vm.name}.'
-                ),
+        if mode != ATTACHMENT_MODE_DECLARED:
+            removed = remove_attachment(
+                reg, host_path=host_src, vm_name=cfg.vm.name
             )
+            if removed:
+                save_store(
+                    reg,
+                    cfg_path,
+                    reason=(
+                        f'Remove attachment record for {host_src} from VM '
+                        f'{cfg.vm.name}.'
+                    ),
+                )
 
         print(f'Detached {host_src} from VM {cfg.vm.name} ({mode} mode)')
         if mode == ATTACHMENT_MODE_SHARED and vm_defined_probe is True:
@@ -1004,6 +1070,10 @@ class VMDetachCLI(_BaseCommand):
                 print('Detached shared-root host bind mount.')
             if vm_running and detached_shared_root_guest_bind:
                 print('Detached shared-root guest bind mount.')
+        if mode == ATTACHMENT_MODE_DECLARED:
+            print(
+                'Removed declared attachment intent and refreshed the guest replay manifest.'
+            )
         if vm_running and mode == ATTACHMENT_MODE_SHARED:
             print(
                 f'If the guest still has {att.guest_dst or host_src} mounted, unmount it inside the VM manually.'

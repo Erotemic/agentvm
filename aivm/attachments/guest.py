@@ -18,6 +18,7 @@ from ..vm import ssh_config as mk_ssh_config
 from ..vm.share import ResolvedAttachment
 from .resolve import (
     ATTACHMENT_ACCESS_RO,
+    ATTACHMENT_MODE_DECLARED,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     _compute_mirror_home_symlink,
@@ -251,7 +252,10 @@ def _ensure_attachment_available_in_guest(
             read_only=(attachment.access == ATTACHMENT_ACCESS_RO),
             dry_run=dry_run,
         )
-    elif attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+    elif attachment.mode in {
+        ATTACHMENT_MODE_SHARED_ROOT,
+        ATTACHMENT_MODE_DECLARED,
+    }:
         with mgr.intent(
             'Attach and reconcile shared-root mapping',
             why='Ensure the requested host folder is exposed to the VM and bound to the requested guest destination.',

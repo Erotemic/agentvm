@@ -6,9 +6,11 @@ We aim to adhere to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 * Attaching directories now has mirrors that resolve to exact path matches on the guest and paths relative to root.
+* Added an opt-in `declared` attachment mode that keeps the single shared-root virtiofs export, persists desired guest-visible bind mounts as declarations, and replays them from a guest systemd helper instead of reconstructing every attachment on each `aivm code .` / `aivm ssh .` run.
 
 ### Fixed
 * Attaching directories now uses consistent guest locations between different attach modes 
+* Read-only access is now documented and wired through the new declared attachment replay path.
 
 
 ## [Version 0.4.0] - Released 2026-03-27

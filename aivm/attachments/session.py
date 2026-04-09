@@ -61,8 +61,12 @@ from .guest import (
     _ensure_attachment_available_in_guest,
     _ensure_git_clone_attachment,
 )
+from .declared import (
+    _reconcile_declared_attachments_in_guest,
+)
 from .resolve import (
     ATTACHMENT_ACCESS_RO,
+    ATTACHMENT_MODE_DECLARED,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     _normalize_attachment_mode,
@@ -228,6 +232,7 @@ def _saved_vm_attachments(
     for att in find_attachments_for_vm(reg, cfg.vm.name):
         mode = _normalize_attachment_mode(att.mode)
         if mode not in {
+            ATTACHMENT_MODE_DECLARED,
             ATTACHMENT_MODE_SHARED,
             ATTACHMENT_MODE_SHARED_ROOT,
         }:
@@ -293,6 +298,24 @@ def _restore_saved_vm_attachments(
         return
 
     secondary_attachments = saved_attachments[1:]
+    declared_secondary = (
+        primary_attachment is None
+        or primary_attachment.mode != ATTACHMENT_MODE_DECLARED
+    ) and any(att.mode == ATTACHMENT_MODE_DECLARED for att in secondary_attachments)
+    if declared_secondary:
+        try:
+            _reconcile_declared_attachments_in_guest(
+                cfg,
+                cfg_path,
+                ip,
+                dry_run=False,
+            )
+        except Exception as ex:
+            log.warning(
+                'Could not replay declared attachments for VM {} during restore: {}',
+                cfg.vm.name,
+                ex,
+            )
 
     # Build a map from resolved source_dir -> lexical host path so restore can
     # recreate companion guest symlinks when the original attachment was made
@@ -325,6 +348,8 @@ def _restore_saved_vm_attachments(
 
     restored = 0
     for att in secondary_attachments:
+        if att.mode == ATTACHMENT_MODE_DECLARED:
+            continue
         if att.mode == ATTACHMENT_MODE_SHARED_ROOT:
             aligned = att
             _lx = _lexical_by_source.get(aligned.source_dir)
@@ -461,7 +486,10 @@ def _virtiofs_mapping_for_attachment(
 ) -> tuple[str, str] | None:
     if attachment.mode == ATTACHMENT_MODE_SHARED:
         return attachment.source_dir, attachment.tag
-    if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+    if attachment.mode in {
+        ATTACHMENT_MODE_SHARED_ROOT,
+        ATTACHMENT_MODE_DECLARED,
+    }:
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
     return None
 
@@ -575,7 +603,10 @@ def _reconcile_attached_vm(
             _maybe_install_missing_host_deps(
                 yes=bool(policy.yes), dry_run=bool(policy.dry_run)
             )
-            if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+            if attachment.mode in {
+                ATTACHMENT_MODE_SHARED_ROOT,
+                ATTACHMENT_MODE_DECLARED,
+            }:
                 if not policy.dry_run:
                     _ensure_shared_root_parent_dir(cfg, dry_run=False)
             try:
@@ -659,7 +690,10 @@ def _reconcile_attached_vm(
                 recreate = True
             else:
                 try:
-                    if attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
+                    if attachment.mode in {
+                        ATTACHMENT_MODE_SHARED_ROOT,
+                        ATTACHMENT_MODE_DECLARED,
+                    }:
                         with mgr.intent(
                             'Attach and reconcile shared-root mapping',
                             why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
@@ -894,7 +928,11 @@ def _prepare_attached_session(
     if not ip:
         raise RuntimeError('Could not resolve VM IP address.')
     mirror_home = bool(load_store(cfg_path).behavior.mirror_shared_home_folders)
-    if attachment.mode in {ATTACHMENT_MODE_SHARED, ATTACHMENT_MODE_SHARED_ROOT}:
+    if attachment.mode in {
+        ATTACHMENT_MODE_DECLARED,
+        ATTACHMENT_MODE_SHARED,
+        ATTACHMENT_MODE_SHARED_ROOT,
+    }:
         _ensure_attachment_available_in_guest(
             cfg,
             host_src,
@@ -903,11 +941,19 @@ def _prepare_attached_session(
             yes=bool(yes),
             dry_run=False,
             ensure_shared_root_host_side=(
-                attachment.mode == ATTACHMENT_MODE_SHARED_ROOT
+                attachment.mode
+                in {ATTACHMENT_MODE_SHARED_ROOT, ATTACHMENT_MODE_DECLARED}
                 and not reconcile.shared_root_host_side_ready
             ),
             mirror_home=mirror_home,
         )
+        if attachment.mode == ATTACHMENT_MODE_DECLARED:
+            _reconcile_declared_attachments_in_guest(
+                cfg,
+                cfg_path,
+                ip,
+                dry_run=False,
+            )
         _restore_saved_vm_attachments(
             cfg,
             cfg_path,

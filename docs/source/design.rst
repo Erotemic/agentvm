@@ -47,6 +47,8 @@ Reconciliation model
   compound side effects.
 * Runtime-sensitive operations should prefer live inspection over stale
   assumptions.
+* Shared-root evolution should favor stable host-side staging plus persisted
+  guest-visible attachment declarations over repeated teardown/rebuild churn.
 
 
 Safety and Trust Boundaries
@@ -236,6 +238,8 @@ Design constraints
   the user's source tree; qemu/libvirt-access preparation should be limited to
   aivm-managed internal directories rather than applied recursively through
   bind-mounted exports.
+* New attachment backends should preserve the single shared-root virtiofs
+  export model when they only need different replay / reconcile semantics.
 
 State management
 ~~~~~~~~~~~~~~~~

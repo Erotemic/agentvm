@@ -65,6 +65,28 @@ def test_resolve_attachment_defaults_to_shared_root_for_new_folder(
     assert resolved.tag
 
 
+def test_resolve_attachment_accepts_declared_alias_for_new_folder(
+    tmp_path: Path,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-declared-default'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    save_store(Store(), cfg_path)
+
+    resolved = _resolve_attachment(
+        cfg,
+        cfg_path,
+        host_src,
+        '',
+        'persistent-attachments',
+    )
+
+    assert resolved.mode == AttachmentMode.DECLARED
+    assert resolved.tag
+
+
 def test_resolve_attachment_reuses_saved_shared_mode_when_mode_omitted(
     tmp_path: Path,
 ) -> None:

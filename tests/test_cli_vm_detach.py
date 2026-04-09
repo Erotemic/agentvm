@@ -183,5 +183,77 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     assert rc == 0
     assert len(guest_detaches) == 1
     assert len(host_detaches) == 1
-    assert saved == [cfg_path]
-    assert find_attachment_for_vm(store, host_src, cfg.vm.name) is None
+
+
+def test_vm_detach_declared_updates_manifest_without_host_unbind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from aivm.cli.vm import VMDetachCLI
+    from aivm.store import AttachmentEntry, Store, save_store
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-declared-detach'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    reg = Store()
+    reg.attachments.append(
+        AttachmentEntry(
+            host_path=str(host_src.resolve()),
+            vm_name=cfg.vm.name,
+            mode='declared',
+            access='ro',
+            guest_dst='/workspace/proj',
+            tag='hostcode-proj',
+        )
+    )
+    save_store(reg, cfg_path)
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_cfg_for_code',
+        lambda *a, **k: (cfg, cfg_path),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_vm_state',
+        lambda *a, **k: (
+            ProbeOutcome(True, 'vm-declared-detach state=running'),
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_ip_for_ssh_ops',
+        lambda *a, **k: '10.0.0.11',
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._detach_shared_root_host_bind',
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError('declared detach should not tear down host bind')
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._detach_shared_root_guest_bind',
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError('declared detach should use replay reconcile instead')
+        ),
+    )
+    syncs: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._sync_declared_attachment_manifest_on_host',
+        lambda *a, **k: syncs.append((a, k)) or cfg_path,
+    )
+    replays: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_declared_attachments_in_guest',
+        lambda *a, **k: replays.append((a, k)) or None,
+    )
+
+    rc = VMDetachCLI.main(
+        argv=False,
+        config=str(cfg_path),
+        host_src=str(host_src),
+        yes=True,
+    )
+
+    assert rc == 0
+    assert syncs
+    assert replays

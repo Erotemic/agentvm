@@ -167,21 +167,29 @@ Folder attachment
 
 Attachment modes:
 
-* ``shared-root`` (default for new attachments): one VM-level virtiofs mapping
+* ``shared-root`` (default for new attachments): legacy behavior. One VM-level virtiofs mapping
   exports ``/var/lib/libvirt/aivm/<vm>/shared-root``; each attached folder is
   bind-mounted under that root on host and then bind-mounted to ``guest_dst`` in
   guest.
+* ``declared``: preferred new shared-root path. It still uses the single
+  VM-level shared-root virtiofs export and staged host binds, but it writes a
+  persisted attachment manifest, installs a guest systemd replay helper, and
+  lets boot / ``aivm code .`` / ``aivm ssh .`` repair guest-visible bind mounts
+  from that manifest instead of rebuilding every attachment from scratch.
 * ``shared``: direct per-folder virtiofs mapping from host source to guest. This
   is simpler but consumes one VM virtiofs device slot per folder.
 * ``git``: guest-local Git clone, synced via host/guest remotes.
 
-In ``shared`` and ``shared-root`` modes, attached folders mount to the same
-absolute path inside the guest by default. In ``git`` mode, default guest paths
-are placed under ``/home/<vm-user>/...`` so Git sync can run without guest root
-privileges. Use ``--guest_dst`` to override in any mode. Running VMs are
+In ``shared``, ``shared-root``, ``declared``, and ``git`` modes, attached folders
+mount to the same absolute path inside the guest by default unless
+``--guest_dst`` overrides it. Running VMs are
 live-attached when possible.
 ``aivm code`` and ``aivm ssh`` remount the selected folder and best-effort
 restore other folders already saved for that VM after guest startup.
+
+For ``declared`` attachments, explicit unshare updates the stored declaration
+and refreshes the replay manifest instead of depending on interactive teardown
+of the stable host-side staged bind mount.
 
 Major limitation: shared-mode folder count
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -191,7 +199,7 @@ definition. Attaching many folders can hit VM device-slot limits (for example
 PCI/PCIe capacity), which surfaces from libvirt as errors like
 ``No more available PCI slots`` during attach/restore.
 
-``shared-root`` is designed to reduce this pressure by using one persistent
+``shared-root`` and ``declared`` reduce this pressure by using one persistent
 virtiofs mapping per VM and per-attachment host/guest bind mounts.
 Its host-side preparation is also designed to avoid mutating the ownership or
 permissions of the user's source tree; ``aivm`` prepares only its own internal
@@ -213,11 +221,19 @@ back later. Uncommitted host changes stay on the host until you commit them.
 ``aivm code --mode git .`` behavior:
 
 * New folder (no saved attachment): creates/uses a git-mode attachment and
-  defaults guest destination under ``/home/<vm-user>/...``.
+  defaults the guest destination to the exact host path.
 * Folder previously attached as ``shared`` or ``shared-root``: returns an error
   (mode mismatch). Detach + reattach is required to switch modes.
 * ``aivm code .`` without ``--mode``: reuses saved mode if present; otherwise
   creates a new ``shared-root`` attachment.
+
+Migration note:
+
+* ``declared`` is the rollout path for eventually replacing legacy
+  ``shared-root`` attachment churn. Existing ``shared-root`` attachments keep
+  working unchanged. Reattach a folder with ``aivm detach .`` then
+  ``aivm attach . --mode declared`` when you want the new persisted replay
+  behavior.
 
 Mode selection behavior:
 

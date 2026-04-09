@@ -219,6 +219,77 @@ def test_vm_attach_skips_guest_mount_when_vm_not_running(
     assert rc == 0
 
 
+def test_vm_attach_declared_syncs_manifest_and_replays_when_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-declared-running'
+    cfg_path = tmp_path / 'config.toml'
+    host_src = tmp_path / 'proj'
+    host_src.mkdir()
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.DECLARED,
+        source_dir=str(host_src.resolve()),
+        guest_dst='/workspace/proj',
+        tag='hostcode-proj',
+    )
+
+    monkeypatch.setattr(
+        'aivm.cli.vm._load_cfg_with_path',
+        lambda *a, **k: (cfg, cfg_path),
+    )
+    monkeypatch.setattr('aivm.cli.vm._record_vm', lambda *a, **k: cfg_path)
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_attachment',
+        lambda *a, **k: attachment,
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm.probe_vm_state',
+        lambda *a, **k: (
+            ProbeOutcome(True, 'vm-declared-running state=running'),
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._record_attachment', lambda *a, **k: cfg_path
+    )
+    monkeypatch.setattr(
+        'aivm.cli.vm._resolve_ip_for_ssh_ops',
+        lambda *a, **k: '10.77.0.77',
+    )
+
+    syncs: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._sync_declared_attachment_manifest_on_host',
+        lambda *a, **k: syncs.append((a, k)) or cfg_path,
+    )
+    guest_mounts: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._ensure_attachment_available_in_guest',
+        lambda *a, **k: guest_mounts.append((a, k)) or None,
+    )
+    replays: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm._reconcile_declared_attachments_in_guest',
+        lambda *a, **k: replays.append((a, k)) or None,
+    )
+
+    rc = VMAttachCLI.main(
+        argv=False,
+        config=str(cfg_path),
+        host_src=str(host_src),
+        mode='declared',
+        yes=True,
+    )
+
+    assert rc == 0
+    assert syncs
+    assert guest_mounts
+    assert replays
+    assert guest_mounts[0][1]['ensure_shared_root_host_side'] is True
+
+
 def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

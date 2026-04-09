@@ -32,11 +32,13 @@ class AttachmentMode(StrEnum):
     These modes determine how host directories are shared with the VM:
     - SHARED: Direct virtiofs mount of the host directory
     - SHARED_ROOT: VM-specific bind mount via shared-root directory
+    - DECLARED: Persistent shared-root declarations replayed in-guest
     - GIT: Git clone of the host repo into the guest
     """
 
     SHARED = 'shared'
     SHARED_ROOT = 'shared-root'
+    DECLARED = 'declared'
     GIT = 'git'
 
 
