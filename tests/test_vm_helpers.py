@@ -529,9 +529,15 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     assert '#cloud-config' in user_data_script
     assert 'datasource_list:' not in user_data_script
     assert '\ndatasource:\n' not in user_data_script
-    assert '/usr/local/libexec/aivm-persistent-attachment-replay' in user_data_script
+    assert (
+        '/usr/local/libexec/aivm-persistent-attachment-replay'
+        in user_data_script
+    )
     assert 'aivm-persistent-attachment-replay.service' in user_data_script
-    assert 'systemctl enable aivm-persistent-attachment-replay.service' in user_data_script
+    assert (
+        'systemctl enable aivm-persistent-attachment-replay.service'
+        in user_data_script
+    )
 
 
 def test_refresh_cloud_init_seed_for_next_boot_bumps_instance_id(
@@ -1390,8 +1396,16 @@ def test_shutdown_vm_when_pmsuspended_resumes_then_finds_inactive(
         else:
             normalized_calls.append(call)
     # Should resume but not shutdown (VM is inactive)
-    assert ['virsh', 'resume', 'vm-shutdown-pmsuspended-inactive'] in normalized_calls
-    assert ['virsh', 'shutdown', 'vm-shutdown-pmsuspended-inactive'] not in normalized_calls
+    assert [
+        'virsh',
+        'resume',
+        'vm-shutdown-pmsuspended-inactive',
+    ] in normalized_calls
+    assert [
+        'virsh',
+        'shutdown',
+        'vm-shutdown-pmsuspended-inactive',
+    ] not in normalized_calls
 
 
 def test_shutdown_vm_dry_run(
@@ -1529,7 +1543,9 @@ def test_restart_vm_when_running_shutdowns_then_starts(
     # Mock _vm_defined to return True (VM exists)
     monkeypatch.setattr('aivm.vm.lifecycle._vm_defined', lambda name: True)
     # Mock _wait_for_vm_state to avoid actual polling
-    monkeypatch.setattr('aivm.vm.lifecycle._wait_for_vm_state', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._wait_for_vm_state', lambda *a, **k: None
+    )
 
     calls: list[list[str]] = []
     domstate_call_count = [0]  # Track how many times we check state
@@ -1590,9 +1606,13 @@ def test_restart_vm_when_pmsuspended_resumes_then_shutsdown(
     # Mock _vm_defined to return True (VM exists)
     monkeypatch.setattr('aivm.vm.lifecycle._vm_defined', lambda name: True)
     # Mock _wait_for_vm_not_state to avoid actual polling
-    monkeypatch.setattr('aivm.vm.lifecycle._wait_for_vm_not_state', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._wait_for_vm_not_state', lambda *a, **k: None
+    )
     # Mock _wait_for_vm_state to avoid actual polling
-    monkeypatch.setattr('aivm.vm.lifecycle._wait_for_vm_state', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._wait_for_vm_state', lambda *a, **k: None
+    )
 
     calls: list[list[str]] = []
     domstate_count = [0]  # Track domstate call count
@@ -1657,9 +1677,13 @@ def test_restart_vm_when_pmsuspended_resumes_then_finds_inactive(
     # Mock _vm_defined to return True (VM exists)
     monkeypatch.setattr('aivm.vm.lifecycle._vm_defined', lambda name: True)
     # Mock _wait_for_vm_not_state to avoid actual polling
-    monkeypatch.setattr('aivm.vm.lifecycle._wait_for_vm_not_state', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._wait_for_vm_not_state', lambda *a, **k: None
+    )
     # Mock _wait_for_vm_state to avoid actual polling
-    monkeypatch.setattr('aivm.vm.lifecycle._wait_for_vm_state', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._wait_for_vm_state', lambda *a, **k: None
+    )
 
     calls: list[list[str]] = []
     domstate_count = [0]  # Track domstate call count
@@ -1699,9 +1723,21 @@ def test_restart_vm_when_pmsuspended_resumes_then_finds_inactive(
         else:
             normalized_calls.append(call)
     # Should resume, then start (not shutdown since VM is inactive)
-    assert ['virsh', 'resume', 'vm-restart-pmsuspended-inactive'] in normalized_calls
-    assert ['virsh', 'shutdown', 'vm-restart-pmsuspended-inactive'] not in normalized_calls
-    assert ['virsh', 'start', 'vm-restart-pmsuspended-inactive'] in normalized_calls
+    assert [
+        'virsh',
+        'resume',
+        'vm-restart-pmsuspended-inactive',
+    ] in normalized_calls
+    assert [
+        'virsh',
+        'shutdown',
+        'vm-restart-pmsuspended-inactive',
+    ] not in normalized_calls
+    assert [
+        'virsh',
+        'start',
+        'vm-restart-pmsuspended-inactive',
+    ] in normalized_calls
 
 
 def test_restart_vm_when_not_running_just_starts(

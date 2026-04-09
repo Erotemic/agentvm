@@ -303,7 +303,9 @@ def _restore_saved_vm_attachments(
     persistent_secondary = (
         primary_attachment is None
         or primary_attachment.mode != ATTACHMENT_MODE_PERSISTENT
-    ) and any(att.mode == ATTACHMENT_MODE_PERSISTENT for att in secondary_attachments)
+    ) and any(
+        att.mode == ATTACHMENT_MODE_PERSISTENT for att in secondary_attachments
+    )
     if persistent_secondary:
         try:
             _reconcile_persistent_attachments_in_guest(
@@ -495,7 +497,9 @@ def _virtiofs_mapping_for_attachment(
         if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
             from .persistent import _persistent_root_host_dir
 
-            return str(_persistent_root_host_dir(cfg)), PERSISTENT_ROOT_VIRTIOFS_TAG
+            return str(
+                _persistent_root_host_dir(cfg)
+            ), PERSISTENT_ROOT_VIRTIOFS_TAG
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
     return None
 
@@ -615,7 +619,9 @@ def _reconcile_attached_vm(
             }:
                 if not policy.dry_run:
                     if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
-                        from .persistent import _ensure_persistent_root_parent_dir
+                        from .persistent import (
+                            _ensure_persistent_root_parent_dir,
+                        )
 
                         _ensure_persistent_root_parent_dir(cfg, dry_run=False)
                     else:

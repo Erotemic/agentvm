@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import json
 import shlex
-import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..persistent_replay import (
-    PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
     PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME,
     PERSISTENT_ATTACHMENT_HOST_META_DIR,
     PERSISTENT_ATTACHMENT_REPLAY_BIN,
@@ -55,7 +53,10 @@ def _persistent_host_meta_dir(cfg: AgentVMConfig) -> Path:
 
 
 def _persistent_host_manifest_path(cfg: AgentVMConfig) -> Path:
-    return _persistent_host_meta_dir(cfg) / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
+    return (
+        _persistent_host_meta_dir(cfg)
+        / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
+    )
 
 
 def _persistent_attachment_records_for_vm(
@@ -79,7 +80,9 @@ def _persistent_attachment_records_for_vm(
                 enabled=True,
             )
         )
-    return sorted(records, key=lambda rec: (rec.guest_dst, rec.shared_root_token))
+    return sorted(
+        records, key=lambda rec: (rec.guest_dst, rec.shared_root_token)
+    )
 
 
 def _persistent_attachment_manifest_text(
@@ -118,7 +121,9 @@ def _run_guest_root_script(
         script,
     ]
     if dry_run:
-        print(f'DRYRUN: would run guest reconcile command: {" ".join(shlex.quote(c) for c in cmd)}')
+        print(
+            f'DRYRUN: would run guest reconcile command: {" ".join(shlex.quote(c) for c in cmd)}'
+        )
         return
     CommandManager.current().run(
         cmd,
@@ -139,7 +144,9 @@ def _sync_persistent_attachment_manifest_on_host(
     manifest_path = _persistent_host_manifest_path(cfg)
     manifest_text = _persistent_attachment_manifest_text(cfg, cfg_path)
     if dry_run:
-        print(f'DRYRUN: would write persistent attachment manifest to {manifest_path}')
+        print(
+            f'DRYRUN: would write persistent attachment manifest to {manifest_path}'
+        )
         return manifest_path
     mgr = CommandManager.current()
     meta_dir = _persistent_host_meta_dir(cfg)
@@ -224,11 +231,14 @@ def _ensure_persistent_root_host_bind(
     # dedicated persistent-root export tree so the two backends never share the
     # same virtiofs device or host export directory.
     source = Path(attachment.source_dir).resolve()
-    target = _persistent_root_host_dir(cfg) / Path(
-        _shared_root_host_target(cfg, attachment.tag)
-    ).name
+    target = (
+        _persistent_root_host_dir(cfg)
+        / Path(_shared_root_host_target(cfg, attachment.tag)).name
+    )
     if dry_run:
-        print(f'DRYRUN: would bind-mount {source} -> {target} for persistent mode')
+        print(
+            f'DRYRUN: would bind-mount {source} -> {target} for persistent mode'
+        )
         return target
     mgr = CommandManager.current()
     with mgr.step(
@@ -273,27 +283,29 @@ def _install_persistent_attachment_replay(
     *,
     dry_run: bool,
 ) -> None:
-    replay_py = persistent_replay_python().rstrip("\n")
-    service_text = persistent_replay_service_unit().rstrip("\n")
+    replay_py = persistent_replay_python().rstrip('\n')
+    service_text = persistent_replay_service_unit().rstrip('\n')
 
-    script = "\n".join([
-        "set -euo pipefail",
-        f"sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_REPLAY_BIN).parent))}",
-        "sudo -n mkdir -p /etc/systemd/system",
-        'tmp_py="$(mktemp)"',
-        'tmp_service="$(mktemp)"',
-        'cat > "$tmp_py" <<\'PYEOF\'',
-        replay_py,
-        'PYEOF',
-        'cat > "$tmp_service" <<\'SVCEOF\'',
-        service_text,
-        'SVCEOF',
-        f"sudo -n install -m 0755 \"$tmp_py\" {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}",
-        f"sudo -n install -m 0644 \"$tmp_service\" /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}",
-        'rm -f "$tmp_py" "$tmp_service"',
-        "sudo -n systemctl daemon-reload",
-        f"sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}",
-    ])
+    script = '\n'.join(
+        [
+            'set -euo pipefail',
+            f'sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_REPLAY_BIN).parent))}',
+            'sudo -n mkdir -p /etc/systemd/system',
+            'tmp_py="$(mktemp)"',
+            'tmp_service="$(mktemp)"',
+            'cat > "$tmp_py" <<\'PYEOF\'',
+            replay_py,
+            'PYEOF',
+            'cat > "$tmp_service" <<\'SVCEOF\'',
+            service_text,
+            'SVCEOF',
+            f'sudo -n install -m 0755 "$tmp_py" {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
+            f'sudo -n install -m 0644 "$tmp_service" /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}',
+            'rm -f "$tmp_py" "$tmp_service"',
+            'sudo -n systemctl daemon-reload',
+            f'sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}',
+        ]
+    )
 
     _run_guest_root_script(
         cfg,

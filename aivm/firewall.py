@@ -7,15 +7,14 @@ restricted" behavior unless caller config loosens/tightens policy.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping, Sequence
+from typing import TypeAlias, TypeGuard
 
 from loguru import logger
 
 from .commands import CommandManager
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
-
-from collections.abc import Mapping, Sequence
-from typing import TypeAlias, TypeGuard
 
 JsonObj: TypeAlias = Mapping[str, object]
 
@@ -252,7 +251,6 @@ def firewall_status(cfg: AgentVMConfig) -> str:
 def read_firewall_tcp_ports(
     cfg: AgentVMConfig, *, use_sudo: bool
 ) -> tuple[tuple[int, ...] | None, str]:
-
     # TODO: this function can be a lot cleaner and server other use-cases
     # currently only used in drift detection.
 
@@ -273,6 +271,7 @@ def read_firewall_tcp_ports(
         return None, raw
 
     import json
+
     text = res.stdout or ''
     ports = set()
     data = json.loads(text)
@@ -281,17 +280,17 @@ def read_firewall_tcp_ports(
         if not _is_json_obj(expr):
             return False
 
-        match = expr.get("match")
+        match = expr.get('match')
         if not _is_json_obj(match):
             return False
 
-        op = match.get("op")
-        left = match.get("left")
-        right = match.get("right")
+        op = match.get('op')
+        left = match.get('left')
+        right = match.get('right')
 
-        if op != "==":
+        if op != '==':
             return False
-        if left != {"meta": {"key": "iifname"}}:
+        if left != {'meta': {'key': 'iifname'}}:
             return False
         return right == want_ifname
 
@@ -304,22 +303,22 @@ def read_firewall_tcp_ports(
         if not _is_json_obj(expr):
             return ()
 
-        match = expr.get("match")
+        match = expr.get('match')
         if not _is_json_obj(match):
             return ()
 
-        left = match.get("left")
+        left = match.get('left')
         if not _is_json_obj(left):
             return ()
 
-        payload = left.get("payload")
+        payload = left.get('payload')
         if not _is_json_obj(payload):
             return ()
 
-        if payload.get("protocol") != "tcp" or payload.get("field") != "dport":
+        if payload.get('protocol') != 'tcp' or payload.get('field') != 'dport':
             return ()
 
-        right = match.get("right")
+        right = match.get('right')
         vals: list[int] = []
 
         if isinstance(right, int):
@@ -327,7 +326,7 @@ def read_firewall_tcp_ports(
         elif isinstance(right, str) and right.isdigit():
             vals.append(int(right))
         elif _is_json_obj(right):
-            set_items = right.get("set")
+            set_items = right.get('set')
             if isinstance(set_items, list):
                 for item in set_items:
                     if isinstance(item, int):
@@ -347,19 +346,22 @@ def read_firewall_tcp_ports(
             if not _is_json_obj(expr):
                 continue
 
-            match = expr.get("match")
+            match = expr.get('match')
             if not _is_json_obj(match):
                 continue
 
-            left = match.get("left")
+            left = match.get('left')
             if not _is_json_obj(left):
                 continue
 
-            payload = left.get("payload")
+            payload = left.get('payload')
             if not _is_json_obj(payload):
                 continue
 
-            if payload.get("protocol") == "ip" and payload.get("field") == "daddr":
+            if (
+                payload.get('protocol') == 'ip'
+                and payload.get('field') == 'daddr'
+            ):
                 return True
         return False
 
@@ -369,14 +371,14 @@ def read_firewall_tcp_ports(
         if not _is_json_obj(item):
             continue
 
-        rule = item.get("rule")
+        rule = item.get('rule')
         if not _is_json_obj(rule):
             continue
 
-        if rule.get("family") != "inet" or rule.get("table") != table:
+        if rule.get('family') != 'inet' or rule.get('table') != table:
             continue
 
-        exprs = rule.get("expr")
+        exprs = rule.get('expr')
         if not isinstance(exprs, list) or not exprs:
             continue
 
@@ -401,7 +403,9 @@ def read_firewall_tcp_ports(
 
         # Require terminal verdict accept.
         has_accept = any(
-            _is_json_obj(expr) and 'accept' in expr and expr.get('accept') is None
+            _is_json_obj(expr)
+            and 'accept' in expr
+            and expr.get('accept') is None
             for expr in exprs
         )
         if not has_accept:

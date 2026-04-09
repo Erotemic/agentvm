@@ -15,16 +15,16 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from ..commands import CommandManager
+from ..config import (
+    DEFAULT_UBUNTU_NOBLE_IMG_URL,
+    SUPPORTED_IMAGE_SHA256,
+    AgentVMConfig,
+)
 from ..persistent_replay import (
     PERSISTENT_ATTACHMENT_REPLAY_BIN,
     PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
     persistent_replay_python,
     persistent_replay_service_unit,
-)
-from ..config import (
-    DEFAULT_UBUNTU_NOBLE_IMG_URL,
-    SUPPORTED_IMAGE_SHA256,
-    AgentVMConfig,
 )
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdError, ensure_dir
@@ -1365,7 +1365,15 @@ def _is_vm_active(state: str) -> bool:
     """
     state = state.lower().strip()
     # Active states: running, idle, paused, blocked, pmsuspended, in shutdown, shutting down
-    active_states = ['running', 'idle', 'paused', 'blocked', 'pmsuspended', 'in shutdown', 'shutting down']
+    active_states = [
+        'running',
+        'idle',
+        'paused',
+        'blocked',
+        'pmsuspended',
+        'in shutdown',
+        'shutting down',
+    ]
     return any(s in state for s in active_states)
 
 
@@ -1490,11 +1498,12 @@ def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         if code != 0:
             msg = error or 'unknown error'
             raise RuntimeError(
-                f'Failed to get state for VM {name} (code={code}). '
-                f'Error: {msg}'
+                f'Failed to get state for VM {name} (code={code}). Error: {msg}'
             )
         if not _is_vm_active(state):
-            log.info('VM {} is not active (state={}); nothing to do.', name, state)
+            log.info(
+                'VM {} is not active (state={}); nothing to do.', name, state
+            )
             return
 
         # Handle pmsuspended specially - resume first since ACPI shutdown
@@ -1511,11 +1520,11 @@ def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
             )
             if res.code != 0:
                 msg = (res.stderr or res.stdout or '').strip()
-                raise RuntimeError(
-                    f'Failed to resume VM {name}.\n{msg}'
-                )
+                raise RuntimeError(f'Failed to resume VM {name}.\n{msg}')
             # Wait for VM to transition out of pmsuspended
-            _wait_for_vm_not_state(name, 'pmsuspended', timeout_s=10, poll_interval_s=1)
+            _wait_for_vm_not_state(
+                name, 'pmsuspended', timeout_s=10, poll_interval_s=1
+            )
             # Re-check state after resume to ensure VM is in a valid state for shutdown
             code, state, error = _get_vm_state(name)
             if code != 0:
@@ -1525,7 +1534,11 @@ def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                     f'Error: {msg}'
                 )
             if not _is_vm_active(state):
-                log.info('VM {} transitioned to inactive state {} after resume; nothing to do.', name, state)
+                log.info(
+                    'VM {} transitioned to inactive state {} after resume; nothing to do.',
+                    name,
+                    state,
+                )
                 return
             log.info('VM {} resumed (state={})', name, state)
 
@@ -1580,8 +1593,7 @@ def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
         if code != 0:
             msg = error or 'unknown error'
             raise RuntimeError(
-                f'Failed to get state for VM {name} (code={code}). '
-                f'Error: {msg}'
+                f'Failed to get state for VM {name} (code={code}). Error: {msg}'
             )
 
         if _is_vm_active(state):
@@ -1598,11 +1610,11 @@ def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                 )
                 if res.code != 0:
                     msg = (res.stderr or res.stdout or '').strip()
-                    raise RuntimeError(
-                        f'Failed to resume VM {name}.\n{msg}'
-                    )
+                    raise RuntimeError(f'Failed to resume VM {name}.\n{msg}')
                 # Wait for VM to transition out of pmsuspended
-                _wait_for_vm_not_state(name, 'pmsuspended', timeout_s=10, poll_interval_s=1)
+                _wait_for_vm_not_state(
+                    name, 'pmsuspended', timeout_s=10, poll_interval_s=1
+                )
                 # Re-check state after resume to ensure VM is in a valid state for shutdown
                 code, state, error = _get_vm_state(name)
                 if code != 0:
@@ -1612,7 +1624,11 @@ def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                         f'Error: {msg}'
                     )
                 if not _is_vm_active(state):
-                    log.info('VM {} transitioned to inactive state {} after resume; starting it.', name, state)
+                    log.info(
+                        'VM {} transitioned to inactive state {} after resume; starting it.',
+                        name,
+                        state,
+                    )
                     _start_vm(name)
                     log.info('VM {} restarted', name)
                     return
@@ -1635,10 +1651,14 @@ def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
                 )
             # Wait for the VM to actually shut down before starting it again
             log.info('Waiting for VM {} to shut down...', name)
-            _wait_for_vm_state(name, 'shut off', timeout_s=120, poll_interval_s=2)
+            _wait_for_vm_state(
+                name, 'shut off', timeout_s=120, poll_interval_s=2
+            )
             log.info('VM {} has shut down', name)
         else:
-            log.info('VM {} is not active (state={}); starting it.', name, state)
+            log.info(
+                'VM {} is not active (state={}); starting it.', name, state
+            )
 
         # Start the VM (use start_vm helper, not create_or_start_vm)
         log.info('Starting VM {}', name)

@@ -82,7 +82,9 @@ def test_persistent_manifest_persists_records_and_access_modes(
         'hostcode-rw',
     ]
     assert [item['access'] for item in payload['records']] == ['ro', 'rw']
-    assert payload['records'][0]['host_lexical_path'] == str(tmp_path / 'link-ro')
+    assert payload['records'][0]['host_lexical_path'] == str(
+        tmp_path / 'link-ro'
+    )
 
 
 def test_persistent_reconcile_syncs_host_manifest_then_replays_guest(
@@ -117,4 +119,7 @@ def test_persistent_reconcile_syncs_host_manifest_then_replays_guest(
     )
 
     assert [item[0] for item in calls] == ['sync', 'install', 'replay']
-    assert calls[-1][2]['summary'] == 'Replay persistent attachment mounts inside guest'
+    assert (
+        calls[-1][2]['summary']
+        == 'Replay persistent attachment mounts inside guest'
+    )

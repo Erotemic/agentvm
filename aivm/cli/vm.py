@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import shlex
-import sys
-from copy import deepcopy
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +12,11 @@ from ..attachments.guest import (
     _ensure_attachment_available_in_guest,
     _upsert_ssh_config_entry,
 )
+from ..attachments.persistent import (
+    _prepare_persistent_attachment_host_and_vm,
+    _reconcile_persistent_attachments_in_guest,
+    _sync_persistent_attachment_manifest_on_host,
+)
 from ..attachments.resolve import (
     ATTACHMENT_MODE_PERSISTENT,
     ATTACHMENT_MODE_SHARED,
@@ -22,11 +24,6 @@ from ..attachments.resolve import (
     _normalize_attachment_access,
     _normalize_attachment_mode,
     _resolve_attachment,
-)
-from ..attachments.persistent import (
-    _prepare_persistent_attachment_host_and_vm,
-    _reconcile_persistent_attachments_in_guest,
-    _sync_persistent_attachment_manifest_on_host,
 )
 from ..attachments.session import (
     _maybe_warn_hardware_drift,
@@ -41,7 +38,6 @@ from ..attachments.shared_root import (
     _ensure_shared_root_vm_mapping,
 )
 from ..commands import CommandManager
-from ..config import AgentVMConfig
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..status import (
     probe_vm_state,
@@ -73,6 +69,9 @@ from ..vm import (
 from ..vm import (
     ssh_config as mk_ssh_config,
 )
+from ..vm.create_ops import (
+    create_vm_from_defaults,
+)
 from ..vm.drift import (
     attachment_has_mapping as drift_attachment_has_mapping,
 )
@@ -81,9 +80,6 @@ from ..vm.share import (
 )
 from ..vm.share import (
     align_attachment_tag_with_mappings as drift_align_attachment_tag_with_mappings,
-)
-from ..vm.create_ops import (
-    create_vm_from_defaults,
 )
 from ..vm.update_ops import (
     _apply_vm_update,

@@ -16,6 +16,7 @@ from ..util import ensure_dir
 from ..vm import ensure_share_mounted
 from ..vm import ssh_config as mk_ssh_config
 from ..vm.share import ResolvedAttachment
+from .persistent import _prepare_persistent_attachment_host_and_vm
 from .resolve import (
     ATTACHMENT_ACCESS_RO,
     ATTACHMENT_MODE_PERSISTENT,
@@ -30,7 +31,6 @@ from .shared_root import (
     _ensure_shared_root_host_bind,
     _ensure_shared_root_vm_mapping,
 )
-from .persistent import _prepare_persistent_attachment_host_and_vm
 
 log = logger
 

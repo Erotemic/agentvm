@@ -988,7 +988,16 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     ensure_calls: list[dict] = []
     monkeypatch.setattr(
         'aivm.attachments.session._ensure_attachment_available_in_guest',
-        lambda cfg_a, host_src_a, att, ip, *, yes, dry_run, ensure_shared_root_host_side, allow_disruptive_shared_root_rebind, mirror_home: (
+        lambda cfg_a,
+        host_src_a,
+        att,
+        ip,
+        *,
+        yes,
+        dry_run,
+        ensure_shared_root_host_side,
+        allow_disruptive_shared_root_rebind,
+        mirror_home: (
             ensure_calls.append(
                 {
                     'allow_disruptive': allow_disruptive_shared_root_rebind,

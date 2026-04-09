@@ -7,7 +7,6 @@ it without pulling in the higher-level attachments package.
 from __future__ import annotations
 
 import textwrap
-from pathlib import PurePosixPath
 
 PERSISTENT_ATTACHMENT_HOST_META_DIR = '.aivm'
 PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME = 'persistent-attachments.json'
@@ -15,10 +14,15 @@ PERSISTENT_ATTACHMENT_GUEST_STATE_DIR = '/var/lib/aivm'
 PERSISTENT_ATTACHMENT_GUEST_STATE_PATH = (
     f'{PERSISTENT_ATTACHMENT_GUEST_STATE_DIR}/attachments.json'
 )
-PERSISTENT_ATTACHMENT_REPLAY_BIN = '/usr/local/libexec/aivm-persistent-attachment-replay'
-PERSISTENT_ATTACHMENT_REPLAY_SERVICE = 'aivm-persistent-attachment-replay.service'
+PERSISTENT_ATTACHMENT_REPLAY_BIN = (
+    '/usr/local/libexec/aivm-persistent-attachment-replay'
+)
+PERSISTENT_ATTACHMENT_REPLAY_SERVICE = (
+    'aivm-persistent-attachment-replay.service'
+)
 PERSISTENT_ROOT_VIRTIOFS_TAG = 'aivm-persistent-root'
 PERSISTENT_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-persistent'
+
 
 def persistent_replay_python() -> str:
     return textwrap.dedent(

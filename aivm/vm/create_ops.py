@@ -8,6 +8,10 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..cli._common import (
+    _maybe_install_missing_host_deps,
+    log,
+)
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..firewall import apply_firewall
@@ -24,10 +28,6 @@ from ..store import (
     save_store,
     upsert_network,
     upsert_vm_with_network,
-)
-from ..cli._common import (
-    _maybe_install_missing_host_deps,
-    log,
 )
 from ..vm import create_or_start_vm
 
@@ -276,11 +276,7 @@ def create_vm_from_defaults(
         prev_active_vm = reg.active_vm
         upsert_vm_with_network(reg, cfg, network_name=cfg.network.name)
         set_active = set_default
-        if (
-            not set_active
-            and not yes
-            and prev_active_vm != cfg.vm.name
-        ):
+        if not set_active and not yes and prev_active_vm != cfg.vm.name:
             set_active = _prompt_set_created_vm_default(cfg.vm.name)
         if not set_active:
             reg.active_vm = prev_active_vm

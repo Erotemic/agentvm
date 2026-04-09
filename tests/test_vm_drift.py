@@ -10,10 +10,10 @@ from unittest.mock import MagicMock, patch
 
 from aivm.config import (
     AgentVMConfig,
+    FirewallConfig,
+    NetworkConfig,
     PathsConfig,
     VMConfig,
-    NetworkConfig,
-    FirewallConfig,
 )
 from aivm.vm.drift import (
     SHARED_ROOT_VIRTIOFS_TAG,

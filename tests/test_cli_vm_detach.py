@@ -233,7 +233,9 @@ def test_vm_detach_persistent_updates_manifest_without_host_unbind(
     monkeypatch.setattr(
         'aivm.cli.vm._detach_shared_root_guest_bind',
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError('persistent detach should use replay reconcile instead')
+            AssertionError(
+                'persistent detach should use replay reconcile instead'
+            )
         ),
     )
     syncs: list[tuple[tuple, dict]] = []
