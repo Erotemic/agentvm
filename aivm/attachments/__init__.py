@@ -15,7 +15,7 @@ from .guest import (
     _upsert_ssh_config_entry,
     _warn_if_git_repo_dirty,
 )
-from .declared import (
+from .persistent import (
     DECLARED_ATTACHMENT_GUEST_STATE_PATH,
     DECLARED_ATTACHMENT_HOST_MANIFEST_NAME,
     DECLARED_ATTACHMENT_REPLAY_SERVICE,

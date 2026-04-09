@@ -61,7 +61,7 @@ from .guest import (
     _ensure_attachment_available_in_guest,
     _ensure_git_clone_attachment,
 )
-from .declared import (
+from .persistent import (
     DECLARED_ROOT_VIRTIOFS_TAG,
     _prepare_declared_attachment_host_and_vm,
     _reconcile_declared_attachments_in_guest,
@@ -493,7 +493,7 @@ def _virtiofs_mapping_for_attachment(
         ATTACHMENT_MODE_DECLARED,
     }:
         if attachment.mode == ATTACHMENT_MODE_DECLARED:
-            from .declared import _declared_root_host_dir
+            from .persistent import _declared_root_host_dir
 
             return str(_declared_root_host_dir(cfg)), DECLARED_ROOT_VIRTIOFS_TAG
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
@@ -615,7 +615,7 @@ def _reconcile_attached_vm(
             }:
                 if not policy.dry_run:
                     if attachment.mode == ATTACHMENT_MODE_DECLARED:
-                        from .declared import _ensure_declared_root_parent_dir
+                        from .persistent import _ensure_declared_root_parent_dir
 
                         _ensure_declared_root_parent_dir(cfg, dry_run=False)
                     else:

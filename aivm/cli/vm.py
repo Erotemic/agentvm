@@ -23,7 +23,7 @@ from ..attachments.resolve import (
     _normalize_attachment_mode,
     _resolve_attachment,
 )
-from ..attachments.declared import (
+from ..attachments.persistent import (
     _prepare_declared_attachment_host_and_vm,
     _reconcile_declared_attachments_in_guest,
     _sync_declared_attachment_manifest_on_host,

@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from ..commands import CommandManager
-from ..declared_replay import (
+from ..persistent_replay import (
     DECLARED_ATTACHMENT_REPLAY_BIN,
     DECLARED_ATTACHMENT_REPLAY_SERVICE,
     declared_replay_python,

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
-from ..declared_replay import (
+from ..persistent_replay import (
     DECLARED_ATTACHMENT_GUEST_STATE_PATH,
     DECLARED_ATTACHMENT_HOST_MANIFEST_NAME,
     DECLARED_ATTACHMENT_HOST_META_DIR,

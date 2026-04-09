@@ -30,7 +30,7 @@ from .shared_root import (
     _ensure_shared_root_host_bind,
     _ensure_shared_root_vm_mapping,
 )
-from .declared import _prepare_declared_attachment_host_and_vm
+from .persistent import _prepare_declared_attachment_host_and_vm
 
 log = logger
 
