@@ -273,28 +273,28 @@ def _install_persistent_attachment_replay(
     *,
     dry_run: bool,
 ) -> None:
-    replay_py = persistent_replay_python()
-    service_text = persistent_replay_service_unit()
-    script = textwrap.dedent(
-        f"""\
-        set -euo pipefail
-        sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_REPLAY_BIN).parent))}
-        sudo -n mkdir -p /etc/systemd/system
-        tmp_py="$(mktemp)"
-        tmp_service="$(mktemp)"
-        cat > "$tmp_py" <<'PYEOF'
-        {replay_py}
-        PYEOF
-        cat > "$tmp_service" <<'SVCEOF'
-        {service_text}
-        SVCEOF
-        sudo -n install -m 0755 "$tmp_py" {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}
-        sudo -n install -m 0644 "$tmp_service" /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
-        rm -f "$tmp_py" "$tmp_service"
-        sudo -n systemctl daemon-reload
-        sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
-        """
-    )
+    replay_py = persistent_replay_python().rstrip("\n")
+    service_text = persistent_replay_service_unit().rstrip("\n")
+
+    script = "\n".join([
+        "set -euo pipefail",
+        f"sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_REPLAY_BIN).parent))}",
+        "sudo -n mkdir -p /etc/systemd/system",
+        'tmp_py="$(mktemp)"',
+        'tmp_service="$(mktemp)"',
+        'cat > "$tmp_py" <<\'PYEOF\'',
+        replay_py,
+        'PYEOF',
+        'cat > "$tmp_service" <<\'SVCEOF\'',
+        service_text,
+        'SVCEOF',
+        f"sudo -n install -m 0755 \"$tmp_py\" {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}",
+        f"sudo -n install -m 0644 \"$tmp_service\" /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}",
+        'rm -f "$tmp_py" "$tmp_service"',
+        "sudo -n systemctl daemon-reload",
+        f"sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}",
+    ])
+
     _run_guest_root_script(
         cfg,
         ip,
