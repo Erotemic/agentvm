@@ -1745,6 +1745,33 @@ def ssh_config(cfg: AgentVMConfig) -> str:
 """
 
 
+def _is_ssh_host_key_mismatch(stderr: str) -> bool:
+    text = stderr.lower()
+    patterns = [
+        'remote host identification has changed',
+        'host key verification failed',
+        'offending ',
+        'offending ecdsa key in ',
+        'offending ed25519 key in ',
+        'offending rsa key in ',
+        'it is also possible that a host key has just been changed',
+        'someone could be eavesdropping on you right now',
+    ]
+    return any(pattern in text for pattern in patterns)
+
+
+def _ssh_host_key_mismatch_message(cfg: AgentVMConfig, ip: str) -> str:
+    return textwrap.dedent(
+        f'''
+        SSH host key mismatch while waiting for VM {cfg.vm.name} at {ip}.
+        The VM appears to have booted and obtained an IP, but SSH is failing
+        because the cached host key for this address no longer matches.
+        Try removing the stale key and retrying:
+          ssh-keygen -f ~/.ssh/known_hosts -R {ip}
+        '''
+    ).strip()
+
+
 def wait_for_ssh(
     cfg: AgentVMConfig,
     ip: str,
@@ -1763,6 +1790,7 @@ def wait_for_ssh(
     # CPU. Keep each probe bounded, but allow enough time for a real login
     # handshake to finish before declaring the guest unreachable.
     probe_timeout_s = 30
+    last_stderr = ''
     while time.time() < deadline:
         cmd = [
             'ssh',
@@ -1785,8 +1813,12 @@ def wait_for_ssh(
         if res.code == 0:
             log.info('SSH is ready on {}', ip)
             return
+        last_stderr = (res.stderr or '').strip()
+        if _is_ssh_host_key_mismatch(last_stderr):
+            raise RuntimeError(_ssh_host_key_mismatch_message(cfg, ip))
         time.sleep(2)
-    raise TimeoutError(f'Timed out waiting for SSH on {ip}:22')
+    detail = f' Last SSH error: {last_stderr}' if last_stderr else ''
+    raise TimeoutError(f'Timed out waiting for SSH on {ip}:22.{detail}')
 
 
 def provision(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:

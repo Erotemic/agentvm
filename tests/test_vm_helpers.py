@@ -1008,6 +1008,81 @@ def test_wait_for_ssh_uses_generous_probe_timeout(
     assert all(timeout == 30 for timeout in timeouts)
 
 
+def test_wait_for_ssh_fails_fast_on_host_key_mismatch(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'aivm-2404'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+    calls = {'n': 0}
+
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.require_ssh_identity',
+        lambda p: p or '/tmp/id_ed25519',
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id_ed25519'],
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda s: None)
+
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
+        del self, cmd, kwargs
+        calls['n'] += 1
+        return CmdResult(
+            255,
+            '',
+            (
+                '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n'
+                '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n'
+                '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n'
+                'Offending ED25519 key in /home/user/.ssh/known_hosts:42\n'
+                'Host key verification failed.\n'
+            ),
+        )
+
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
+
+    with pytest.raises(RuntimeError, match='SSH host key mismatch'):
+        wait_for_ssh(cfg, '10.77.0.195', timeout_s=60, dry_run=False)
+
+    assert calls['n'] == 1
+
+
+def test_wait_for_ssh_retries_transient_startup_errors(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id_ed25519'
+    calls = {'n': 0}
+
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.require_ssh_identity',
+        lambda p: p or '/tmp/id_ed25519',
+    )
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle.ssh_base_args',
+        lambda *a, **k: ['-i', '/tmp/id_ed25519'],
+    )
+    monkeypatch.setattr('aivm.vm.lifecycle.time.sleep', lambda s: None)
+
+    def fake_run_cmd(self: object, cmd: list[str], **kwargs: Any) -> CmdResult:
+        del self, cmd, kwargs
+        calls['n'] += 1
+        if calls['n'] == 1:
+            return CmdResult(255, '', 'ssh: connect to host 10.0.0.2 port 22: Connection refused')
+        if calls['n'] == 2:
+            return CmdResult(124, '', 'command timed out')
+        return CmdResult(0, '', '')
+
+    monkeypatch.setattr('aivm.vm.lifecycle.CommandManager.run', fake_run_cmd)
+
+    wait_for_ssh(cfg, '10.0.0.2', timeout_s=60, dry_run=False)
+    assert calls['n'] == 3
+
+
 def test_create_vm_raises_clear_error_when_virtiofsd_missing(
     monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
