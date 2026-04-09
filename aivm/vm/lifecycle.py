@@ -15,6 +15,12 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from ..commands import CommandManager
+from ..declared_replay import (
+    DECLARED_ATTACHMENT_REPLAY_BIN,
+    DECLARED_ATTACHMENT_REPLAY_SERVICE,
+    declared_replay_python,
+    declared_replay_service_unit,
+)
 from ..config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
     SUPPORTED_IMAGE_SHA256,
@@ -694,9 +700,19 @@ def _write_cloud_init(
               X11Forwarding no
               AllowTcpForwarding yes
               GatewayPorts no
+          - path: {DECLARED_ATTACHMENT_REPLAY_BIN}
+            permissions: "0755"
+            content: |
+{textwrap.indent(declared_replay_python().rstrip(), '              ')}
+          - path: /etc/systemd/system/{DECLARED_ATTACHMENT_REPLAY_SERVICE}
+            permissions: "0644"
+            content: |
+{textwrap.indent(declared_replay_service_unit().rstrip(), '              ')}
 
         runcmd:
           - systemctl mask --now systemd-networkd-wait-online.service NetworkManager-wait-online.service || true
+          - systemctl daemon-reload
+          - systemctl enable {DECLARED_ATTACHMENT_REPLAY_SERVICE}
           - systemctl enable --now ssh
           - systemctl enable --now unattended-upgrades || true
         """

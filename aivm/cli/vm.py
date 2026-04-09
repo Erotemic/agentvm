@@ -24,6 +24,7 @@ from ..attachments.resolve import (
     _resolve_attachment,
 )
 from ..attachments.declared import (
+    _prepare_declared_attachment_host_and_vm,
     _reconcile_declared_attachments_in_guest,
     _sync_declared_attachment_manifest_on_host,
 )
@@ -423,11 +424,11 @@ class VMCodeCLI(_BaseCommand):
     )
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode override: shared, shared-root, declared, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode override: shared, shared-root, persistent, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
-        help='Attachment access override: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and declared modes.',
+        help='Attachment access override: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and persistent modes.',
     )
     recreate_if_needed: Any = scfg.Value(
         False,
@@ -560,11 +561,11 @@ class VMSSHCLI(_BaseCommand):
     )
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode override: shared, shared-root, declared, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode override: shared, shared-root, persistent, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
-        help='Attachment access override: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and declared modes.',
+        help='Attachment access override: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and persistent modes.',
     )
     recreate_if_needed: Any = scfg.Value(
         False,
@@ -666,11 +667,11 @@ class VMAttachCLI(_BaseCommand):
     guest_dst: Any = scfg.Value('', help='Guest mount path override.')
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode: shared, shared-root, declared, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode: shared, shared-root, persistent, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
-        help='Attachment access: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and declared modes.',
+        help='Attachment access: rw or ro (default: saved access or rw). ro is supported for shared, shared-root, and persistent modes.',
     )
     force: Any = scfg.Value(
         False,
@@ -770,18 +771,26 @@ class VMAttachCLI(_BaseCommand):
                         why='Ensure the requested host folder is exposed to the VM before the next guest session uses it.',
                         role='modify',
                     ):
-                        _ensure_shared_root_host_bind(
-                            cfg,
-                            attachment,
-                            yes=bool(args.yes),
-                            dry_run=False,
-                        )
-                        _ensure_shared_root_vm_mapping(
-                            cfg,
-                            yes=bool(args.yes),
-                            dry_run=False,
-                            vm_running=False,
-                        )
+                        if attachment.mode == ATTACHMENT_MODE_DECLARED:
+                            _prepare_declared_attachment_host_and_vm(
+                                cfg,
+                                attachment,
+                                dry_run=False,
+                                vm_running=False,
+                            )
+                        else:
+                            _ensure_shared_root_host_bind(
+                                cfg,
+                                attachment,
+                                yes=bool(args.yes),
+                                dry_run=False,
+                            )
+                            _ensure_shared_root_vm_mapping(
+                                cfg,
+                                yes=bool(args.yes),
+                                dry_run=False,
+                                vm_running=False,
+                            )
         reg_path = _record_attachment(
             cfg,
             cfg_path,
@@ -1002,7 +1011,7 @@ class VMDetachCLI(_BaseCommand):
                     reg,
                     cfg_path,
                     reason=(
-                        f'Remove declared attachment record for {host_src} from VM '
+                        f'Remove persistent attachment record for {host_src} from VM '
                         f'{cfg.vm.name}.'
                     ),
                 )
@@ -1016,7 +1025,7 @@ class VMDetachCLI(_BaseCommand):
                     ip = _resolve_ip_for_ssh_ops(
                         cfg,
                         yes=bool(args.yes),
-                        purpose='Query VM networking state before reconciling declared attachment removal.',
+                        purpose='Query VM networking state before reconciling persistent attachment removal.',
                     )
                     _reconcile_declared_attachments_in_guest(
                         cfg,
@@ -1027,7 +1036,7 @@ class VMDetachCLI(_BaseCommand):
                 except Exception as ex:
                     detach_failed = True
                     log.warning(
-                        'Could not reconcile declared attachment removal for VM {} source={} guest_dst={} token={}: {}',
+                        'Could not reconcile persistent attachment removal for VM {} source={} guest_dst={} token={}: {}',
                         cfg.vm.name,
                         resolved.source_dir,
                         resolved.guest_dst,
@@ -1072,7 +1081,7 @@ class VMDetachCLI(_BaseCommand):
                 print('Detached shared-root guest bind mount.')
         if mode == ATTACHMENT_MODE_DECLARED:
             print(
-                'Removed declared attachment intent and refreshed the guest replay manifest.'
+                'Removed persistent attachment intent and refreshed the guest replay manifest.'
             )
         if vm_running and mode == ATTACHMENT_MODE_SHARED:
             print(

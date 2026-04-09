@@ -15,26 +15,27 @@ from pathlib import Path
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
+from ..declared_replay import (
+    DECLARED_ATTACHMENT_GUEST_STATE_PATH,
+    DECLARED_ATTACHMENT_HOST_MANIFEST_NAME,
+    DECLARED_ATTACHMENT_HOST_META_DIR,
+    DECLARED_ATTACHMENT_REPLAY_BIN,
+    DECLARED_ATTACHMENT_REPLAY_SERVICE,
+    DECLARED_ROOT_GUEST_MOUNT_ROOT,
+    DECLARED_ROOT_VIRTIOFS_TAG,
+    declared_replay_python,
+    declared_replay_service_unit,
+)
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..store import find_attachments_for_vm, load_store
+from ..vm import attach_vm_share, vm_share_mappings
 from ..vm.share import ResolvedAttachment
-from .resolve import (
-    ATTACHMENT_ACCESS_RO,
-    ATTACHMENT_MODE_DECLARED,
-)
-from .shared_root import (
-    SHARED_ROOT_GUEST_MOUNT_ROOT,
-    _shared_root_host_dir,
-)
+from .resolve import ATTACHMENT_MODE_DECLARED
+from .shared_root import _shared_root_host_target
 
-DECLARED_ATTACHMENT_HOST_META_DIR = '.aivm'
-DECLARED_ATTACHMENT_HOST_MANIFEST_NAME = 'declared-attachments.json'
-DECLARED_ATTACHMENT_GUEST_STATE_DIR = '/var/lib/aivm'
-DECLARED_ATTACHMENT_GUEST_STATE_PATH = (
-    f'{DECLARED_ATTACHMENT_GUEST_STATE_DIR}/attachments.json'
-)
-DECLARED_ATTACHMENT_REPLAY_BIN = '/usr/local/libexec/aivm-attachment-replay'
-DECLARED_ATTACHMENT_REPLAY_SERVICE = 'aivm-attachment-replay.service'
+
+def _declared_root_host_dir(cfg: AgentVMConfig) -> Path:
+    return Path(cfg.paths.base_dir) / cfg.vm.name / 'declared-root'
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class DeclaredAttachmentRecord:
 
 
 def _declared_host_meta_dir(cfg: AgentVMConfig) -> Path:
-    return _shared_root_host_dir(cfg) / DECLARED_ATTACHMENT_HOST_META_DIR
+    return _declared_root_host_dir(cfg) / DECLARED_ATTACHMENT_HOST_META_DIR
 
 
 def _declared_host_manifest_path(cfg: AgentVMConfig) -> Path:
@@ -89,179 +90,10 @@ def _declared_attachment_manifest_text(
     payload = {
         'schema_version': 1,
         'vm_name': cfg.vm.name,
-        'shared_root_mount': SHARED_ROOT_GUEST_MOUNT_ROOT,
+        'shared_root_mount': DECLARED_ROOT_GUEST_MOUNT_ROOT,
         'records': [asdict(rec) for rec in records],
     }
     return json.dumps(payload, indent=2, sort_keys=True) + '\n'
-
-
-def _declared_replay_python() -> str:
-    return textwrap.dedent(
-        f"""\
-        #!/usr/bin/env python3
-        import json
-        import os
-        import shutil
-        import subprocess
-        import sys
-        import tempfile
-        from pathlib import Path, PurePosixPath
-
-        SHARED_ROOT_TAG = "aivm-shared-root"
-        SHARED_ROOT_MOUNT = "{SHARED_ROOT_GUEST_MOUNT_ROOT}"
-        HOST_MANIFEST = str(PurePosixPath(SHARED_ROOT_MOUNT) / "{DECLARED_ATTACHMENT_HOST_META_DIR}" / "{DECLARED_ATTACHMENT_HOST_MANIFEST_NAME}")
-        STATE_DIR = "{DECLARED_ATTACHMENT_GUEST_STATE_DIR}"
-        STATE_PATH = "{DECLARED_ATTACHMENT_GUEST_STATE_PATH}"
-
-        def run(cmd, check=True, capture=False):
-            return subprocess.run(
-                cmd,
-                check=check,
-                text=True,
-                stdout=subprocess.PIPE if capture else None,
-                stderr=subprocess.PIPE if capture else None,
-            )
-
-        def mount_shared_root():
-            os.makedirs(SHARED_ROOT_MOUNT, exist_ok=True)
-            probe = subprocess.run(["mountpoint", "-q", SHARED_ROOT_MOUNT])
-            if probe.returncode == 0:
-                return
-            run(["mount", "-t", "virtiofs", SHARED_ROOT_TAG, SHARED_ROOT_MOUNT])
-
-        def load_json(path):
-            try:
-                with open(path, "r", encoding="utf-8") as file:
-                    return json.load(file)
-            except FileNotFoundError:
-                return {{}}
-
-        def atomic_write_json(path, payload):
-            path = Path(path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=str(path.parent),
-                delete=False,
-            ) as file:
-                json.dump(payload, file, indent=2, sort_keys=True)
-                file.write("\\n")
-                tmp_name = file.name
-            os.chmod(tmp_name, 0o644)
-            os.replace(tmp_name, path)
-
-        def sync_manifest():
-            previous = load_json(STATE_PATH)
-            desired = previous
-            if os.path.exists(HOST_MANIFEST):
-                desired = load_json(HOST_MANIFEST)
-                atomic_write_json(STATE_PATH, desired)
-            return previous, desired
-
-        def mount_source_for(record):
-            token = str(record.get("shared_root_token") or "").strip()
-            if not token:
-                raise RuntimeError("declared attachment record missing shared_root_token")
-            return str(PurePosixPath(SHARED_ROOT_MOUNT) / token)
-
-        def desired_option(record):
-            return "ro" if str(record.get("access") or "").strip() == "ro" else "rw"
-
-        def unmount_guest_dst(guest_dst):
-            probe = subprocess.run(["mountpoint", "-q", guest_dst])
-            if probe.returncode != 0:
-                return
-            result = subprocess.run(
-                ["umount", guest_dst],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            if result.returncode == 0:
-                return
-            message = ((result.stderr or "") + "\\n" + (result.stdout or "")).lower()
-            if "not mounted" in message:
-                return
-            raise RuntimeError(
-                f"could not unmount {{guest_dst}}: {{(result.stderr or result.stdout).strip()}}"
-            )
-
-        def ensure_record(record):
-            guest_dst = str(record.get("guest_dst") or "").strip()
-            if not guest_dst:
-                raise RuntimeError("declared attachment record missing guest_dst")
-            source = mount_source_for(record)
-            if not os.path.isdir(source):
-                raise RuntimeError(f"declared attachment source missing in shared root: {{source}}")
-            current = subprocess.run(
-                ["findmnt", "-n", "-o", "SOURCE", "--target", guest_dst],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-            if current.returncode == 0 and (current.stdout or "").strip() not in {{source, "none"}}:
-                unmount_guest_dst(guest_dst)
-            os.makedirs(guest_dst, exist_ok=True)
-            if subprocess.run(["mountpoint", "-q", guest_dst]).returncode != 0:
-                run(["mount", "--bind", source, guest_dst])
-            run(["mount", "-o", f"remount,bind,{{desired_option(record)}}", guest_dst])
-
-        def prune_removed(previous, desired):
-            desired_ids = {{
-                str(rec.get("attachment_id") or rec.get("shared_root_token") or "")
-                for rec in desired.get("records", [])
-                if rec.get("enabled", True)
-            }}
-            for rec in previous.get("records", []):
-                rec_id = str(rec.get("attachment_id") or rec.get("shared_root_token") or "")
-                if rec_id and rec_id in desired_ids and rec.get("enabled", True):
-                    continue
-                guest_dst = str(rec.get("guest_dst") or "").strip()
-                if guest_dst:
-                    unmount_guest_dst(guest_dst)
-
-        def main():
-            mount_shared_root()
-            previous, desired = sync_manifest()
-            prune_removed(previous, desired)
-            failures = []
-            for record in desired.get("records", []):
-                if not record.get("enabled", True):
-                    guest_dst = str(record.get("guest_dst") or "").strip()
-                    if guest_dst:
-                        unmount_guest_dst(guest_dst)
-                    continue
-                try:
-                    ensure_record(record)
-                except Exception as ex:  # pragma: no cover - guest runtime path
-                    failures.append(str(ex))
-            if failures:
-                for item in failures:
-                    print(item, file=sys.stderr)
-                raise SystemExit(1)
-
-        if __name__ == "__main__":
-            main()
-        """
-    )
-
-
-def _declared_replay_service_unit() -> str:
-    return textwrap.dedent(
-        f"""\
-        [Unit]
-        Description=aivm declared attachment replay
-        After=local-fs.target
-
-        [Service]
-        Type=oneshot
-        ExecStart={DECLARED_ATTACHMENT_REPLAY_BIN}
-
-        [Install]
-        WantedBy=multi-user.target
-        """
-    )
 
 
 def _run_guest_root_script(
@@ -307,32 +139,132 @@ def _sync_declared_attachment_manifest_on_host(
     manifest_path = _declared_host_manifest_path(cfg)
     manifest_text = _declared_attachment_manifest_text(cfg, cfg_path)
     if dry_run:
-        print(f'DRYRUN: would write declared attachment manifest to {manifest_path}')
+        print(f'DRYRUN: would write persistent attachment manifest to {manifest_path}')
         return manifest_path
     mgr = CommandManager.current()
     meta_dir = _declared_host_meta_dir(cfg)
     manifest_q = shlex.quote(str(manifest_path))
     payload = shlex.quote(manifest_text)
     with mgr.step(
-        'Sync declared attachment manifest',
-        why='Update the host-side declared attachment manifest that the guest boot-time replay helper consumes.',
+        'Sync persistent attachment manifest',
+        why='Update the host-side persistent attachment manifest that the guest boot-time replay helper consumes.',
         approval_scope=f'declared-manifest:{cfg.vm.name}',
     ):
         mgr.submit(
             ['mkdir', '-p', str(meta_dir)],
             sudo=True,
             role='modify',
-            summary='Create declared attachment metadata directory',
+            summary='Create persistent attachment metadata directory',
             detail=f'target={meta_dir}',
         )
         mgr.submit(
             ['bash', '-c', f'printf %s {payload} > {manifest_q}'],
             sudo=True,
             role='modify',
-            summary='Write declared attachment manifest',
+            summary='Write persistent attachment manifest',
             detail=f'target={manifest_path}',
         )
     return manifest_path
+
+
+def _ensure_declared_root_parent_dir(
+    cfg: AgentVMConfig,
+    *,
+    dry_run: bool,
+) -> None:
+    target = _declared_root_host_dir(cfg)
+    if dry_run:
+        print(f'DRYRUN: would create declared-root parent directory {target}')
+        return
+    mgr = CommandManager.current()
+    with mgr.step(
+        'Prepare declared-root parent directory',
+        why='Create the host-side declared-root export directory used by the persistent attachment virtiofs device.',
+        approval_scope=f'declared-root-parent:{cfg.vm.name}',
+    ):
+        mgr.submit(
+            ['mkdir', '-p', str(target)],
+            sudo=True,
+            role='modify',
+            summary='Create declared-root parent directory',
+            detail=f'target={target}',
+        )
+
+
+def _ensure_declared_root_vm_mapping(
+    cfg: AgentVMConfig,
+    *,
+    dry_run: bool,
+    vm_running: bool | None = None,
+) -> None:
+    source = str(_declared_root_host_dir(cfg))
+    tag = DECLARED_ROOT_VIRTIOFS_TAG
+    mappings = vm_share_mappings(cfg, use_sudo=False)
+    if any(src == source and t == tag for src, t in mappings):
+        return
+    mappings = vm_share_mappings(cfg, use_sudo=True)
+    if any(src == source and t == tag for src, t in mappings):
+        return
+    attach_vm_share(
+        cfg,
+        source,
+        tag,
+        dry_run=dry_run,
+        vm_running=vm_running,
+    )
+
+
+def _ensure_declared_root_host_bind(
+    cfg: AgentVMConfig,
+    attachment: ResolvedAttachment,
+    *,
+    dry_run: bool,
+) -> Path:
+    # Reuse the shared-root target-token layout, but stage it under the
+    # dedicated declared-root export tree so the two backends never share the
+    # same virtiofs device or host export directory.
+    source = Path(attachment.source_dir).resolve()
+    target = _declared_root_host_dir(cfg) / Path(
+        _shared_root_host_target(cfg, attachment.tag)
+    ).name
+    if dry_run:
+        print(f'DRYRUN: would bind-mount {source} -> {target} for persistent mode')
+        return target
+    mgr = CommandManager.current()
+    with mgr.step(
+        'Prepare declared-root host bind target',
+        why='Ensure the declared-root staged bind exists without tearing down stable host-side state.',
+        approval_scope=f'declared-root-host-bind:{cfg.vm.name}:{attachment.tag}',
+    ):
+        mgr.submit(
+            ['mkdir', '-p', str(_declared_root_host_dir(cfg))],
+            sudo=True,
+            role='modify',
+            summary='Create declared-root parent directory',
+            detail=f'target={_declared_root_host_dir(cfg)}',
+        )
+        mgr.submit(
+            ['mkdir', '-p', str(target)],
+            sudo=True,
+            role='modify',
+            summary='Create declared-root bind target',
+            detail=f'target={target}',
+        )
+        script = (
+            'set -euo pipefail; '
+            f'src_stat="$(stat -Lc %d:%i {shlex.quote(str(source))} 2>/dev/null || true)"; '
+            f'dst_stat="$(stat -Lc %d:%i {shlex.quote(str(target))} 2>/dev/null || true)"; '
+            f'if mountpoint -q {shlex.quote(str(target))} && [ -n "$src_stat" ] && [ "$src_stat" = "$dst_stat" ]; then exit 0; fi; '
+            f'mount --bind {shlex.quote(str(source))} {shlex.quote(str(target))}'
+        )
+        mgr.submit(
+            ['bash', '-c', script],
+            sudo=True,
+            role='modify',
+            summary='Bind requested host folder into declared-root target',
+            detail=f'source={source} target={target}',
+        )
+    return target
 
 
 def _install_declared_attachment_replay(
@@ -341,8 +273,8 @@ def _install_declared_attachment_replay(
     *,
     dry_run: bool,
 ) -> None:
-    replay_py = _declared_replay_python()
-    service_text = _declared_replay_service_unit()
+    replay_py = declared_replay_python()
+    service_text = declared_replay_service_unit()
     script = textwrap.dedent(
         f"""\
         set -euo pipefail
@@ -367,8 +299,8 @@ def _install_declared_attachment_replay(
         cfg,
         ip,
         script=script,
-        summary='Install declared attachment replay helper',
-        detail='Install or refresh the guest systemd replay helper used for boot-time declared attachment restore.',
+        summary='Install persistent attachment replay helper',
+        detail='Install or refresh the guest systemd replay helper used for boot-time persistent attachment restore.',
         dry_run=dry_run,
     )
 
@@ -386,8 +318,27 @@ def _reconcile_declared_attachments_in_guest(
         cfg,
         ip,
         script=f'sudo -n {shlex.quote(DECLARED_ATTACHMENT_REPLAY_BIN)}',
-        summary='Replay declared attachment mounts inside guest',
-        detail='Verify and repair guest-visible declared attachment bind mounts from the persisted manifest.',
+        summary='Replay persistent attachment mounts inside guest',
+        detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
         dry_run=dry_run,
     )
 
+
+def _prepare_declared_attachment_host_and_vm(
+    cfg: AgentVMConfig,
+    attachment: ResolvedAttachment,
+    *,
+    dry_run: bool,
+    vm_running: bool | None,
+) -> None:
+    _ensure_declared_root_parent_dir(cfg, dry_run=dry_run)
+    _ensure_declared_root_host_bind(
+        cfg,
+        attachment,
+        dry_run=dry_run,
+    )
+    _ensure_declared_root_vm_mapping(
+        cfg,
+        dry_run=dry_run,
+        vm_running=vm_running,
+    )

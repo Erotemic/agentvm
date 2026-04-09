@@ -30,6 +30,7 @@ from .shared_root import (
     _ensure_shared_root_host_bind,
     _ensure_shared_root_vm_mapping,
 )
+from .declared import _prepare_declared_attachment_host_and_vm
 
 log = logger
 
@@ -252,10 +253,20 @@ def _ensure_attachment_available_in_guest(
             read_only=(attachment.access == ATTACHMENT_ACCESS_RO),
             dry_run=dry_run,
         )
-    elif attachment.mode in {
-        ATTACHMENT_MODE_SHARED_ROOT,
-        ATTACHMENT_MODE_DECLARED,
-    }:
+    elif attachment.mode == ATTACHMENT_MODE_DECLARED:
+        with mgr.intent(
+            'Prepare declared-root mapping',
+            why='Ensure the declared-root host export and VM virtiofs device are ready before replaying guest-visible declared mounts.',
+            role='modify',
+        ):
+            if ensure_shared_root_host_side:
+                _prepare_declared_attachment_host_and_vm(
+                    cfg,
+                    attachment,
+                    dry_run=dry_run,
+                    vm_running=True,
+                )
+    elif attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
         with mgr.intent(
             'Attach and reconcile shared-root mapping',
             why='Ensure the requested host folder is exposed to the VM and bound to the requested guest destination.',

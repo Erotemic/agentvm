@@ -32,6 +32,8 @@ from .share import (
     vm_share_mappings,
 )
 
+DECLARED_ROOT_VIRTIOFS_TAG = 'aivm-declared-root'
+
 
 def _normalize_tcp_ports(values) -> tuple[int, ...]:
     """
@@ -98,6 +100,10 @@ def _shared_root_host_dir(cfg: AgentVMConfig) -> Path:
     Note: This is a simple path computation based on config, not a libvirt query.
     """
     return Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root'
+
+
+def _declared_root_host_dir(cfg: AgentVMConfig) -> Path:
+    return Path(cfg.paths.base_dir) / cfg.vm.name / 'declared-root'
 
 
 @dataclass(frozen=True)
@@ -234,6 +240,8 @@ def expected_mapping_for_attachment(
         return attachment.source_dir, attachment.tag
     if attachment.mode == AttachmentMode.SHARED_ROOT:
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
+    if attachment.mode == AttachmentMode.PERSISTENT:
+        return str(_declared_root_host_dir(cfg)), DECLARED_ROOT_VIRTIOFS_TAG
     return None
 
 
@@ -258,6 +266,12 @@ def attachment_has_mapping(
     if att.mode == AttachmentMode.SHARED_ROOT:
         expected_src = str(_shared_root_host_dir(cfg))
         expected_tag = SHARED_ROOT_VIRTIOFS_TAG
+        return any(
+            src == expected_src and tag == expected_tag for src, tag in mappings
+        )
+    if att.mode == AttachmentMode.PERSISTENT:
+        expected_src = str(_declared_root_host_dir(cfg))
+        expected_tag = DECLARED_ROOT_VIRTIOFS_TAG
         return any(
             src == expected_src and tag == expected_tag for src, tag in mappings
         )

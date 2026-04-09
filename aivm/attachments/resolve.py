@@ -16,7 +16,8 @@ from ..vm.share import (
 # Attachment mode constants (string aliases for mode values)
 ATTACHMENT_MODE_SHARED = AttachmentMode.SHARED.value
 ATTACHMENT_MODE_SHARED_ROOT = AttachmentMode.SHARED_ROOT.value
-ATTACHMENT_MODE_DECLARED = AttachmentMode.DECLARED.value
+ATTACHMENT_MODE_PERSISTENT = AttachmentMode.PERSISTENT.value
+ATTACHMENT_MODE_DECLARED = ATTACHMENT_MODE_PERSISTENT
 ATTACHMENT_MODE_GIT = AttachmentMode.GIT.value
 
 # Attachment access constants (string aliases for access values)
@@ -27,7 +28,7 @@ ATTACHMENT_ACCESS_RO = AttachmentAccess.RO.value
 ATTACHMENT_MODES = {
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
-    ATTACHMENT_MODE_DECLARED,
+    ATTACHMENT_MODE_PERSISTENT,
     ATTACHMENT_MODE_GIT,
 }
 ATTACHMENT_ACCESS_MODES = {
@@ -112,13 +113,12 @@ def _normalize_attachment_mode(mode: str) -> AttachmentMode:
         'sharedroot': ATTACHMENT_MODE_SHARED_ROOT,
         'shared_root': ATTACHMENT_MODE_SHARED_ROOT,
         'root': ATTACHMENT_MODE_SHARED_ROOT,
-        'declared': ATTACHMENT_MODE_DECLARED,
-        'persistent': ATTACHMENT_MODE_DECLARED,
-        'persistent-attachments': ATTACHMENT_MODE_DECLARED,
-        'declared-attachments': ATTACHMENT_MODE_DECLARED,
+        'declared': ATTACHMENT_MODE_PERSISTENT,
+        'persistent': ATTACHMENT_MODE_PERSISTENT,
+        'declared-attachments': ATTACHMENT_MODE_PERSISTENT,
         ATTACHMENT_MODE_SHARED: ATTACHMENT_MODE_SHARED,
         ATTACHMENT_MODE_SHARED_ROOT: ATTACHMENT_MODE_SHARED_ROOT,
-        ATTACHMENT_MODE_DECLARED: ATTACHMENT_MODE_DECLARED,
+        ATTACHMENT_MODE_PERSISTENT: ATTACHMENT_MODE_PERSISTENT,
     }
     resolved = aliases.get(raw, raw)
     if resolved not in ATTACHMENT_MODES:

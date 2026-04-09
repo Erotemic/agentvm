@@ -62,6 +62,8 @@ from .guest import (
     _ensure_git_clone_attachment,
 )
 from .declared import (
+    DECLARED_ROOT_VIRTIOFS_TAG,
+    _prepare_declared_attachment_host_and_vm,
     _reconcile_declared_attachments_in_guest,
 )
 from .resolve import (
@@ -312,7 +314,7 @@ def _restore_saved_vm_attachments(
             )
         except Exception as ex:
             log.warning(
-                'Could not replay declared attachments for VM {} during restore: {}',
+                'Could not replay persistent attachments for VM {} during restore: {}',
                 cfg.vm.name,
                 ex,
             )
@@ -490,6 +492,10 @@ def _virtiofs_mapping_for_attachment(
         ATTACHMENT_MODE_SHARED_ROOT,
         ATTACHMENT_MODE_DECLARED,
     }:
+        if attachment.mode == ATTACHMENT_MODE_DECLARED:
+            from .declared import _declared_root_host_dir
+
+            return str(_declared_root_host_dir(cfg)), DECLARED_ROOT_VIRTIOFS_TAG
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
     return None
 
@@ -608,7 +614,12 @@ def _reconcile_attached_vm(
                 ATTACHMENT_MODE_DECLARED,
             }:
                 if not policy.dry_run:
-                    _ensure_shared_root_parent_dir(cfg, dry_run=False)
+                    if attachment.mode == ATTACHMENT_MODE_DECLARED:
+                        from .declared import _ensure_declared_root_parent_dir
+
+                        _ensure_declared_root_parent_dir(cfg, dry_run=False)
+                    else:
+                        _ensure_shared_root_parent_dir(cfg, dry_run=False)
             try:
                 create_or_start_vm(
                     cfg,
@@ -699,18 +710,26 @@ def _reconcile_attached_vm(
                             why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
                             role='modify',
                         ):
-                            _ensure_shared_root_host_bind(
-                                cfg,
-                                attachment,
-                                yes=bool(policy.yes),
-                                dry_run=False,
-                            )
-                            _ensure_shared_root_vm_mapping(
-                                cfg,
-                                yes=bool(policy.yes),
-                                dry_run=False,
-                                vm_running=True,
-                            )
+                            if attachment.mode == ATTACHMENT_MODE_DECLARED:
+                                _prepare_declared_attachment_host_and_vm(
+                                    cfg,
+                                    attachment,
+                                    dry_run=False,
+                                    vm_running=True,
+                                )
+                            else:
+                                _ensure_shared_root_host_bind(
+                                    cfg,
+                                    attachment,
+                                    yes=bool(policy.yes),
+                                    dry_run=False,
+                                )
+                                _ensure_shared_root_vm_mapping(
+                                    cfg,
+                                    yes=bool(policy.yes),
+                                    dry_run=False,
+                                    vm_running=True,
+                                )
                         shared_root_host_side_ready = True
                     else:
                         attach_vm_share(

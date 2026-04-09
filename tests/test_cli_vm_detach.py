@@ -185,14 +185,14 @@ def test_vm_detach_shared_root_unbinds_guest_and_host(
     assert len(host_detaches) == 1
 
 
-def test_vm_detach_declared_updates_manifest_without_host_unbind(
+def test_vm_detach_persistent_updates_manifest_without_host_unbind(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from aivm.cli.vm import VMDetachCLI
     from aivm.store import AttachmentEntry, Store, save_store
 
     cfg = AgentVMConfig()
-    cfg.vm.name = 'vm-declared-detach'
+    cfg.vm.name = 'vm-persistent-detach'
     cfg_path = tmp_path / 'config.toml'
     host_src = tmp_path / 'proj'
     host_src.mkdir()
@@ -201,7 +201,7 @@ def test_vm_detach_declared_updates_manifest_without_host_unbind(
         AttachmentEntry(
             host_path=str(host_src.resolve()),
             vm_name=cfg.vm.name,
-            mode='declared',
+            mode='persistent',
             access='ro',
             guest_dst='/workspace/proj',
             tag='hostcode-proj',
@@ -216,7 +216,7 @@ def test_vm_detach_declared_updates_manifest_without_host_unbind(
     monkeypatch.setattr(
         'aivm.cli.vm.probe_vm_state',
         lambda *a, **k: (
-            ProbeOutcome(True, 'vm-declared-detach state=running'),
+            ProbeOutcome(True, 'vm-persistent-detach state=running'),
             True,
         ),
     )
@@ -227,13 +227,13 @@ def test_vm_detach_declared_updates_manifest_without_host_unbind(
     monkeypatch.setattr(
         'aivm.cli.vm._detach_shared_root_host_bind',
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError('declared detach should not tear down host bind')
+            AssertionError('persistent detach should not tear down host bind')
         ),
     )
     monkeypatch.setattr(
         'aivm.cli.vm._detach_shared_root_guest_bind',
         lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError('declared detach should use replay reconcile instead')
+            AssertionError('persistent detach should use replay reconcile instead')
         ),
     )
     syncs: list[tuple[tuple, dict]] = []

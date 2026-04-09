@@ -528,6 +528,9 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     assert '#cloud-config' in user_data_script
     assert 'datasource_list:' not in user_data_script
     assert '\ndatasource:\n' not in user_data_script
+    assert '/usr/local/libexec/aivm-attachment-replay' in user_data_script
+    assert 'aivm-attachment-replay.service' in user_data_script
+    assert 'systemctl enable aivm-attachment-replay.service' in user_data_script
 
 
 def test_fetch_image_uses_atomic_temp_then_move(

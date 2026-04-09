@@ -49,9 +49,10 @@ Attachment modes:
 
 * ``shared-root`` (default for new attachments): one persistent VM virtiofs
   mapping and per-folder host/guest bind mounts.
-* ``declared``: shared-root plus a persisted attachment manifest and guest
-  systemd replay helper. This keeps host-side staged binds stable and restores
-  guest-visible bind mounts at boot or during reconcile.
+* ``persistent``: a dedicated ``declared-root`` virtiofs export plus a persisted
+  attachment manifest and guest systemd replay helper. This keeps host-side
+  staged binds stable and restores guest-visible bind mounts at boot or during
+  reconcile.
 * ``shared``: direct per-folder virtiofs mapping.
 * ``git``: guest-local Git clone synced by host/guest remotes.
 
@@ -71,7 +72,7 @@ attachment sets can exhaust VM device-slot capacity (for example PCI/PCIe
 slots), causing attach/restore failures such as
 ``No more available PCI slots``.
 
-``shared-root`` and ``declared`` reduce this pressure by using a single
+``shared-root`` and ``persistent`` reduce this pressure by using a single
 persistent virtiofs mapping per VM.
 
 If this happens, prefer ``--mode git`` for some folders, detach unused shared
@@ -83,8 +84,11 @@ Attachment mode rules:
 * Existing folder reuses its saved mode when ``--mode`` is omitted.
 * Changing mode for an existing folder requires explicit detach + reattach.
   Passing a different ``--mode`` directly now returns an error.
-* ``declared`` is opt-in for now and is the preferred migration target for
+* ``persistent`` is opt-in for now and is the preferred migration target for
   users who want attachment replay instead of repeated host-side mount churn.
+* The persistent replay helper is installed as part of VM bootstrap, so stopped-VM
+  attaches can still replay on the next boot once the declared-root mapping and
+  manifest are in place.
 
 ``aivm code --mode git .`` specifics:
 
@@ -104,7 +108,7 @@ Attachment access modes:
 
 * ``rw`` (default): read-write access to the shared folder.
 * ``ro``: read-only access; supported for ``shared``, ``shared-root``, and
-  ``declared`` modes.
+  ``persistent`` modes.
 
 Specify access with ``--access``:
 
