@@ -62,25 +62,26 @@ What this script verifies
 4. Guest bind attach/detach succeeds repeatedly.
 5. Relevant virtiofsd / qemu processes serving the shared-root export can be
    identified from the host side.
-6. Both process-global FD counts and run-scoped FD counts under this
+6. Both process-global FD counts and run-scoped lsof-based counts under this
    runid's subtree can be sampled after each iteration.
 7. Baseline-relative deltas can be reported for the current policy, which is
    more informative than comparing absolute totals from long-lived worker
    processes.
+8. The VM can be restarted into a fresh measurement environment before a loop
+   or between policy phases in a compare run.
 
 Preconditions
 -------------
-This script does NOT create the base virtiofs shared-root export. It assumes:
-
-* the VM is already running
-* the guest already has a virtiofs mount like /mnt/aivm-shared
-* the host already has the corresponding export directory like
-  /var/lib/libvirt/aivm/<vm>/shared-root
+By default this script manages its own single shared-root export for the target VM.
+It can also reuse an existing virtiofs shared root when requested. Managed mode
+assumes the VM already exists and is reachable over SSH, but it no longer
+requires an external tool to pre-create the shared-root export.
 
 Typical workflow
 ----------------
 1. Start from a clean VM.
-2. Re-establish the base shared-root export used by your environment.
+2. In the default managed mode, let the script prepare and attach its own
+   shared-root virtiofs export.
 3. Run one stable-host loop and inspect whether run-scoped post-detach
    counts remain near the stable-host baseline.
 4. Run a separate churn-host loop from a fresh VM or otherwise equivalent
@@ -93,8 +94,7 @@ Show computed paths and preflight checks:
     python dev/devcheck/aivm_fd_growth_mwe.py info \
       --ssh-target aivm-2404 \
       --vm-name aivm-2404 \
-      --guest-shared-base /mnt/aivm-shared \
-      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+      --guest-shared-base /mnt/aivm-fd-mwe-shared \
       --runid fd-clean-1 \
       --num-slots 2
 
@@ -103,8 +103,7 @@ Stable host-side binds, churn only guest exposure binds:
     python dev/devcheck/aivm_fd_growth_mwe.py loop \
       --ssh-target aivm-2404 \
       --vm-name aivm-2404 \
-      --guest-shared-base /mnt/aivm-shared \
-      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+      --guest-shared-base /mnt/aivm-fd-mwe-shared \
       --runid fd-stable-1 \
       --num-slots 4 \
       --iterations 20 \
@@ -115,8 +114,7 @@ Host and guest both churn every iteration:
     python dev/devcheck/aivm_fd_growth_mwe.py loop \
       --ssh-target aivm-2404 \
       --vm-name aivm-2404 \
-      --guest-shared-base /mnt/aivm-shared \
-      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+      --guest-shared-base /mnt/aivm-fd-mwe-shared \
       --runid fd-churn-1 \
       --num-slots 4 \
       --iterations 20 \
@@ -127,8 +125,7 @@ Cleanup a runid:
     python dev/devcheck/aivm_fd_growth_mwe.py cleanup \
       --ssh-target aivm-2404 \
       --vm-name aivm-2404 \
-      --guest-shared-base /mnt/aivm-shared \
-      --host-export-dir /var/lib/libvirt/aivm/aivm-2404/shared-root \
+      --guest-shared-base /mnt/aivm-fd-mwe-shared \
       --runid fd-stable-1 \
       --num-slots 4
 
@@ -194,11 +191,39 @@ import json
 import re
 import shlex
 import subprocess
+import tempfile
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
+
+
+DEFAULT_MANAGED_SHARED_ROOT_BASE = Path('/var/lib/libvirt/aivm-fd-mwe')
+DEFAULT_MANAGED_VIRTIOFS_TAG = 'aivm-fd-mwe-shared-root'
+DEFAULT_REUSE_VIRTIOFS_TAG = 'aivm-shared-root'
+DEFAULT_GUEST_SHARED_BASE = '/mnt/aivm-fd-mwe-shared'
+
+
+def sanitize_tag_component(text: str) -> str:
+    safe = re.sub(r'[^A-Za-z0-9_.-]+', '-', str(text or '').strip()).strip('-')
+    return safe or 'vm'
+
+
+def default_managed_host_export_dir(vm_name: str) -> Path:
+    return DEFAULT_MANAGED_SHARED_ROOT_BASE / sanitize_tag_component(vm_name) / 'shared-root'
+
+
+def default_virtiofs_tag(args: argparse.Namespace) -> str:
+    if getattr(args, 'virtiofs_tag', None):
+        return str(args.virtiofs_tag)
+    policy = getattr(args, 'shared_root_policy', 'managed')
+    return DEFAULT_MANAGED_VIRTIOFS_TAG if policy == 'managed' else DEFAULT_REUSE_VIRTIOFS_TAG
+
+
+def host_path_display(path: str | Path) -> str:
+    return str(Path(path))
 
 
 @dataclass
@@ -310,6 +335,199 @@ def host_path_exists(args: argparse.Namespace, path: str) -> bool:
 def guest_path_exists(args: argparse.Namespace, path: str, use_sudo: bool = False) -> bool:
     res = guest_run(args, f"test -e {q(path)}", use_sudo=use_sudo)
     return res.ok
+
+
+def vm_domstate(args: argparse.Namespace) -> str:
+    res = host_run(args, ["virsh", "domstate", args.vm_name])
+    return (res.stdout or '').strip().lower()
+
+
+def vm_is_running(args: argparse.Namespace) -> bool:
+    state = vm_domstate(args)
+    return 'running' in state or 'idle' in state
+
+
+def vm_dumpxml(args: argparse.Namespace) -> str:
+    res = host_run(args, ["virsh", "dumpxml", args.vm_name], check=True)
+    return res.stdout or ''
+
+
+def vm_share_mappings(args: argparse.Namespace) -> list[tuple[str, str]]:
+    xml_text = vm_dumpxml(args)
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:
+        return []
+    mappings: list[tuple[str, str]] = []
+    for fs in root.findall('.//devices/filesystem'):
+        driver = fs.find('driver')
+        if fs.attrib.get('type') != 'mount':
+            continue
+        if driver is None or driver.attrib.get('type') != 'virtiofs':
+            continue
+        src = fs.find('source')
+        tgt = fs.find('target')
+        src_dir = src.attrib.get('dir', '') if src is not None else ''
+        tgt_dir = tgt.attrib.get('dir', '') if tgt is not None else ''
+        if src_dir or tgt_dir:
+            mappings.append((src_dir, tgt_dir))
+    return mappings
+
+
+def ensure_vm_share_mapping(args: argparse.Namespace, state: dict[str, Any], modify: bool) -> None:
+    policy = state['env']['shared_root_policy']
+    source_dir = state['env']['host_export_dir']
+    tag = state['env']['virtiofs_tag']
+    current = vm_share_mappings(args)
+    exact = any(src == source_dir and tgt == tag for src, tgt in current)
+    if exact:
+        return
+    conflicting_tag = [(src, tgt) for src, tgt in current if tgt == tag and src != source_dir]
+    conflicting_src = [(src, tgt) for src, tgt in current if src == source_dir and tgt != tag]
+    if conflicting_tag or conflicting_src:
+        raise RuntimeError(
+            'virtiofs mapping conflict for shared-root MWE: '
+            f'expected source={source_dir} tag={tag}, current={current}'
+        )
+    if policy != 'managed':
+        raise RuntimeError(
+            'shared-root policy is reuse, but the requested virtiofs mapping is not present: '
+            f'source={source_dir} tag={tag}'
+        )
+    if not modify:
+        return
+    host_run(args, ["mkdir", "-p", source_dir], check=True)
+    xml = f"""<filesystem type='mount' accessmode='passthrough'>
+  <driver type='virtiofs'/>
+  <source dir='{source_dir}'/>
+  <target dir='{tag}'/>
+</filesystem>
+"""
+    with tempfile.NamedTemporaryFile('w', delete=False, suffix='.xml') as f:
+        f.write(xml)
+        tmp = f.name
+    try:
+        attach_cmd = ["virsh", "attach-device", args.vm_name, tmp]
+        if vm_is_running(args):
+            attach_cmd += ["--live", "--config"]
+        else:
+            attach_cmd += ["--config"]
+        res = host_run(args, attach_cmd)
+        if res.ok:
+            return
+        msg = ((res.stderr or '') + '\n' + (res.stdout or '')).lower()
+        if 'target already exists' in msg:
+            current = vm_share_mappings(args)
+            if any(src == source_dir and tgt == tag for src, tgt in current):
+                return
+        raise RuntimeError(
+            f'failed to attach virtiofs mapping source={source_dir} tag={tag}:\n'
+            f'stdout:\n{res.stdout}\n'
+            f'stderr:\n{res.stderr}'
+        )
+    finally:
+        try:
+            Path(tmp).unlink()
+        except OSError:
+            pass
+
+
+def ensure_guest_shared_root_mount(args: argparse.Namespace, state: dict[str, Any], modify: bool) -> None:
+    tag = state['env']['virtiofs_tag']
+    guest_base = state['env']['guest_shared_base']
+    if not modify:
+        return
+    remote = (
+        'set -euo pipefail; '
+        f'sudo -n mkdir -p {q(guest_base)}; '
+        f'if mountpoint -q {q(guest_base)}; then '
+        f'opts="$(findmnt -n -o OPTIONS --target {q(guest_base)} 2>/dev/null || true)"; '
+        f'case ",$opts," in *,rw,*) : ;; *) sudo -n mount -o remount,rw {q(guest_base)} ;; esac; '
+        'else '
+        f'sudo -n mount -t virtiofs {q(tag)} {q(guest_base)}; '
+        'fi'
+    )
+    guest_run(args, remote, use_sudo=False, check=True)
+
+
+def ensure_shared_root_environment(args: argparse.Namespace, state: dict[str, Any], modify: bool) -> None:
+    policy = state['env']['shared_root_policy']
+    host_export_dir = state['env']['host_export_dir']
+    if policy == 'managed' and modify:
+        host_run(args, ["mkdir", "-p", host_export_dir], check=True)
+    ensure_vm_share_mapping(args, state, modify=modify)
+    ensure_guest_shared_root_mount(args, state, modify=modify)
+
+
+def wait_for_vm_state(args: argparse.Namespace, want_running: bool, timeout_s: float) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        running = vm_is_running(args)
+        if running == want_running:
+            return
+        time.sleep(2.0)
+    state = vm_domstate(args)
+    want = 'running' if want_running else 'stopped'
+    raise RuntimeError(f'timed out waiting for VM {args.vm_name} to become {want}; current state={state!r}')
+
+
+def wait_for_ssh_ready(args: argparse.Namespace, timeout_s: float) -> None:
+    deadline = time.time() + timeout_s
+    probe = [
+        'ssh',
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'BatchMode=yes',
+        '-o', f'ConnectTimeout={int(max(1, min(timeout_s, 5)))}',
+    ]
+    if args.ssh_identity:
+        probe += ['-i', args.ssh_identity]
+    if args.ssh_port:
+        probe += ['-p', str(args.ssh_port)]
+    probe += [args.ssh_target, 'bash -lc true']
+    last_res: CmdResult | None = None
+    while time.time() < deadline:
+        last_res = run(probe, check=False)
+        if last_res.ok:
+            return
+        time.sleep(2.0)
+    detail = '' if last_res is None else f'\nstdout:\n{last_res.stdout}\nstderr:\n{last_res.stderr}'
+    raise RuntimeError(f'timed out waiting for SSH readiness on {args.ssh_target!r}{detail}')
+
+
+def shutdown_vm(args: argparse.Namespace) -> None:
+    if not vm_is_running(args):
+        return
+    banner('VM SHUTDOWN')
+    show('virsh shutdown', host_run(args, ['virsh', 'shutdown', args.vm_name]))
+    try:
+        wait_for_vm_state(args, want_running=False, timeout_s=args.vm_shutdown_timeout)
+        return
+    except RuntimeError:
+        if not args.force_destroy_on_shutdown_timeout:
+            raise
+    show('virsh destroy (shutdown timeout fallback)', host_run(args, ['virsh', 'destroy', args.vm_name]))
+    wait_for_vm_state(args, want_running=False, timeout_s=max(10.0, args.vm_shutdown_timeout / 2.0))
+
+
+def start_vm(args: argparse.Namespace) -> None:
+    if vm_is_running(args):
+        return
+    banner('VM START')
+    show('virsh start', host_run(args, ['virsh', 'start', args.vm_name]))
+    wait_for_vm_state(args, want_running=True, timeout_s=args.vm_boot_timeout)
+
+
+def restart_vm_into_measurement_env(args: argparse.Namespace, state: dict[str, Any]) -> None:
+    banner('RESTART INTO MEASUREMENT ENVIRONMENT')
+    policy = state['env']['shared_root_policy']
+    if policy == 'managed':
+        host_run(args, ['mkdir', '-p', state['env']['host_export_dir']], check=True)
+    shutdown_vm(args)
+    ensure_vm_share_mapping(args, state, modify=True)
+    start_vm(args)
+    wait_for_ssh_ready(args, timeout_s=args.vm_ssh_ready_timeout)
+    ensure_guest_shared_root_mount(args, state, modify=True)
 
 
 def parse_fuser_pids(stdout: str) -> dict[str, str]:
@@ -685,17 +903,35 @@ def host_read_probe(args: argparse.Namespace, path: str) -> CmdResult:
 def derive_state(args: argparse.Namespace) -> dict[str, Any]:
     if not args.vm_name:
         raise RuntimeError("--vm-name is required")
-    if not args.guest_shared_base:
-        raise RuntimeError("--guest-shared-base is required")
-    if not args.host_export_dir:
-        raise RuntimeError("--host-export-dir is required")
+
+    policy = getattr(args, 'shared_root_policy', 'managed')
+    guest_shared_base = str(getattr(args, 'guest_shared_base', None) or DEFAULT_GUEST_SHARED_BASE)
+    virtiofs_tag = default_virtiofs_tag(args)
+    if getattr(args, 'host_export_dir', None):
+        host_export_dir = str(Path(args.host_export_dir).resolve())
+    elif policy == 'managed':
+        host_export_dir = str(default_managed_host_export_dir(args.vm_name))
+    else:
+        matches = [src for src, tgt in vm_share_mappings(args) if tgt == virtiofs_tag]
+        if len(matches) == 1:
+            host_export_dir = str(Path(matches[0]).resolve())
+        elif not matches:
+            raise RuntimeError(
+                '--host-export-dir is required in reuse mode when no matching virtiofs mapping '
+                f'is present for tag={virtiofs_tag!r}'
+            )
+        else:
+            raise RuntimeError(
+                'multiple virtiofs mappings matched the requested reuse tag '
+                f'{virtiofs_tag!r}: {matches}'
+            )
 
     runid = args.runid or uuid.uuid4().hex[:12]
     host_scratch_root = Path("/tmp/aivm-fd-mwe") / runid
     host_src_root = host_scratch_root / "src"
     host_guest_echo_root = host_scratch_root / "guest-echo"
-    host_stage_root = Path(args.host_export_dir) / "__fd_mwe__" / runid
-    guest_stage_root = Path(args.guest_shared_base) / "__fd_mwe__" / runid
+    host_stage_root = Path(host_export_dir) / "__fd_mwe__" / runid
+    guest_stage_root = Path(guest_shared_base) / "__fd_mwe__" / runid
     guest_dst_root = Path("/tmp/aivm-fd-mwe") / runid / "dst"
 
     slots: list[dict[str, str]] = []
@@ -724,8 +960,10 @@ def derive_state(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "env": {
             "vm_name": args.vm_name,
-            "guest_shared_base": args.guest_shared_base,
-            "host_export_dir": args.host_export_dir,
+            "guest_shared_base": guest_shared_base,
+            "host_export_dir": host_export_dir,
+            "shared_root_policy": policy,
+            "virtiofs_tag": virtiofs_tag,
             "runid": runid,
             "num_slots": args.num_slots,
             "host_policy": getattr(args, "host_policy", None),
@@ -749,13 +987,15 @@ def print_state(state: dict[str, Any]) -> None:
 
 def preflight(args: argparse.Namespace, state: dict[str, Any]) -> None:
     banner("PREFLIGHT")
+    modify_shared_root = args.cmd in {"setup", "loop"}
+    ensure_shared_root_environment(args, state, modify=modify_shared_root)
     show_if_any(
         "guest shared base mount",
-        guest_run(args, f"findmnt -T {q(state['paths']['guest_stage_root'])} || findmnt -T {q(args.guest_shared_base)}"),
+        guest_run(args, f"findmnt -T {q(state['paths']['guest_stage_root'])} || findmnt -T {q(state['env']['guest_shared_base'])}"),
     )
     show_if_any(
         "host export dir exists",
-        host_run(args, ["bash", "-lc", f"test -d {q(args.host_export_dir)} && echo ok || (echo missing; exit 1)"]),
+        host_run(args, ["bash", "-lc", f"test -d {q(state['env']['host_export_dir'])} && echo ok || (echo missing; exit 1)"]),
     )
     show_if_any(
         "host lsof available",
@@ -900,7 +1140,7 @@ def summarize_iteration(result: dict[str, Any]) -> None:
     print(json.dumps(result, indent=2))
 
 
-def loop(args: argparse.Namespace, state: dict[str, Any]) -> int:
+def run_policy_measurement(args: argparse.Namespace, state: dict[str, Any]) -> dict[str, Any]:
     prepare_host_sources(args, state)
 
     baseline_label = "pre-loop-no-stages"
@@ -952,6 +1192,40 @@ def loop(args: argparse.Namespace, state: dict[str, Any]) -> int:
         "results": results,
     }
     print(json.dumps(summary, indent=2))
+    return summary
+
+
+def loop(args: argparse.Namespace, state: dict[str, Any]) -> int:
+    run_policy_measurement(args, state)
+    return 0
+
+
+def compare_policies(args: argparse.Namespace) -> int:
+    base_runid = args.runid or f"cmp-{uuid.uuid4().hex[:8]}"
+    policies = ['stable-host', 'churn-host']
+    phase_summaries: dict[str, Any] = {}
+    for policy in policies:
+        phase_args = argparse.Namespace(**vars(args))
+        phase_args.cmd = 'loop'
+        phase_args.host_policy = policy
+        suffix = 'stable' if policy == 'stable-host' else 'churn'
+        phase_args.runid = f"{base_runid}-{suffix}"
+        phase_state = derive_state(phase_args)
+        banner(f"PHASE {policy}")
+        print_state(phase_state)
+        if args.restart_vm_between_policies:
+            restart_vm_into_measurement_env(phase_args, phase_state)
+        preflight(phase_args, phase_state)
+        phase_summaries[policy] = run_policy_measurement(phase_args, phase_state)
+
+    comparison = {
+        'base_runid': base_runid,
+        'policies': policies,
+        'restart_vm_between_policies': args.restart_vm_between_policies,
+        'summaries': phase_summaries,
+    }
+    banner('COMPARE SUMMARY')
+    print(json.dumps(comparison, indent=2))
     return 0
 
 
@@ -980,14 +1254,24 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--ssh-port", type=int, default=None)
         sp.add_argument("--ssh-identity", default=None)
         sp.add_argument("--vm-name", required=True)
-        sp.add_argument("--guest-shared-base", required=True)
-        sp.add_argument("--host-export-dir", required=True)
+        sp.add_argument("--guest-shared-base", default=DEFAULT_GUEST_SHARED_BASE)
+        sp.add_argument("--host-export-dir", default=None)
+        sp.add_argument("--shared-root-policy", choices=["managed", "reuse"], default="managed")
+        sp.add_argument("--virtiofs-tag", default=None)
+        sp.add_argument("--fail-dirty-preflight", dest="fail_dirty_preflight", action="store_true", default=True)
+        sp.add_argument("--allow-dirty-preflight", dest="fail_dirty_preflight", action="store_false")
         sp.add_argument("--runid", default=None)
         sp.add_argument("--num-slots", type=int, default=4)
         sp.add_argument("--host-sudo", action="store_true", default=True)
         sp.add_argument("--no-host-sudo", dest="host_sudo", action="store_false")
         sp.add_argument("--lazy-host", action="store_true")
         sp.add_argument("--lazy-guest", action="store_true")
+        sp.add_argument("--restart-vm-before-loop", action="store_true")
+        sp.add_argument("--vm-shutdown-timeout", type=float, default=90.0)
+        sp.add_argument("--vm-boot-timeout", type=float, default=120.0)
+        sp.add_argument("--vm-ssh-ready-timeout", type=float, default=120.0)
+        sp.add_argument("--force-destroy-on-shutdown-timeout", dest="force_destroy_on_shutdown_timeout", action="store_true", default=True)
+        sp.add_argument("--no-force-destroy-on-shutdown-timeout", dest="force_destroy_on_shutdown_timeout", action="store_false")
 
     info_cmd = sub.add_parser("info")
     add_common(info_cmd)
@@ -1000,6 +1284,13 @@ def build_parser() -> argparse.ArgumentParser:
     loop_cmd.add_argument("--iterations", type=int, default=10)
     loop_cmd.add_argument("--iteration-sleep", type=float, default=0.0)
     loop_cmd.add_argument("--host-policy", choices=["stable-host", "churn-host"], default="stable-host")
+
+    compare_cmd = sub.add_parser("compare")
+    add_common(compare_cmd)
+    compare_cmd.add_argument("--iterations", type=int, default=10)
+    compare_cmd.add_argument("--iteration-sleep", type=float, default=0.0)
+    compare_cmd.add_argument("--restart-vm-between-policies", action="store_true", default=True)
+    compare_cmd.add_argument("--no-restart-vm-between-policies", dest="restart_vm_between_policies", action="store_false")
 
     cleanup_cmd = sub.add_parser("cleanup")
     add_common(cleanup_cmd)
@@ -1024,8 +1315,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd == "loop":
         print_state(state)
+        if args.restart_vm_before_loop:
+            restart_vm_into_measurement_env(args, state)
         preflight(args, state)
         return loop(args, state)
+
+    if args.cmd == "compare":
+        return compare_policies(args)
 
     if args.cmd == "cleanup":
         print_state(state)
