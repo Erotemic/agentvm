@@ -1,4 +1,4 @@
-"""Shared declared-attachment replay constants and templates.
+"""Shared persistent-attachment replay constants and templates.
 
 This module is intentionally dependency-light so VM bootstrap code can import
 it without pulling in the higher-level attachments package.
@@ -9,19 +9,18 @@ from __future__ import annotations
 import textwrap
 from pathlib import PurePosixPath
 
-DECLARED_ATTACHMENT_HOST_META_DIR = '.aivm'
-DECLARED_ATTACHMENT_HOST_MANIFEST_NAME = 'declared-attachments.json'
-DECLARED_ATTACHMENT_GUEST_STATE_DIR = '/var/lib/aivm'
-DECLARED_ATTACHMENT_GUEST_STATE_PATH = (
-    f'{DECLARED_ATTACHMENT_GUEST_STATE_DIR}/attachments.json'
+PERSISTENT_ATTACHMENT_HOST_META_DIR = '.aivm'
+PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME = 'persistent-attachments.json'
+PERSISTENT_ATTACHMENT_GUEST_STATE_DIR = '/var/lib/aivm'
+PERSISTENT_ATTACHMENT_GUEST_STATE_PATH = (
+    f'{PERSISTENT_ATTACHMENT_GUEST_STATE_DIR}/attachments.json'
 )
-DECLARED_ATTACHMENT_REPLAY_BIN = '/usr/local/libexec/aivm-attachment-replay'
-DECLARED_ATTACHMENT_REPLAY_SERVICE = 'aivm-attachment-replay.service'
-DECLARED_ROOT_VIRTIOFS_TAG = 'aivm-declared-root'
-DECLARED_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-declared'
+PERSISTENT_ATTACHMENT_REPLAY_BIN = '/usr/local/libexec/aivm-persistent-attachment-replay'
+PERSISTENT_ATTACHMENT_REPLAY_SERVICE = 'aivm-persistent-attachment-replay.service'
+PERSISTENT_ROOT_VIRTIOFS_TAG = 'aivm-persistent-root'
+PERSISTENT_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-persistent'
 
-
-def declared_replay_python() -> str:
+def persistent_replay_python() -> str:
     return textwrap.dedent(
         f"""\
         #!/usr/bin/env python3
@@ -32,11 +31,11 @@ def declared_replay_python() -> str:
         import tempfile
         from pathlib import Path, PurePosixPath
 
-        SHARED_ROOT_TAG = "{DECLARED_ROOT_VIRTIOFS_TAG}"
-        SHARED_ROOT_MOUNT = "{DECLARED_ROOT_GUEST_MOUNT_ROOT}"
-        HOST_MANIFEST = str(PurePosixPath(SHARED_ROOT_MOUNT) / "{DECLARED_ATTACHMENT_HOST_META_DIR}" / "{DECLARED_ATTACHMENT_HOST_MANIFEST_NAME}")
-        STATE_DIR = "{DECLARED_ATTACHMENT_GUEST_STATE_DIR}"
-        STATE_PATH = "{DECLARED_ATTACHMENT_GUEST_STATE_PATH}"
+        PERSISTENT_ROOT_TAG = "{PERSISTENT_ROOT_VIRTIOFS_TAG}"
+        PERSISTENT_ROOT_MOUNT = "{PERSISTENT_ROOT_GUEST_MOUNT_ROOT}"
+        HOST_MANIFEST = str(PurePosixPath(PERSISTENT_ROOT_MOUNT) / "{PERSISTENT_ATTACHMENT_HOST_META_DIR}" / "{PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME}")
+        STATE_DIR = "{PERSISTENT_ATTACHMENT_GUEST_STATE_DIR}"
+        STATE_PATH = "{PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}"
 
         def run(cmd, check=True, capture=False):
             return subprocess.run(
@@ -47,12 +46,12 @@ def declared_replay_python() -> str:
                 stderr=subprocess.PIPE if capture else None,
             )
 
-        def mount_shared_root():
-            os.makedirs(SHARED_ROOT_MOUNT, exist_ok=True)
-            probe = subprocess.run(["mountpoint", "-q", SHARED_ROOT_MOUNT])
+        def mount_persistent_root():
+            os.makedirs(PERSISTENT_ROOT_MOUNT, exist_ok=True)
+            probe = subprocess.run(["mountpoint", "-q", PERSISTENT_ROOT_MOUNT])
             if probe.returncode == 0:
                 return
-            run(["mount", "-t", "virtiofs", SHARED_ROOT_TAG, SHARED_ROOT_MOUNT])
+            run(["mount", "-t", "virtiofs", PERSISTENT_ROOT_TAG, PERSISTENT_ROOT_MOUNT])
 
         def load_json(path):
             try:
@@ -90,7 +89,7 @@ def declared_replay_python() -> str:
             token = str(record.get("shared_root_token") or "").strip()
             if not token:
                 raise RuntimeError("persistent attachment record missing shared_root_token")
-            return str(PurePosixPath(SHARED_ROOT_MOUNT) / token)
+            return str(PurePosixPath(PERSISTENT_ROOT_MOUNT) / token)
 
         def desired_option(record):
             return "ro" if str(record.get("access") or "").strip() == "ro" else "rw"
@@ -149,7 +148,7 @@ def declared_replay_python() -> str:
                     unmount_guest_dst(guest_dst)
 
         def main():
-            mount_shared_root()
+            mount_persistent_root()
             previous, desired = sync_manifest()
             prune_removed(previous, desired)
             failures = []
@@ -174,7 +173,7 @@ def declared_replay_python() -> str:
     )
 
 
-def declared_replay_service_unit() -> str:
+def persistent_replay_service_unit() -> str:
     return textwrap.dedent(
         f"""\
         [Unit]
@@ -183,7 +182,7 @@ def declared_replay_service_unit() -> str:
 
         [Service]
         Type=oneshot
-        ExecStart={DECLARED_ATTACHMENT_REPLAY_BIN}
+        ExecStart={PERSISTENT_ATTACHMENT_REPLAY_BIN}
 
         [Install]
         WantedBy=multi-user.target

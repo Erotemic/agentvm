@@ -1,8 +1,8 @@
-"""Declarative shared-root attachment helpers.
+"""Persistent attachment helpers.
 
-This mode keeps the host-side shared-root bind staging stable while persisting
-the desired guest-visible bind mounts as declarations that can be replayed at
-boot or during lightweight reconcile.
+This mode keeps host-side bind staging stable while persisting the desired
+guest-visible bind mounts so they can be replayed at boot or during
+lightweight reconcile.
 """
 
 from __future__ import annotations
@@ -16,30 +16,30 @@ from pathlib import Path
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..persistent_replay import (
-    DECLARED_ATTACHMENT_GUEST_STATE_PATH,
-    DECLARED_ATTACHMENT_HOST_MANIFEST_NAME,
-    DECLARED_ATTACHMENT_HOST_META_DIR,
-    DECLARED_ATTACHMENT_REPLAY_BIN,
-    DECLARED_ATTACHMENT_REPLAY_SERVICE,
-    DECLARED_ROOT_GUEST_MOUNT_ROOT,
-    DECLARED_ROOT_VIRTIOFS_TAG,
-    declared_replay_python,
-    declared_replay_service_unit,
+    PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
+    PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME,
+    PERSISTENT_ATTACHMENT_HOST_META_DIR,
+    PERSISTENT_ATTACHMENT_REPLAY_BIN,
+    PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
+    PERSISTENT_ROOT_GUEST_MOUNT_ROOT,
+    PERSISTENT_ROOT_VIRTIOFS_TAG,
+    persistent_replay_python,
+    persistent_replay_service_unit,
 )
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..store import find_attachments_for_vm, load_store
 from ..vm import attach_vm_share, vm_share_mappings
 from ..vm.share import ResolvedAttachment
-from .resolve import ATTACHMENT_MODE_DECLARED
+from .resolve import ATTACHMENT_MODE_PERSISTENT
 from .shared_root import _shared_root_host_target
 
 
-def _declared_root_host_dir(cfg: AgentVMConfig) -> Path:
-    return Path(cfg.paths.base_dir) / cfg.vm.name / 'declared-root'
+def _persistent_root_host_dir(cfg: AgentVMConfig) -> Path:
+    return Path(cfg.paths.base_dir) / cfg.vm.name / 'persistent-root'
 
 
 @dataclass(frozen=True)
-class DeclaredAttachmentRecord:
+class PersistentAttachmentRecord:
     attachment_id: str
     mode: str
     source_dir: str
@@ -50,27 +50,27 @@ class DeclaredAttachmentRecord:
     enabled: bool = True
 
 
-def _declared_host_meta_dir(cfg: AgentVMConfig) -> Path:
-    return _declared_root_host_dir(cfg) / DECLARED_ATTACHMENT_HOST_META_DIR
+def _persistent_host_meta_dir(cfg: AgentVMConfig) -> Path:
+    return _persistent_root_host_dir(cfg) / PERSISTENT_ATTACHMENT_HOST_META_DIR
 
 
-def _declared_host_manifest_path(cfg: AgentVMConfig) -> Path:
-    return _declared_host_meta_dir(cfg) / DECLARED_ATTACHMENT_HOST_MANIFEST_NAME
+def _persistent_host_manifest_path(cfg: AgentVMConfig) -> Path:
+    return _persistent_host_meta_dir(cfg) / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
 
 
-def _declared_attachment_records_for_vm(
+def _persistent_attachment_records_for_vm(
     cfg: AgentVMConfig,
     cfg_path: Path,
-) -> list[DeclaredAttachmentRecord]:
+) -> list[PersistentAttachmentRecord]:
     reg = load_store(cfg_path)
-    records: list[DeclaredAttachmentRecord] = []
+    records: list[PersistentAttachmentRecord] = []
     for att in find_attachments_for_vm(reg, cfg.vm.name):
-        if str(att.mode or '').strip() != ATTACHMENT_MODE_DECLARED:
+        if str(att.mode or '').strip() != ATTACHMENT_MODE_PERSISTENT:
             continue
         records.append(
-            DeclaredAttachmentRecord(
+            PersistentAttachmentRecord(
                 attachment_id=str(att.tag or att.host_path),
-                mode=str(att.mode or ATTACHMENT_MODE_DECLARED),
+                mode=str(att.mode or ATTACHMENT_MODE_PERSISTENT),
                 source_dir=str(att.host_path),
                 host_lexical_path=str(att.host_lexical_path or ''),
                 shared_root_token=str(att.tag or ''),
@@ -82,15 +82,15 @@ def _declared_attachment_records_for_vm(
     return sorted(records, key=lambda rec: (rec.guest_dst, rec.shared_root_token))
 
 
-def _declared_attachment_manifest_text(
+def _persistent_attachment_manifest_text(
     cfg: AgentVMConfig,
     cfg_path: Path,
 ) -> str:
-    records = _declared_attachment_records_for_vm(cfg, cfg_path)
+    records = _persistent_attachment_records_for_vm(cfg, cfg_path)
     payload = {
         'schema_version': 1,
         'vm_name': cfg.vm.name,
-        'shared_root_mount': DECLARED_ROOT_GUEST_MOUNT_ROOT,
+        'shared_root_mount': PERSISTENT_ROOT_GUEST_MOUNT_ROOT,
         'records': [asdict(rec) for rec in records],
     }
     return json.dumps(payload, indent=2, sort_keys=True) + '\n'
@@ -130,25 +130,25 @@ def _run_guest_root_script(
     )
 
 
-def _sync_declared_attachment_manifest_on_host(
+def _sync_persistent_attachment_manifest_on_host(
     cfg: AgentVMConfig,
     cfg_path: Path,
     *,
     dry_run: bool,
 ) -> Path:
-    manifest_path = _declared_host_manifest_path(cfg)
-    manifest_text = _declared_attachment_manifest_text(cfg, cfg_path)
+    manifest_path = _persistent_host_manifest_path(cfg)
+    manifest_text = _persistent_attachment_manifest_text(cfg, cfg_path)
     if dry_run:
         print(f'DRYRUN: would write persistent attachment manifest to {manifest_path}')
         return manifest_path
     mgr = CommandManager.current()
-    meta_dir = _declared_host_meta_dir(cfg)
+    meta_dir = _persistent_host_meta_dir(cfg)
     manifest_q = shlex.quote(str(manifest_path))
     payload = shlex.quote(manifest_text)
     with mgr.step(
         'Sync persistent attachment manifest',
         why='Update the host-side persistent attachment manifest that the guest boot-time replay helper consumes.',
-        approval_scope=f'declared-manifest:{cfg.vm.name}',
+        approval_scope=f'persistent-manifest:{cfg.vm.name}',
     ):
         mgr.submit(
             ['mkdir', '-p', str(meta_dir)],
@@ -167,38 +167,38 @@ def _sync_declared_attachment_manifest_on_host(
     return manifest_path
 
 
-def _ensure_declared_root_parent_dir(
+def _ensure_persistent_root_parent_dir(
     cfg: AgentVMConfig,
     *,
     dry_run: bool,
 ) -> None:
-    target = _declared_root_host_dir(cfg)
+    target = _persistent_root_host_dir(cfg)
     if dry_run:
-        print(f'DRYRUN: would create declared-root parent directory {target}')
+        print(f'DRYRUN: would create persistent-root parent directory {target}')
         return
     mgr = CommandManager.current()
     with mgr.step(
-        'Prepare declared-root parent directory',
-        why='Create the host-side declared-root export directory used by the persistent attachment virtiofs device.',
-        approval_scope=f'declared-root-parent:{cfg.vm.name}',
+        'Prepare persistent-root parent directory',
+        why='Create the host-side persistent-root export directory used by the persistent attachment virtiofs device.',
+        approval_scope=f'persistent-root-parent:{cfg.vm.name}',
     ):
         mgr.submit(
             ['mkdir', '-p', str(target)],
             sudo=True,
             role='modify',
-            summary='Create declared-root parent directory',
+            summary='Create persistent-root parent directory',
             detail=f'target={target}',
         )
 
 
-def _ensure_declared_root_vm_mapping(
+def _ensure_persistent_root_vm_mapping(
     cfg: AgentVMConfig,
     *,
     dry_run: bool,
     vm_running: bool | None = None,
 ) -> None:
-    source = str(_declared_root_host_dir(cfg))
-    tag = DECLARED_ROOT_VIRTIOFS_TAG
+    source = str(_persistent_root_host_dir(cfg))
+    tag = PERSISTENT_ROOT_VIRTIOFS_TAG
     mappings = vm_share_mappings(cfg, use_sudo=False)
     if any(src == source and t == tag for src, t in mappings):
         return
@@ -214,17 +214,17 @@ def _ensure_declared_root_vm_mapping(
     )
 
 
-def _ensure_declared_root_host_bind(
+def _ensure_persistent_root_host_bind(
     cfg: AgentVMConfig,
     attachment: ResolvedAttachment,
     *,
     dry_run: bool,
 ) -> Path:
     # Reuse the shared-root target-token layout, but stage it under the
-    # dedicated declared-root export tree so the two backends never share the
+    # dedicated persistent-root export tree so the two backends never share the
     # same virtiofs device or host export directory.
     source = Path(attachment.source_dir).resolve()
-    target = _declared_root_host_dir(cfg) / Path(
+    target = _persistent_root_host_dir(cfg) / Path(
         _shared_root_host_target(cfg, attachment.tag)
     ).name
     if dry_run:
@@ -232,22 +232,22 @@ def _ensure_declared_root_host_bind(
         return target
     mgr = CommandManager.current()
     with mgr.step(
-        'Prepare declared-root host bind target',
-        why='Ensure the declared-root staged bind exists without tearing down stable host-side state.',
-        approval_scope=f'declared-root-host-bind:{cfg.vm.name}:{attachment.tag}',
+        'Prepare persistent-root host bind target',
+        why='Ensure the persistent-root staged bind exists without tearing down stable host-side state.',
+        approval_scope=f'persistent-root-host-bind:{cfg.vm.name}:{attachment.tag}',
     ):
         mgr.submit(
-            ['mkdir', '-p', str(_declared_root_host_dir(cfg))],
+            ['mkdir', '-p', str(_persistent_root_host_dir(cfg))],
             sudo=True,
             role='modify',
-            summary='Create declared-root parent directory',
-            detail=f'target={_declared_root_host_dir(cfg)}',
+            summary='Create persistent-root parent directory',
+            detail=f'target={_persistent_root_host_dir(cfg)}',
         )
         mgr.submit(
             ['mkdir', '-p', str(target)],
             sudo=True,
             role='modify',
-            summary='Create declared-root bind target',
+            summary='Create persistent-root bind target',
             detail=f'target={target}',
         )
         script = (
@@ -261,24 +261,24 @@ def _ensure_declared_root_host_bind(
             ['bash', '-c', script],
             sudo=True,
             role='modify',
-            summary='Bind requested host folder into declared-root target',
+            summary='Bind requested host folder into persistent-root target',
             detail=f'source={source} target={target}',
         )
     return target
 
 
-def _install_declared_attachment_replay(
+def _install_persistent_attachment_replay(
     cfg: AgentVMConfig,
     ip: str,
     *,
     dry_run: bool,
 ) -> None:
-    replay_py = declared_replay_python()
-    service_text = declared_replay_service_unit()
+    replay_py = persistent_replay_python()
+    service_text = persistent_replay_service_unit()
     script = textwrap.dedent(
         f"""\
         set -euo pipefail
-        sudo -n mkdir -p {shlex.quote(str(Path(DECLARED_ATTACHMENT_REPLAY_BIN).parent))}
+        sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_REPLAY_BIN).parent))}
         sudo -n mkdir -p /etc/systemd/system
         tmp_py="$(mktemp)"
         tmp_service="$(mktemp)"
@@ -288,11 +288,11 @@ def _install_declared_attachment_replay(
         cat > "$tmp_service" <<'SVCEOF'
         {service_text}
         SVCEOF
-        sudo -n install -m 0755 "$tmp_py" {shlex.quote(DECLARED_ATTACHMENT_REPLAY_BIN)}
-        sudo -n install -m 0644 "$tmp_service" /etc/systemd/system/{DECLARED_ATTACHMENT_REPLAY_SERVICE}
+        sudo -n install -m 0755 "$tmp_py" {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}
+        sudo -n install -m 0644 "$tmp_service" /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
         rm -f "$tmp_py" "$tmp_service"
         sudo -n systemctl daemon-reload
-        sudo -n systemctl enable {DECLARED_ATTACHMENT_REPLAY_SERVICE}
+        sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
         """
     )
     _run_guest_root_script(
@@ -305,39 +305,39 @@ def _install_declared_attachment_replay(
     )
 
 
-def _reconcile_declared_attachments_in_guest(
+def _reconcile_persistent_attachments_in_guest(
     cfg: AgentVMConfig,
     cfg_path: Path,
     ip: str,
     *,
     dry_run: bool,
 ) -> None:
-    _sync_declared_attachment_manifest_on_host(cfg, cfg_path, dry_run=dry_run)
-    _install_declared_attachment_replay(cfg, ip, dry_run=dry_run)
+    _sync_persistent_attachment_manifest_on_host(cfg, cfg_path, dry_run=dry_run)
+    _install_persistent_attachment_replay(cfg, ip, dry_run=dry_run)
     _run_guest_root_script(
         cfg,
         ip,
-        script=f'sudo -n {shlex.quote(DECLARED_ATTACHMENT_REPLAY_BIN)}',
+        script=f'sudo -n {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
         summary='Replay persistent attachment mounts inside guest',
         detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
         dry_run=dry_run,
     )
 
 
-def _prepare_declared_attachment_host_and_vm(
+def _prepare_persistent_attachment_host_and_vm(
     cfg: AgentVMConfig,
     attachment: ResolvedAttachment,
     *,
     dry_run: bool,
     vm_running: bool | None,
 ) -> None:
-    _ensure_declared_root_parent_dir(cfg, dry_run=dry_run)
-    _ensure_declared_root_host_bind(
+    _ensure_persistent_root_parent_dir(cfg, dry_run=dry_run)
+    _ensure_persistent_root_host_bind(
         cfg,
         attachment,
         dry_run=dry_run,
     )
-    _ensure_declared_root_vm_mapping(
+    _ensure_persistent_root_vm_mapping(
         cfg,
         dry_run=dry_run,
         vm_running=vm_running,

@@ -173,7 +173,7 @@ Attachment modes:
   guest.
 * ``persistent``: preferred new persistent-attachment path. It uses a dedicated
   VM-level virtiofs export at
-  ``/var/lib/libvirt/aivm/<vm>/declared-root`` plus stable staged host binds,
+  ``/var/lib/libvirt/aivm/<vm>/persistent-root`` plus stable staged host binds,
   writes a persisted attachment manifest, installs a guest systemd replay
   helper at VM bootstrap, and lets boot / ``aivm code .`` / ``aivm ssh .``
   repair guest-visible bind mounts from that manifest instead of rebuilding
@@ -192,7 +192,7 @@ restore other folders already saved for that VM after guest startup.
 For ``persistent`` attachments, explicit unshare updates the stored declaration
 and refreshes the replay manifest instead of depending on interactive teardown
 of the stable host-side staged bind mount.
-If the guest can mount the declared-root export but the host manifest is
+If the guest can mount the persistent-root export but the host manifest is
 missing, replay now fails closed instead of silently reusing stale cached guest
 state.
 

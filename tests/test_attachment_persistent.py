@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from aivm.attachments.persistent import (
-    _declared_attachment_manifest_text,
-    _declared_host_manifest_path,
-    _reconcile_declared_attachments_in_guest,
+    _persistent_attachment_manifest_text,
+    _persistent_host_manifest_path,
+    _reconcile_persistent_attachments_in_guest,
 )
 from aivm.commands import CommandManager
 from aivm.config import AgentVMConfig
@@ -25,7 +25,7 @@ def _activate_manager(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
 
 
-def test_declared_manifest_persists_records_and_access_modes(
+def test_persistent_manifest_persists_records_and_access_modes(
     tmp_path: Path,
 ) -> None:
     cfg = AgentVMConfig()
@@ -73,10 +73,10 @@ def test_declared_manifest_persists_records_and_access_modes(
     reg.attachments = [AttachmentEntry(**item) for item in store.attachments]
     save_store(reg, cfg_path)
 
-    payload = json.loads(_declared_attachment_manifest_text(cfg, cfg_path))
+    payload = json.loads(_persistent_attachment_manifest_text(cfg, cfg_path))
 
     assert payload['vm_name'] == cfg.vm.name
-    assert payload['shared_root_mount'] == '/mnt/aivm-declared'
+    assert payload['shared_root_mount'] == '/mnt/aivm-persistent'
     assert [item['shared_root_token'] for item in payload['records']] == [
         'hostcode-ro',
         'hostcode-rw',
@@ -85,7 +85,7 @@ def test_declared_manifest_persists_records_and_access_modes(
     assert payload['records'][0]['host_lexical_path'] == str(tmp_path / 'link-ro')
 
 
-def test_declared_reconcile_syncs_host_manifest_then_replays_guest(
+def test_persistent_reconcile_syncs_host_manifest_then_replays_guest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
@@ -96,12 +96,12 @@ def test_declared_reconcile_syncs_host_manifest_then_replays_guest(
 
     calls: list[tuple[str, tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.attachments.persistent._sync_declared_attachment_manifest_on_host',
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_on_host',
         lambda *a, **k: calls.append(('sync', a, k))
-        or _declared_host_manifest_path(cfg),
+        or _persistent_host_manifest_path(cfg),
     )
     monkeypatch.setattr(
-        'aivm.attachments.persistent._install_declared_attachment_replay',
+        'aivm.attachments.persistent._install_persistent_attachment_replay',
         lambda *a, **k: calls.append(('install', a, k)) or None,
     )
     monkeypatch.setattr(
@@ -109,7 +109,7 @@ def test_declared_reconcile_syncs_host_manifest_then_replays_guest(
         lambda *a, **k: calls.append(('replay', a, k)) or None,
     )
 
-    _reconcile_declared_attachments_in_guest(
+    _reconcile_persistent_attachments_in_guest(
         cfg,
         cfg_path,
         '10.0.0.5',

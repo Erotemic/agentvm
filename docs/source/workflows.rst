@@ -49,7 +49,7 @@ Attachment modes:
 
 * ``shared-root`` (default for new attachments): one persistent VM virtiofs
   mapping and per-folder host/guest bind mounts.
-* ``persistent``: a dedicated ``declared-root`` virtiofs export plus a persisted
+* ``persistent``: a dedicated ``persistent-root`` virtiofs export plus a persisted
   attachment manifest and guest systemd replay helper. This keeps host-side
   staged binds stable and restores guest-visible bind mounts at boot or during
   reconcile.
@@ -87,7 +87,7 @@ Attachment mode rules:
 * ``persistent`` is opt-in for now and is the preferred migration target for
   users who want attachment replay instead of repeated host-side mount churn.
 * The persistent replay helper is installed as part of VM bootstrap, so stopped-VM
-  attaches can still replay on the next boot once the declared-root mapping and
+  attaches can still replay on the next boot once the persistent-root mapping and
   manifest are in place.
 
 ``aivm code --mode git .`` specifics:

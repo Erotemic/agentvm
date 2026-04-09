@@ -26,6 +26,7 @@ from aivm.vm import (
     ensure_share_mounted,
     fetch_image,
     get_ip_cached,
+    refresh_cloud_init_seed_for_next_boot,
     restart_vm,
     shutdown_vm,
     vm_has_share,
@@ -528,9 +529,55 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     assert '#cloud-config' in user_data_script
     assert 'datasource_list:' not in user_data_script
     assert '\ndatasource:\n' not in user_data_script
-    assert '/usr/local/libexec/aivm-attachment-replay' in user_data_script
-    assert 'aivm-attachment-replay.service' in user_data_script
-    assert 'systemctl enable aivm-attachment-replay.service' in user_data_script
+    assert '/usr/local/libexec/aivm-persistent-attachment-replay' in user_data_script
+    assert 'aivm-persistent-attachment-replay.service' in user_data_script
+    assert 'systemctl enable aivm-persistent-attachment-replay.service' in user_data_script
+
+
+def test_refresh_cloud_init_seed_for_next_boot_bumps_instance_id(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vmx'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.state_dir = str(tmp_path / 'state')
+    pubkey_path = tmp_path / 'id_ed25519.pub'
+    pubkey_path.write_text(
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey agent@test\n',
+        encoding='utf-8',
+    )
+    cfg.paths.ssh_pubkey_path = str(pubkey_path)
+    heredocs: dict[str, str] = {}
+
+    monkeypatch.setattr(
+        'aivm.vm.lifecycle._ensure_qemu_access', lambda *a, **k: None
+    )
+
+    class P:
+        def __init__(
+            self, returncode: int = 0, stdout: str = '', stderr: str = ''
+        ) -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: Any) -> P:
+        del kwargs
+        normalized = cmd[1:] if cmd and cmd[0] == 'sudo' else cmd
+        if normalized[:2] == ['bash', '-c'] and 'cat > ' in normalized[2]:
+            script = normalized[2]
+            if 'meta-data' in script:
+                heredocs['meta-data'] = script
+        return P(0, '', '')
+
+    CommandManager.activate(CommandManager(yes_sudo=True))
+    monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 1000)
+    monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
+    monkeypatch.setattr('aivm.commands.subprocess.run', fake_subprocess_run)
+
+    refresh_cloud_init_seed_for_next_boot(cfg, dry_run=False)
+
+    assert 'instance-id: vmx-1' in heredocs['meta-data']
 
 
 def test_fetch_image_uses_atomic_temp_then_move(

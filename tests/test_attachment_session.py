@@ -203,6 +203,11 @@ def test_vm_attach_skips_guest_mount_when_vm_not_running(
             AssertionError('_resolve_ip_for_ssh_ops should not be called')
         ),
     )
+    refreshes: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm.refresh_cloud_init_seed_for_next_boot',
+        lambda *a, **k: refreshes.append((a, k)) or None,
+    )
     monkeypatch.setattr(
         'aivm.attachments.guest.ensure_share_mounted',
         lambda *a, **k: (_ for _ in ()).throw(
@@ -261,7 +266,7 @@ def test_vm_attach_persistent_syncs_manifest_and_replays_when_running(
 
     syncs: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._sync_declared_attachment_manifest_on_host',
+        'aivm.cli.vm._sync_persistent_attachment_manifest_on_host',
         lambda *a, **k: syncs.append((a, k)) or cfg_path,
     )
     guest_mounts: list[tuple[tuple, dict]] = []
@@ -271,7 +276,7 @@ def test_vm_attach_persistent_syncs_manifest_and_replays_when_running(
     )
     replays: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._reconcile_declared_attachments_in_guest',
+        'aivm.cli.vm._reconcile_persistent_attachments_in_guest',
         lambda *a, **k: replays.append((a, k)) or None,
     )
 
@@ -327,12 +332,12 @@ def test_vm_attach_persistent_prepares_dedicated_export_when_vm_stopped(
     )
     syncs: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._sync_declared_attachment_manifest_on_host',
+        'aivm.cli.vm._sync_persistent_attachment_manifest_on_host',
         lambda *a, **k: syncs.append((a, k)) or cfg_path,
     )
     prepares: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._prepare_declared_attachment_host_and_vm',
+        'aivm.cli.vm._prepare_persistent_attachment_host_and_vm',
         lambda *a, **k: prepares.append((a, k)) or None,
     )
     monkeypatch.setattr(
@@ -340,6 +345,11 @@ def test_vm_attach_persistent_prepares_dedicated_export_when_vm_stopped(
         lambda *a, **k: (_ for _ in ()).throw(
             AssertionError('_resolve_ip_for_ssh_ops should not be called')
         ),
+    )
+    refreshes: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.cli.vm.refresh_cloud_init_seed_for_next_boot',
+        lambda *a, **k: refreshes.append((a, k)) or None,
     )
 
     rc = VMAttachCLI.main(
@@ -354,6 +364,7 @@ def test_vm_attach_persistent_prepares_dedicated_export_when_vm_stopped(
     assert prepares
     assert prepares[0][1]['vm_running'] is False
     assert syncs
+    assert refreshes
 
 
 def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(

@@ -17,7 +17,6 @@ from ..vm.share import (
 ATTACHMENT_MODE_SHARED = AttachmentMode.SHARED.value
 ATTACHMENT_MODE_SHARED_ROOT = AttachmentMode.SHARED_ROOT.value
 ATTACHMENT_MODE_PERSISTENT = AttachmentMode.PERSISTENT.value
-ATTACHMENT_MODE_DECLARED = ATTACHMENT_MODE_PERSISTENT
 ATTACHMENT_MODE_GIT = AttachmentMode.GIT.value
 
 # Attachment access constants (string aliases for access values)

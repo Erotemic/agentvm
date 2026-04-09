@@ -62,13 +62,13 @@ from .guest import (
     _ensure_git_clone_attachment,
 )
 from .persistent import (
-    DECLARED_ROOT_VIRTIOFS_TAG,
-    _prepare_declared_attachment_host_and_vm,
-    _reconcile_declared_attachments_in_guest,
+    PERSISTENT_ROOT_VIRTIOFS_TAG,
+    _prepare_persistent_attachment_host_and_vm,
+    _reconcile_persistent_attachments_in_guest,
 )
 from .resolve import (
     ATTACHMENT_ACCESS_RO,
-    ATTACHMENT_MODE_DECLARED,
+    ATTACHMENT_MODE_PERSISTENT,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     _normalize_attachment_mode,
@@ -234,7 +234,7 @@ def _saved_vm_attachments(
     for att in find_attachments_for_vm(reg, cfg.vm.name):
         mode = _normalize_attachment_mode(att.mode)
         if mode not in {
-            ATTACHMENT_MODE_DECLARED,
+            ATTACHMENT_MODE_PERSISTENT,
             ATTACHMENT_MODE_SHARED,
             ATTACHMENT_MODE_SHARED_ROOT,
         }:
@@ -300,13 +300,13 @@ def _restore_saved_vm_attachments(
         return
 
     secondary_attachments = saved_attachments[1:]
-    declared_secondary = (
+    persistent_secondary = (
         primary_attachment is None
-        or primary_attachment.mode != ATTACHMENT_MODE_DECLARED
-    ) and any(att.mode == ATTACHMENT_MODE_DECLARED for att in secondary_attachments)
-    if declared_secondary:
+        or primary_attachment.mode != ATTACHMENT_MODE_PERSISTENT
+    ) and any(att.mode == ATTACHMENT_MODE_PERSISTENT for att in secondary_attachments)
+    if persistent_secondary:
         try:
-            _reconcile_declared_attachments_in_guest(
+            _reconcile_persistent_attachments_in_guest(
                 cfg,
                 cfg_path,
                 ip,
@@ -350,7 +350,7 @@ def _restore_saved_vm_attachments(
 
     restored = 0
     for att in secondary_attachments:
-        if att.mode == ATTACHMENT_MODE_DECLARED:
+        if att.mode == ATTACHMENT_MODE_PERSISTENT:
             continue
         if att.mode == ATTACHMENT_MODE_SHARED_ROOT:
             aligned = att
@@ -490,12 +490,12 @@ def _virtiofs_mapping_for_attachment(
         return attachment.source_dir, attachment.tag
     if attachment.mode in {
         ATTACHMENT_MODE_SHARED_ROOT,
-        ATTACHMENT_MODE_DECLARED,
+        ATTACHMENT_MODE_PERSISTENT,
     }:
-        if attachment.mode == ATTACHMENT_MODE_DECLARED:
-            from .persistent import _declared_root_host_dir
+        if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+            from .persistent import _persistent_root_host_dir
 
-            return str(_declared_root_host_dir(cfg)), DECLARED_ROOT_VIRTIOFS_TAG
+            return str(_persistent_root_host_dir(cfg)), PERSISTENT_ROOT_VIRTIOFS_TAG
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
     return None
 
@@ -611,13 +611,13 @@ def _reconcile_attached_vm(
             )
             if attachment.mode in {
                 ATTACHMENT_MODE_SHARED_ROOT,
-                ATTACHMENT_MODE_DECLARED,
+                ATTACHMENT_MODE_PERSISTENT,
             }:
                 if not policy.dry_run:
-                    if attachment.mode == ATTACHMENT_MODE_DECLARED:
-                        from .persistent import _ensure_declared_root_parent_dir
+                    if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+                        from .persistent import _ensure_persistent_root_parent_dir
 
-                        _ensure_declared_root_parent_dir(cfg, dry_run=False)
+                        _ensure_persistent_root_parent_dir(cfg, dry_run=False)
                     else:
                         _ensure_shared_root_parent_dir(cfg, dry_run=False)
             try:
@@ -703,15 +703,15 @@ def _reconcile_attached_vm(
                 try:
                     if attachment.mode in {
                         ATTACHMENT_MODE_SHARED_ROOT,
-                        ATTACHMENT_MODE_DECLARED,
+                        ATTACHMENT_MODE_PERSISTENT,
                     }:
                         with mgr.intent(
                             'Attach and reconcile shared-root mapping',
                             why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
                             role='modify',
                         ):
-                            if attachment.mode == ATTACHMENT_MODE_DECLARED:
-                                _prepare_declared_attachment_host_and_vm(
+                            if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+                                _prepare_persistent_attachment_host_and_vm(
                                     cfg,
                                     attachment,
                                     dry_run=False,
@@ -948,7 +948,7 @@ def _prepare_attached_session(
         raise RuntimeError('Could not resolve VM IP address.')
     mirror_home = bool(load_store(cfg_path).behavior.mirror_shared_home_folders)
     if attachment.mode in {
-        ATTACHMENT_MODE_DECLARED,
+        ATTACHMENT_MODE_PERSISTENT,
         ATTACHMENT_MODE_SHARED,
         ATTACHMENT_MODE_SHARED_ROOT,
     }:
@@ -961,13 +961,13 @@ def _prepare_attached_session(
             dry_run=False,
             ensure_shared_root_host_side=(
                 attachment.mode
-                in {ATTACHMENT_MODE_SHARED_ROOT, ATTACHMENT_MODE_DECLARED}
+                in {ATTACHMENT_MODE_SHARED_ROOT, ATTACHMENT_MODE_PERSISTENT}
                 and not reconcile.shared_root_host_side_ready
             ),
             mirror_home=mirror_home,
         )
-        if attachment.mode == ATTACHMENT_MODE_DECLARED:
-            _reconcile_declared_attachments_in_guest(
+        if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+            _reconcile_persistent_attachments_in_guest(
                 cfg,
                 cfg_path,
                 ip,

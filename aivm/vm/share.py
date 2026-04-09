@@ -39,7 +39,6 @@ class AttachmentMode(StrEnum):
     SHARED = 'shared'
     SHARED_ROOT = 'shared-root'
     PERSISTENT = 'persistent'
-    DECLARED = 'persistent'
     GIT = 'git'
 
 

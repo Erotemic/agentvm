@@ -6,6 +6,7 @@ from . import drift
 from .lifecycle import (
     _ensure_disk,
     _ensure_qemu_access,
+    refresh_cloud_init_seed_for_next_boot,
     _mac_for_vm,
     _paths,
     _sudo_file_exists,
@@ -57,6 +58,7 @@ __all__ = [
     'fetch_image',
     'get_ip_cached',
     'provision',
+    'refresh_cloud_init_seed_for_next_boot',
     'ResolvedAttachment',
     'restart_vm',
     'SHARED_ROOT_VIRTIOFS_TAG',

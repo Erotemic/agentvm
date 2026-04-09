@@ -238,12 +238,12 @@ def test_vm_detach_persistent_updates_manifest_without_host_unbind(
     )
     syncs: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._sync_declared_attachment_manifest_on_host',
+        'aivm.cli.vm._sync_persistent_attachment_manifest_on_host',
         lambda *a, **k: syncs.append((a, k)) or cfg_path,
     )
     replays: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
-        'aivm.cli.vm._reconcile_declared_attachments_in_guest',
+        'aivm.cli.vm._reconcile_persistent_attachments_in_guest',
         lambda *a, **k: replays.append((a, k)) or None,
     )
 

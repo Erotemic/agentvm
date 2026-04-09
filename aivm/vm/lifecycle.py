@@ -16,10 +16,10 @@ from loguru import logger
 
 from ..commands import CommandManager
 from ..persistent_replay import (
-    DECLARED_ATTACHMENT_REPLAY_BIN,
-    DECLARED_ATTACHMENT_REPLAY_SERVICE,
-    declared_replay_python,
-    declared_replay_service_unit,
+    PERSISTENT_ATTACHMENT_REPLAY_BIN,
+    PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
+    persistent_replay_python,
+    persistent_replay_service_unit,
 )
 from ..config import (
     DEFAULT_UBUNTU_NOBLE_IMG_URL,
@@ -257,6 +257,61 @@ def _paths(cfg: AgentVMConfig, *, dry_run: bool = False) -> dict[str, Path]:
         'ip_file': state_dir / f'{cfg.vm.name}.ip',
         'known_hosts': state_dir / 'known_hosts',
     }
+
+
+def _cloud_init_instance_id_token_path(cfg: AgentVMConfig) -> Path:
+    return _paths(cfg, dry_run=False)['ci_dir'] / 'instance-id-token'
+
+
+def _cloud_init_instance_id(cfg: AgentVMConfig) -> str:
+    token_path = _cloud_init_instance_id_token_path(cfg)
+    token = ''
+    try:
+        token = token_path.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        token = ''
+    if token:
+        return f'{cfg.vm.name}-{token}'
+    return cfg.vm.name
+
+
+def refresh_cloud_init_seed_for_next_boot(
+    cfg: AgentVMConfig,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Force the next boot to see refreshed NoCloud instance metadata.
+
+    This is used for stopped-VM persistent-attachment setup where we need the
+    guest to replay cloud-init write_files/runcmd on the next boot so helper
+    installation is guaranteed before boot-time persistent attachment replay.
+    """
+    token_path = _cloud_init_instance_id_token_path(cfg)
+    if dry_run:
+        log.info(
+            'DRYRUN: would bump cloud-init instance-id token at {} and rebuild seed ISO',
+            token_path,
+        )
+        return
+    mgr = CommandManager.current()
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        current = int(token_path.read_text(encoding='utf-8').strip() or '0')
+    except Exception:
+        current = 0
+    next_token = str(current + 1)
+    with mgr.intent(
+        'Refresh cloud-init seed for next boot',
+        why='Ensure the next boot reruns cloud-init helper installation for persistent attachments on an existing stopped VM.',
+        role='modify',
+    ):
+        with mgr.step(
+            'Bump cloud-init instance-id token',
+            why='Change the NoCloud instance-id so the next boot replays the updated cloud-init write_files/runcmd payload.',
+            approval_scope=f'cloud-init-refresh:{cfg.vm.name}',
+        ):
+            token_path.write_text(next_token + '\n', encoding='utf-8')
+        _write_cloud_init(cfg, dry_run=False)
 
 
 def _resolve_expected_image_sha256(*, image_url: str) -> tuple[str | None, str]:
@@ -700,19 +755,19 @@ def _write_cloud_init(
               X11Forwarding no
               AllowTcpForwarding yes
               GatewayPorts no
-          - path: {DECLARED_ATTACHMENT_REPLAY_BIN}
+          - path: {PERSISTENT_ATTACHMENT_REPLAY_BIN}
             permissions: "0755"
             content: |
-{textwrap.indent(declared_replay_python().rstrip(), '              ')}
-          - path: /etc/systemd/system/{DECLARED_ATTACHMENT_REPLAY_SERVICE}
+{textwrap.indent(persistent_replay_python().rstrip(), '              ')}
+          - path: /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
             permissions: "0644"
             content: |
-{textwrap.indent(declared_replay_service_unit().rstrip(), '              ')}
+{textwrap.indent(persistent_replay_service_unit().rstrip(), '              ')}
 
         runcmd:
           - systemctl mask --now systemd-networkd-wait-online.service NetworkManager-wait-online.service || true
           - systemctl daemon-reload
-          - systemctl enable {DECLARED_ATTACHMENT_REPLAY_SERVICE}
+          - systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
           - systemctl enable --now ssh
           - systemctl enable --now unattended-upgrades || true
         """
@@ -720,7 +775,7 @@ def _write_cloud_init(
 
     meta = textwrap.dedent(
         f"""\
-        instance-id: {cfg.vm.name}
+        instance-id: {_cloud_init_instance_id(cfg)}
         local-hostname: {cfg.vm.name}
         """
     )

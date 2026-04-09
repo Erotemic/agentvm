@@ -16,7 +16,7 @@ from ..attachments.guest import (
     _upsert_ssh_config_entry,
 )
 from ..attachments.resolve import (
-    ATTACHMENT_MODE_DECLARED,
+    ATTACHMENT_MODE_PERSISTENT,
     ATTACHMENT_MODE_SHARED,
     ATTACHMENT_MODE_SHARED_ROOT,
     _normalize_attachment_access,
@@ -24,9 +24,9 @@ from ..attachments.resolve import (
     _resolve_attachment,
 )
 from ..attachments.persistent import (
-    _prepare_declared_attachment_host_and_vm,
-    _reconcile_declared_attachments_in_guest,
-    _sync_declared_attachment_manifest_on_host,
+    _prepare_persistent_attachment_host_and_vm,
+    _reconcile_persistent_attachments_in_guest,
+    _sync_persistent_attachment_manifest_on_host,
 )
 from ..attachments.session import (
     _maybe_warn_hardware_drift,
@@ -62,6 +62,7 @@ from ..vm import (
     destroy_vm,
     detach_vm_share,
     provision,
+    refresh_cloud_init_seed_for_next_boot,
     restart_vm,
     shutdown_vm,
     sync_settings,
@@ -762,7 +763,7 @@ class VMAttachCLI(_BaseCommand):
                     )
             elif attachment.mode in {
                 ATTACHMENT_MODE_SHARED_ROOT,
-                ATTACHMENT_MODE_DECLARED,
+                ATTACHMENT_MODE_PERSISTENT,
             }:
                 if not vm_running:
                     mgr = CommandManager.current()
@@ -771,8 +772,8 @@ class VMAttachCLI(_BaseCommand):
                         why='Ensure the requested host folder is exposed to the VM before the next guest session uses it.',
                         role='modify',
                     ):
-                        if attachment.mode == ATTACHMENT_MODE_DECLARED:
-                            _prepare_declared_attachment_host_and_vm(
+                        if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+                            _prepare_persistent_attachment_host_and_vm(
                                 cfg,
                                 attachment,
                                 dry_run=False,
@@ -801,12 +802,14 @@ class VMAttachCLI(_BaseCommand):
             tag=attachment.tag,
             force=bool(args.force),
         )
-        if attachment.mode == ATTACHMENT_MODE_DECLARED:
-            _sync_declared_attachment_manifest_on_host(
+        if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+            _sync_persistent_attachment_manifest_on_host(
                 cfg,
                 cfg_path,
                 dry_run=False,
             )
+            if vm_defined and not vm_running:
+                refresh_cloud_init_seed_for_next_boot(cfg, dry_run=False)
         if vm_running:
             if _maybe_offer_create_ssh_identity(
                 cfg,
@@ -845,12 +848,12 @@ class VMAttachCLI(_BaseCommand):
                 dry_run=False,
                 ensure_shared_root_host_side=(
                     attachment.mode
-                    in {ATTACHMENT_MODE_SHARED_ROOT, ATTACHMENT_MODE_DECLARED}
+                    in {ATTACHMENT_MODE_SHARED_ROOT, ATTACHMENT_MODE_PERSISTENT}
                 ),
                 mirror_home=mirror_home,
             )
-            if attachment.mode == ATTACHMENT_MODE_DECLARED:
-                _reconcile_declared_attachments_in_guest(
+            if attachment.mode == ATTACHMENT_MODE_PERSISTENT:
+                _reconcile_persistent_attachments_in_guest(
                     cfg,
                     cfg_path,
                     ip,
@@ -860,7 +863,7 @@ class VMAttachCLI(_BaseCommand):
             f'Attached {host_src} to VM {cfg.vm.name} ({attachment.mode} mode, access={attachment.access})'
         )
         if vm_running and attachment.mode in {
-            ATTACHMENT_MODE_DECLARED,
+            ATTACHMENT_MODE_PERSISTENT,
             ATTACHMENT_MODE_SHARED,
             ATTACHMENT_MODE_SHARED_ROOT,
         }:
@@ -869,7 +872,7 @@ class VMAttachCLI(_BaseCommand):
             print(f'Guest clone ready at {attachment.guest_dst}')
         elif vm_defined:
             if attachment.mode in {
-                ATTACHMENT_MODE_DECLARED,
+                ATTACHMENT_MODE_PERSISTENT,
                 ATTACHMENT_MODE_SHARED,
                 ATTACHMENT_MODE_SHARED_ROOT,
             }:
@@ -1002,7 +1005,7 @@ class VMDetachCLI(_BaseCommand):
                     cfg.vm.name,
                     resolved.source_dir,
                 )
-        elif mode == ATTACHMENT_MODE_DECLARED:
+        elif mode == ATTACHMENT_MODE_PERSISTENT:
             removed = remove_attachment(
                 reg, host_path=host_src, vm_name=cfg.vm.name
             )
@@ -1015,7 +1018,7 @@ class VMDetachCLI(_BaseCommand):
                         f'{cfg.vm.name}.'
                     ),
                 )
-                _sync_declared_attachment_manifest_on_host(
+                _sync_persistent_attachment_manifest_on_host(
                     cfg,
                     cfg_path,
                     dry_run=False,
@@ -1027,7 +1030,7 @@ class VMDetachCLI(_BaseCommand):
                         yes=bool(args.yes),
                         purpose='Query VM networking state before reconciling persistent attachment removal.',
                     )
-                    _reconcile_declared_attachments_in_guest(
+                    _reconcile_persistent_attachments_in_guest(
                         cfg,
                         cfg_path,
                         ip,
@@ -1052,7 +1055,7 @@ class VMDetachCLI(_BaseCommand):
             )
             return 2
 
-        if mode != ATTACHMENT_MODE_DECLARED:
+        if mode != ATTACHMENT_MODE_PERSISTENT:
             removed = remove_attachment(
                 reg, host_path=host_src, vm_name=cfg.vm.name
             )
@@ -1079,7 +1082,7 @@ class VMDetachCLI(_BaseCommand):
                 print('Detached shared-root host bind mount.')
             if vm_running and detached_shared_root_guest_bind:
                 print('Detached shared-root guest bind mount.')
-        if mode == ATTACHMENT_MODE_DECLARED:
+        if mode == ATTACHMENT_MODE_PERSISTENT:
             print(
                 'Removed persistent attachment intent and refreshed the guest replay manifest.'
             )
