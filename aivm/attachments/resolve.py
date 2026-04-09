@@ -103,7 +103,7 @@ def _compute_mirror_home_symlink(
 def _normalize_attachment_mode(mode: str) -> AttachmentMode:
     raw = str(mode or '').strip().lower()
     if not raw:
-        return AttachmentMode(ATTACHMENT_MODE_SHARED_ROOT)
+        return AttachmentMode(ATTACHMENT_MODE_PERSISTENT)
     aliases = {
         'clone': ATTACHMENT_MODE_GIT,
         'cloned': ATTACHMENT_MODE_GIT,

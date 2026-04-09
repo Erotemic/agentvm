@@ -260,7 +260,7 @@ def _paths(cfg: AgentVMConfig, *, dry_run: bool = False) -> dict[str, Path]:
 
 
 def _cloud_init_instance_id_token_path(cfg: AgentVMConfig) -> Path:
-    return _paths(cfg, dry_run=False)['ci_dir'] / 'instance-id-token'
+    return _paths(cfg, dry_run=False)['state_dir'] / 'instance-id-token'
 
 
 def _cloud_init_instance_id(cfg: AgentVMConfig) -> str:

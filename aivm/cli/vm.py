@@ -664,7 +664,7 @@ class VMAttachCLI(_BaseCommand):
     guest_dst: Any = scfg.Value('', help='Guest mount path override.')
     mode: Any = scfg.Value(
         '',
-        help='Attachment mode: shared, shared-root, persistent, or git (default: saved mode or shared-root; mode changes require detach+reattach).',
+        help='Attachment mode: shared, shared-root, persistent, or git (default: saved mode (TODO: programatic documentation of default); mode changes require detach+reattach).',
     )
     access: Any = scfg.Value(
         '',
@@ -764,7 +764,7 @@ class VMAttachCLI(_BaseCommand):
                 if not vm_running:
                     mgr = CommandManager.current()
                     with mgr.intent(
-                        'Attach and reconcile shared-root mapping',
+                        f'Attach and reconcile {attachment.mode.value!r} mapping',
                         why='Ensure the requested host folder is exposed to the VM before the next guest session uses it.',
                         role='modify',
                     ):

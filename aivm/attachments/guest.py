@@ -268,7 +268,7 @@ def _ensure_attachment_available_in_guest(
                 )
     elif attachment.mode == ATTACHMENT_MODE_SHARED_ROOT:
         with mgr.intent(
-            'Attach and reconcile shared-root mapping',
+            f'Attach and reconcile {attachment.mode.value!r} mapping',
             why='Ensure the requested host folder is exposed to the VM and bound to the requested guest destination.',
             role='modify',
         ):

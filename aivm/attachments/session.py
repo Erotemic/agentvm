@@ -712,7 +712,7 @@ def _reconcile_attached_vm(
                         ATTACHMENT_MODE_PERSISTENT,
                     }:
                         with mgr.intent(
-                            'Attach and reconcile shared-root mapping',
+                            'Attach and reconcile {attachment.mode!r} mapping',
                             why='Ensure the requested host folder is exposed to the running VM before guest-side bind reconciliation.',
                             role='modify',
                         ):

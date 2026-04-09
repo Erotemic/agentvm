@@ -45,3 +45,12 @@ and then make every CLI test pass --config explicitly anyway. Belt and suspender
 To clean the current clutter from your real store, remove any [[attachments]] entries whose host_path starts with /tmp/pytest-of-joncrall/. They are test artifacts, not real long-lived attachments.
 
 I couldn’t directly open the specific test files in GitHub browse mode from here, so I can’t point to the exact fixture yet. But from the global-store codepath plus the pytest temp paths in your config, the answer is effectively yes
+
+
+We should be careful when we request attaching nested directories like:
+
+/home/joncrall/code/paper-g1-and-mcc/mcc-proof
+
+and then attaching
+
+/home/joncrall/code/paper-g1-and-mcc
