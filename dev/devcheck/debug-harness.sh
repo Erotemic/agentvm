@@ -1,8 +1,164 @@
 #!/usr/bin/env bash
+__doc__='
+debug-harness.sh
+
+Purpose
+-------
+Collect a structured, repeatable host/guest debug bundle for investigating
+aivm filesystem-attachment failures, especially intermittent guest-side
+`OSError: [Errno 24] Too many open files` observed while traversing
+virtiofs-backed attachment trees.
+
+Why this exists
+---------------
+The original problem was that ordinary guest filesystem operations could
+sometimes fail with `EMFILE` inside the VM, even for simple commands like
+`ls`, and restarting the VM would clear the bad state. Earlier investigation
+showed that attachment handling was the most suspicious subsystem, especially
+the old `shared-root` topology and later the newer `persistent` mode.
+
+The newer `persistent` mode improved lifecycle and replay behavior by keeping
+stable host-side staged binds under `persistent-root`, exporting them through
+a single virtiofs share, and replaying guest-visible mounts from persisted
+state. However, it still fundamentally exports a tree containing many
+host-side bind mount boundaries, so it may preserve the same underlying
+virtiofs/submount failure mode rather than eliminating it.
+
+This harness exists to make that failure mode measurable and comparable across
+runs, boots, and design changes.
+
+What this measures
+------------------
+This tool gathers a host/guest report bundle with enough information to answer
+these questions:
+
+1. Is the suspicious token subtree still exposed on both host and guest?
+2. Does simple guest traversal currently reproduce `EMFILE`, or is the run
+   clean?
+3. Are guest limits actually exhausted, or is the failure coming from lower
+   in the stack?
+4. Which virtiofsd process is serving `persistent-root`, and how many file
+   descriptors does it hold?
+5. Is one virtiofsd worker "hot" while another remains idle?
+6. Are the hot workers FDs mostly sockets/anon handles, or real path-backed
+   references into exported token subtrees?
+7. Are those retained FDs concentrated in one subtree (for example a stale
+   `geowatch` token), or spread broadly across many exported tokens?
+8. Does restart reset the state, and if so, how quickly does traversal warm it
+   back up?
+9. Does repeated traversal cause monotonic growth, or does it quickly populate
+   a retained working set and then plateau?
+
+In practice, the harness captures:
+- host and guest boot markers
+- host and guest filesystem limits
+- VM state and virtiofsd/qemu process identity
+- per-virtiofsd FD counts
+- a sampled FD target/path histogram for the hottest persistent-root worker
+- sampled fdinfo / mount-id data
+- optional short strace of the hot virtiofsd
+- guest traversal probes (`rg`, `find`, `stat`, small Python directory walks)
+- a report suitable for before/after comparison across reboots and workloads
+
+Key observations so far
+-----------------------
+The investigation started with a strong suspicion that a stale token subtree
+under `/mnt/aivm-persistent` -- especially a leftover `geowatch` token not
+present in the current attachment config -- was the direct reproducer for
+guest-side `EMFILE`.
+
+That hypothesis was useful, but later runs changed the picture:
+
+- The stale `geowatch` subtree really does remain exposed on both host and
+  guest, so stale exported subtrees are still a real concern.
+- Guest-side traversal sometimes reproduces the original problem, but many
+  later runs are completely clean even while the suspicious subtree is still
+  present.
+- Guest limits do not explain the failure. Guest soft/hard limits are high
+  enough, and system-wide file table usage has often remained low.
+- The most important repeated signal is on the host: one virtiofsd worker for
+  `persistent-root` can hold an enormous number of FDs while a sibling worker
+  remains nearly idle.
+- Sampled FDs from the hot worker are real path-backed references under many
+  exported token trees, not just sockets or anonymous kernel objects.
+- The hot worker is not dominated by `geowatch`; sampled retained FDs are
+  spread across several exported trees.
+- Restarting the VM resets the pathological high-FD state.
+- After restart, the hot worker starts low, but traversal-heavy runs of this
+  harness can drive it sharply upward.
+- Immediate repeated runs after that do not always continue the same large
+  jump; instead, they often suggest that the first traversal populates a
+  retained working set, after which near-term repeats mostly reuse that warmed
+  state.
+
+Current best interpretation
+---------------------------
+At this point, the strongest working theory is no longer:
+
+    "stale geowatch alone causes guest-side EMFILE"
+
+The better model is:
+
+    "the persistent-root virtiofs export can drive broad host-side FD
+    retention/growth in one virtiofsd worker across many exported token
+    subtrees; guest-side EMFILE may be one downstream manifestation of that
+    broader host-side state, rather than a simple per-process RLIMIT issue
+    or a geowatch-only bug."
+
+In other words:
+- the stale `geowatch` subtree is still suspicious and still worth tracking,
+  but it no longer looks like the whole story;
+- the hotter signal is a broad, host-side virtiofsd retention/traversal issue
+  across the persistent export tree.
+
+How to interpret runs
+---------------------
+A single run is useful, but the main value comes from controlled comparisons:
+
+- pre-restart vs post-restart
+- post-restart idle vs post-restart after repro
+- one repro vs many repeated repro runs
+- current tree layout vs after cleanup / code changes
+
+Typical interpretation pattern:
+
+- If restart drops the hot virtiofsd FD count dramatically, the problem is
+  runtime accumulation rather than a fixed boot-time baseline.
+- If a fresh idle run is cold but the repro run causes a sharp increase, then
+  traversal activity is sufficient to populate the retained FD set.
+- If repeated repro runs keep ratcheting upward, that suggests ongoing leak or
+  cumulative retention.
+- If they plateau after an initial jump, that suggests a retained working set
+  for the workload rather than unbounded per-run growth.
+
+Limitations
+-----------
+This harness is observational. It helps localize the problem and distinguish
+guest symptoms from host-side virtiofsd state, but it does not by itself prove
+the exact root cause inside virtiofsd, qemu, the guest VFS path, or the Linux
+kernel. It is best used to:
+- compare states across controlled experiments,
+- verify whether a change actually altered FD behavior,
+- and produce compact artifacts for iterative debugging and code review.
+
+Practical conclusion
+--------------------
+Use this tool when you want a trustworthy snapshot of:
+- what the guest sees,
+- what the host virtiofsd workers are doing,
+- how much FD state has accumulated,
+- and whether a restart or traversal workload changes that state.
+
+The main lesson so far is that the investigation has moved from a narrow
+"stale token causes guest EMFILE" story to a broader "persistent-root virtiofsd
+worker accumulates and retains large numbers of real path-backed FDs across the
+export tree" story.
+'
+
 set -Eeuo pipefail
 
 SCRIPT_NAME="debug-harness.sh"
-SCRIPT_VERSION="20260409T000012"
+SCRIPT_VERSION="20260409T000020"
 
 VM_NAME="${VM_NAME:-aivm-2404}"
 TOKEN="${TOKEN:-/mnt/aivm-persistent/hostcode-geowatch-5f1a05ef}"
@@ -17,6 +173,8 @@ WATCH_INTERVAL="${WATCH_INTERVAL:-0.05}"
 FD_SAMPLE_COUNT="${FD_SAMPLE_COUNT:-200}"
 FD_HISTO_SAMPLES="${FD_HISTO_SAMPLES:-400}"
 HOT_PID_STRACE_SECS="${HOT_PID_STRACE_SECS:-1}"
+RUN_LABEL="${RUN_LABEL:-}"
+SKIP_GUEST_REPRO="${SKIP_GUEST_REPRO:-0}"
 
 STAMP="$(date +%Y%m%dT%H%M%S)"
 OUTDIR="${OUTDIR:-aivm-report-${VM_NAME}-${STAMP}}"
@@ -560,6 +718,75 @@ stop_fd_sampler() {
     fi
 }
 
+fd_sampler_summary() {
+    local hot_pid="$1"
+    local infile="$HOST/fd-samples.tsv"
+    local outfile="$HOST/fd-sampler-summary.txt"
+    local fallback_count="${HOT_VFS_COUNT:-NA}"
+
+    if [[ -z "$hot_pid" ]]; then
+        {
+            printf 'hot_pid=%s
+' "NA"
+            printf 'initial=NA
+'
+            printf 'final=NA
+'
+            printf 'peak=NA
+'
+            printf 'peak_ts=NA
+'
+        } > "$outfile"
+        return 0
+    fi
+
+    if [[ ! -f "$infile" ]]; then
+        {
+            printf 'hot_pid=%s
+' "$hot_pid"
+            printf 'initial=%s
+' "$fallback_count"
+            printf 'final=%s
+' "$fallback_count"
+            printf 'peak=%s
+' "$fallback_count"
+            printf 'peak_ts=%s
+' "$(date +%Y-%m-%dT%H:%M:%S.%3N%z)"
+        } > "$outfile"
+        return 0
+    fi
+
+    awk -F'	' -v hot_pid="$hot_pid" '
+        function hot_count(detail,    n,i,a,b) {
+            n = split(detail, a, ",")
+            for (i = 1; i <= n; i++) {
+                split(a[i], b, ":")
+                if (b[1] == hot_pid) return b[2]
+            }
+            return "NA"
+        }
+        NR == 1 { next }
+        {
+            c = hot_count($3)
+            if (c ~ /^[0-9]+$/) {
+                if (initial == "") initial = c
+                final = c
+                if (peak == "" || c + 0 > peak + 0) {
+                    peak = c
+                    peak_ts = $1
+                }
+            }
+        }
+        END {
+            printf "hot_pid=%s\n", hot_pid
+            printf "initial=%s\n", (initial == "" ? "NA" : initial)
+            printf "final=%s\n", (final == "" ? "NA" : final)
+            printf "peak=%s\n", (peak == "" ? "NA" : peak)
+            printf "peak_ts=%s\n", (peak_ts == "" ? "NA" : peak_ts)
+        }
+    ' "$infile" > "$outfile"
+}
+
 render_report() {
     local report="$OUTDIR/report.md"
     local host_token_exists="no"
@@ -567,8 +794,19 @@ render_report() {
     local rg_serial_rc="NA"
     local rg_default_rc="NA"
     local find_rc="NA"
+    local sampler_initial="NA"
+    local sampler_final="NA"
+    local sampler_peak="NA"
+    local sampler_peak_ts="NA"
 
     refresh_hot_pid
+    fd_sampler_summary "${HOT_VFS_PID:-}"
+    if [[ -f "$HOST/fd-sampler-summary.txt" ]]; then
+        sampler_initial="$(awk -F= '/^initial=/{print $2}' "$HOST/fd-sampler-summary.txt")"
+        sampler_final="$(awk -F= '/^final=/{print $2}' "$HOST/fd-sampler-summary.txt")"
+        sampler_peak="$(awk -F= '/^peak=/{print $2}' "$HOST/fd-sampler-summary.txt")"
+        sampler_peak_ts="$(awk -F= '/^peak_ts=/{print $2}' "$HOST/fd-sampler-summary.txt")"
+    fi
     [[ -e "$HOST_TOKEN_PATH" ]] && host_token_exists="yes"
     grep -qF "$TOKEN" "$GUEST/guest-snapshot.md" 2>/dev/null && guest_token_visible="yes" || true
     rg_serial_rc="$(grep -m1 -o 'rc=[0-9]\+' "$GUEST/guest-repro.md" 2>/dev/null | cut -d= -f2 || true)"
@@ -586,6 +824,7 @@ render_report() {
         printf 'PERSIST_ROOT: `%s`\n\n' "$PERSIST_ROOT"
         printf 'GUEST_SSH: `%s`\n\n' "$GUEST_SSH"
         printf 'SCRIPT_VERSION: `%s`\n\n' "$SCRIPT_VERSION"
+        printf 'RUN_LABEL: `%s`\n\n' "$RUN_LABEL"
         if [[ -f "$RAW/debug-harness-used.sha256" ]]; then
             printf 'SCRIPT_SHA256: `%s`\n\n' "$(awk '{print $1}' "$RAW/debug-harness-used.sha256")"
         fi
@@ -600,6 +839,7 @@ render_report() {
         printf -- '- rg_serial_rc: `%s`\n' "$rg_serial_rc"
         printf -- '- rg_default_rc: `%s`\n' "$rg_default_rc"
         printf -- '- find_rc: `%s`\n' "$find_rc"
+        printf -- '- skip_guest_repro: `%s`\n' "$SKIP_GUEST_REPRO"
         printf '\n'
 
         printf '## Notes\n\n'
@@ -615,6 +855,7 @@ render_report() {
     append_file "$report" "Guest snapshot" "$GUEST/guest-snapshot.md"
     append_file "$report" "Guest reproducer" "$GUEST/guest-repro.md"
     append_file "$report" "PID selection" "$HOST/pid-selection.txt"
+    append_file "$report" "FD sampler summary" "$HOST/fd-sampler-summary.txt"
     append_tail "$report" "Host FD samples (tail)" "$HOST/fd-samples.tsv" 80
     append_file "$report" "Hot virtiofsd FD targets" "$HOST/hot-pid-fd-targets.txt"
     append_file "$report" "Hot virtiofsd fdinfo" "$HOST/hot-pid-fdinfo.txt"
@@ -639,10 +880,18 @@ main() {
     collect_host_snapshot
     log "collecting guest snapshot via ${GUEST_SSH}"
     collect_guest_snapshot
-    log "sampling host FDs during guest repro"
-    start_fd_sampler
-    collect_guest_repro
-    stop_fd_sampler
+    if [[ "$SKIP_GUEST_REPRO" == "1" ]]; then
+        log "skipping guest repro because SKIP_GUEST_REPRO=1"
+        printf '# guest reproducer
+
+> skipped because `SKIP_GUEST_REPRO=1`.
+' > "$GUEST/guest-repro.md"
+    else
+        log "sampling host FDs during guest repro"
+        start_fd_sampler
+        collect_guest_repro
+        stop_fd_sampler
+    fi
     copy_script_metadata
     log "rendering report"
     render_report
