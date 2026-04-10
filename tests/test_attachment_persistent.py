@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from contextlib import nullcontext, redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -124,6 +126,45 @@ def _make_guest_replay_fake_run(
 
     fake_run.mounts = mounts  # type: ignore[attr-defined]
     return fake_run
+
+
+def test_persistent_replay_templates_are_deterministic_in_process() -> None:
+    from aivm.persistent_replay import (
+        persistent_replay_python,
+        persistent_replay_service_unit,
+    )
+
+    helper_a = persistent_replay_python()
+    helper_b = persistent_replay_python()
+    unit_a = persistent_replay_service_unit()
+    unit_b = persistent_replay_service_unit()
+
+    assert helper_a == helper_b
+    assert unit_a == unit_b
+
+
+def test_persistent_replay_templates_are_deterministic_across_processes() -> None:
+    script = (
+        'from aivm.persistent_replay import '
+        'persistent_replay_python, persistent_replay_service_unit; '
+        'from hashlib import sha256; '
+        'print(sha256(persistent_replay_python().encode()).hexdigest()); '
+        'print(sha256(persistent_replay_service_unit().encode()).hexdigest())'
+    )
+    first = subprocess.run(
+        [sys.executable, '-c', script],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    second = subprocess.run(
+        [sys.executable, '-c', script],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert first == second
 
 
 def test_persistent_manifest_persists_records_and_access_modes(
@@ -300,14 +341,17 @@ def test_persistent_guest_text_sync_checks_hash_before_installing(
         if summary == 'Check guest replay helper hash':
             assert 'cmp -s' not in script
             assert 'sha256sum' in script
-            assert 'MISSING' in script
+            assert 'MISSING' in script and 'MATCH' in script and 'MISMATCH' in script
             return SimpleNamespace(stdout=f'{status}\n')
         if summary == 'Install guest replay helper':
             assert expect_install
-            assert 'cat > "$tmp" <<\'EOF\'' in script
+            assert "printf '%s'" in script
             assert 'install -m 0755' in script
             assert role == 'modify'
             return SimpleNamespace(stdout='')
+        if summary == 'Verify guest replay helper hash after install':
+            assert expect_install
+            return SimpleNamespace(stdout='MATCH\n')
         raise AssertionError(f'unexpected summary: {summary}')
 
     monkeypatch.setattr(
@@ -327,7 +371,11 @@ def test_persistent_guest_text_sync_checks_hash_before_installing(
 
     assert changed is expect_install
     assert [summary for summary, _, _ in calls] == (
-        ['Check guest replay helper hash', 'Install guest replay helper']
+        [
+            'Check guest replay helper hash',
+            'Install guest replay helper',
+            'Verify guest replay helper hash after install',
+        ]
         if expect_install
         else ['Check guest replay helper hash']
     )
@@ -361,9 +409,13 @@ def test_persistent_replay_install_refreshes_when_unit_changes(
             assert 'sha256sum' in script
             return SimpleNamespace(stdout=f'{statuses[summary]}\n')
         if summary == 'Install guest replay unit':
+            assert "printf '%s'" in script
             assert 'install -m 0644' in script
             assert role == 'modify'
             return SimpleNamespace(stdout='')
+        if summary == 'Verify guest replay unit hash after install':
+            assert statuses['Check guest replay unit hash'] == 'MISMATCH'
+            return SimpleNamespace(stdout='MATCH\n')
         if summary == 'Refresh persistent attachment replay unit':
             assert 'systemctl daemon-reload' in script
             assert 'systemctl enable aivm-persistent-attachment-replay.service' in script
@@ -386,6 +438,7 @@ def test_persistent_replay_install_refreshes_when_unit_changes(
         'Check guest replay helper hash',
         'Check guest replay unit hash',
         'Install guest replay unit',
+        'Verify guest replay unit hash after install',
         'Refresh persistent attachment replay unit',
     ]
 
@@ -414,6 +467,10 @@ def test_persistent_replay_install_skips_refresh_when_unchanged(
         if 'Check guest replay unit hash' == summary:
             assert 'sha256sum' in script
             return SimpleNamespace(stdout='MATCH\n')
+        if 'Verify guest replay helper hash after install' == summary:
+            raise AssertionError(
+                'post-install verification should not run when unchanged'
+            )
         if 'Refresh persistent attachment replay unit' == summary:
             raise AssertionError(
                 'daemon-reload should be skipped when unchanged'

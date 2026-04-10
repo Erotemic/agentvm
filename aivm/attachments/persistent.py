@@ -181,6 +181,11 @@ def _guest_text_sha256(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
+def _guest_text_stats(text: str) -> tuple[str, int]:
+    payload = text.encode('utf-8')
+    return hashlib.sha256(payload).hexdigest(), len(payload)
+
+
 def _guest_text_hash_check_script(target: str, expected_sha256: str) -> str:
     target_q = shlex.quote(target)
     expected_q = shlex.quote(expected_sha256)
@@ -199,6 +204,98 @@ def _guest_text_hash_check_script(target: str, expected_sha256: str) -> str:
         fi
         """
     ).strip()
+
+
+def _guest_text_install_script(target: str, text: str, mode: str) -> str:
+    target_dir = shlex.quote(str(Path(target).parent))
+    target_q = shlex.quote(target)
+    text_q = shlex.quote(text)
+    return '\n'.join(
+        [
+            'set -euo pipefail',
+            'tmp="$(mktemp)"',
+            f"printf '%s' {text_q} > \"$tmp\"",
+            f'sudo -n mkdir -p {target_dir}',
+            f'sudo -n install -m {mode} "$tmp" {target_q}',
+            'rm -f "$tmp"',
+        ]
+    )
+
+
+def _diagnose_guest_text_mismatch(
+    cfg: AgentVMConfig,
+    ip: str,
+    *,
+    target: str,
+    text: str,
+    label: str,
+    dry_run: bool,
+) -> None:
+    if dry_run:
+        return
+    expected_sha256, expected_len = _guest_text_stats(text)
+    expected_bytes = text.encode('utf-8')
+    target_q = shlex.quote(target)
+    stats = _run_guest_root_script(
+        cfg,
+        ip,
+        script=(
+            'set -euo pipefail; '
+            f'if [ ! -f {target_q} ]; then printf "%s\\n" MISSING; exit 0; fi; '
+            f'printf "%s\\n" "$(sudo -n sha256sum {target_q} | cut -d " " -f1)"; '
+            f'printf "%s\\n" "$(sudo -n wc -c < {target_q})"'
+        ),
+        summary=f'Inspect {label} hash mismatch details',
+        detail=f'target={target}',
+        dry_run=dry_run,
+        role='read',
+        check=False,
+    )
+    actual_sha256 = ''
+    actual_len = -1
+    if stats is not None:
+        lines = [line.strip() for line in str(getattr(stats, 'stdout', '') or '').splitlines()]
+        if lines:
+            actual_sha256 = lines[0]
+        if len(lines) > 1:
+            try:
+                actual_len = int(lines[1])
+            except ValueError:
+                actual_len = -1
+    content = _run_guest_root_script(
+        cfg,
+        ip,
+        script=f'sudo -n cat {target_q}',
+        summary=f'Fetch {label} content for verification',
+        detail=f'target={target}',
+        dry_run=dry_run,
+        role='read',
+        check=False,
+    )
+    actual_bytes = (content.stdout or '').encode('utf-8')
+    actual_sha_calc = hashlib.sha256(actual_bytes).hexdigest()
+    actual_len_calc = len(actual_bytes)
+    host_file = None
+    with tempfile.NamedTemporaryFile('wb', delete=False) as file:
+        file.write(expected_bytes)
+        host_file = Path(file.name)
+    try:
+        host_bytes = host_file.read_bytes()
+        same_bytes = host_bytes == actual_bytes
+    finally:
+        host_file.unlink(missing_ok=True)
+    log.warning(
+        (
+            '{} mismatch after install: expected_sha256={} actual_sha256={} '
+            'expected_bytes={} actual_bytes={} byte_for_byte_match={}'
+        ),
+        label,
+        expected_sha256,
+        actual_sha256 or actual_sha_calc,
+        expected_len,
+        actual_len if actual_len >= 0 else actual_len_calc,
+        same_bytes,
+    )
 
 
 def _install_guest_text_if_changed(
@@ -254,18 +351,7 @@ def _install_guest_text_if_changed(
         ),
         approval_scope=f'{label.replace(" ", "-")}:{cfg.vm.name}:{target}',
     ):
-        write_script = '\n'.join(
-            [
-                'set -euo pipefail',
-                'tmp="$(mktemp)"',
-                "cat > \"$tmp\" <<'EOF'",
-                text,
-                'EOF',
-                f'sudo -n mkdir -p {shlex.quote(str(Path(target).parent))}',
-                f'sudo -n install -m {mode} "$tmp" {shlex.quote(target)}',
-                'rm -f "$tmp"',
-            ]
-        )
+        write_script = _guest_text_install_script(target, text, mode)
         _run_guest_root_script(
             cfg,
             ip,
@@ -276,6 +362,37 @@ def _install_guest_text_if_changed(
             role='modify',
             check=check,
         )
+        verify_result = _run_guest_root_script(
+            cfg,
+            ip,
+            script=check_script,
+            summary=f'Verify {label} hash after install',
+            detail=f'target={target} expected_sha256={expected_sha256}',
+            dry_run=dry_run,
+            role='read',
+            check=False,
+        )
+        if verify_result is not None:
+            verify_status = (
+                str(getattr(verify_result, 'stdout', '') or '')
+                .strip()
+                .splitlines()
+            )
+            verify_status = verify_status[-1].strip().upper() if verify_status else ''
+            if verify_status != 'MATCH':
+                _diagnose_guest_text_mismatch(
+                    cfg,
+                    ip,
+                    target=target,
+                    text=text,
+                    label=label_title,
+                    dry_run=dry_run,
+                )
+                raise RuntimeError(
+                    f'{label_title} still mismatched after install: '
+                    f'target={target} status={verify_status or "<empty>"} '
+                    f'expected_sha256={expected_sha256}'
+                )
     return True
 
 
@@ -484,8 +601,8 @@ def _install_persistent_attachment_replay(
     dry_run: bool,
     check: bool = True,
 ) -> bool:
-    replay_py = persistent_replay_python().rstrip('\n')
-    service_text = persistent_replay_service_unit().rstrip('\n')
+    replay_py = persistent_replay_python()
+    service_text = persistent_replay_service_unit()
     helper_changed = _install_guest_text_if_changed(
         cfg,
         ip,
