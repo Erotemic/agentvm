@@ -334,6 +334,45 @@ def test_persistent_reconcile_reruns_replay_when_guest_manifest_unchanged(
     assert [item[0] for item in calls] == ['host', 'guest-sync', 'install', 'replay']
 
 
+def test_persistent_reconcile_skips_replay_when_not_forced_and_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-reconcile-skip'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg_path = tmp_path / 'config.toml'
+    _activate_manager(monkeypatch)
+
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_on_host',
+        lambda *a, **k: calls.append(('host', a, k))
+        or _persistent_host_manifest_path(cfg),
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+        lambda *a, **k: calls.append(('guest-sync', a, k)) or False,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._install_persistent_attachment_replay',
+        lambda *a, **k: calls.append(('install', a, k)) or False,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._run_guest_root_script',
+        lambda *a, **k: calls.append(('replay', a, k)) or None,
+    )
+
+    _reconcile_persistent_attachments_in_guest(
+        cfg,
+        cfg_path,
+        '10.0.0.5',
+        dry_run=False,
+        replay_even_if_unchanged=False,
+    )
+
+    assert [item[0] for item in calls] == ['host', 'guest-sync', 'install']
+
+
 def test_persistent_manifest_sync_returns_false_when_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -462,11 +501,11 @@ def test_persistent_reconcile_propagates_primary_failures(
             )
 
 
-def test_persistent_reconcile_best_effort_logs_and_continues(
+def test_persistent_reconcile_continue_on_error_logs_and_continues(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
-    cfg.vm.name = 'vm-persistent-best-effort'
+    cfg.vm.name = 'vm-persistent-continue-on-error'
     cfg.paths.base_dir = str(tmp_path / 'base')
     cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
     cfg.vm.user = 'agent'
@@ -493,10 +532,73 @@ def test_persistent_reconcile_best_effort_logs_and_continues(
         cfg_path,
         '10.0.0.5',
         dry_run=False,
-        best_effort=True,
+        continue_on_error=True,
     )
 
-    assert any('Could not reconcile persistent attachments for VM' in msg for msg in warnings)
+    assert any('persistent-reconcile: VM' in msg for msg in warnings)
+
+
+@pytest.mark.parametrize('phase', ['install', 'replay'])
+def test_persistent_reconcile_continue_on_error_logs_and_continues_on_late_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = f'vm-persistent-continue-on-error-{phase}'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+    save_store(Store(), cfg_path)
+    _activate_manager(monkeypatch)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        'aivm.attachments.persistent.log.warning',
+        lambda fmt, *args: warnings.append(fmt.format(*args)),
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_on_host',
+        lambda *a, **k: cfg_path,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+        lambda *a, **k: False,
+    )
+    if phase == 'install':
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._install_persistent_attachment_replay',
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError('install boom')),
+        )
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._run_guest_root_script',
+            lambda *a, **k: None,
+        )
+    else:
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._install_persistent_attachment_replay',
+            lambda *a, **k: False,
+        )
+
+        def fake_run(*args, **kwargs):
+            del args
+            if kwargs.get('summary') == 'Replay persistent attachment mounts inside guest':
+                raise RuntimeError('replay boom')
+            return SimpleNamespace(stdout='')
+
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._run_guest_root_script',
+            fake_run,
+        )
+
+    _reconcile_persistent_attachments_in_guest(
+        cfg,
+        cfg_path,
+        '10.0.0.5',
+        dry_run=False,
+        continue_on_error=True,
+    )
+
+    assert any('persistent-reconcile: VM' in msg for msg in warnings)
 
 
 def test_persistent_reconcile_replays_when_guest_manifest_changes(

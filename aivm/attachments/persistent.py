@@ -442,14 +442,14 @@ def _reconcile_persistent_attachments_in_guest(
     ip: str,
     *,
     dry_run: bool,
-    force_replay: bool = True,
-    best_effort: bool = False,
+    replay_even_if_unchanged: bool = True,
+    continue_on_error: bool = False,
 ) -> None:
     # Host writes the canonical desired-state manifest first. The guest-local
-    # manifest and helper are refreshed next, and explicit reconcile paths
-    # always run replay even when the bytes were unchanged. Secondary restore
-    # paths can opt into best-effort handling so a single bad VM does not abort
-    # the broader restore pass.
+    # manifest and helper are refreshed next. Explicit reconcile paths set
+    # ``replay_even_if_unchanged`` so we still repair live drift even when the
+    # sync steps were no-ops. Secondary restore paths can opt into
+    # ``continue_on_error`` so a single bad VM does not abort the broader pass.
     def _strict_reconcile() -> None:
         _sync_persistent_attachment_manifest_on_host(
             cfg, cfg_path, dry_run=dry_run
@@ -466,7 +466,11 @@ def _reconcile_persistent_attachments_in_guest(
         )
         if dry_run:
             return
-        if force_replay or guest_manifest_changed or replay_changed:
+        if (
+            replay_even_if_unchanged
+            or guest_manifest_changed
+            or replay_changed
+        ):
             _run_guest_root_script(
                 cfg,
                 ip,
@@ -476,14 +480,14 @@ def _reconcile_persistent_attachments_in_guest(
                 dry_run=dry_run,
             )
 
-    if not best_effort:
+    if not continue_on_error:
         _strict_reconcile()
         return
     try:
         _strict_reconcile()
     except Exception as ex:  # pragma: no cover - guest runtime path
         log.warning(
-            'Could not reconcile persistent attachments for VM {} ip={}: {}',
+            'persistent-reconcile: VM {} ip={} failed but restore will continue: {}',
             cfg.vm.name,
             ip,
             ex,

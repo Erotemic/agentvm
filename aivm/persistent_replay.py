@@ -280,7 +280,7 @@ def persistent_replay_python() -> str:
             prune_stale_mounts(desired_targets)
             failures = []
             for guest_dst, enabled, record in records:
-                if not record.get("enabled", True):
+                if not enabled:
                     try:
                         unmount_guest_dst(guest_dst)
                     except Exception as ex:  # pragma: no cover - guest runtime path

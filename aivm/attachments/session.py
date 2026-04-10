@@ -313,11 +313,11 @@ def _restore_saved_vm_attachments(
                 cfg_path,
                 ip,
                 dry_run=False,
-                best_effort=True,
+                continue_on_error=True,
             )
         except Exception as ex:
             log.warning(
-                'Could not replay persistent attachments for VM {} during restore: {}',
+                'persistent-restore: VM {} replay failed during restore: {}',
                 cfg.vm.name,
                 ex,
             )

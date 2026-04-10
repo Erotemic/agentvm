@@ -1025,7 +1025,7 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     assert ensure_calls[0]['allow_disruptive'] is False
 
 
-def test_restore_persistent_secondary_failure_is_best_effort(
+def test_restore_persistent_secondary_failure_continues_on_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from aivm.attachments.session import _restore_saved_vm_attachments
@@ -1033,7 +1033,7 @@ def test_restore_persistent_secondary_failure_is_best_effort(
     _activate_manager(monkeypatch)
 
     cfg = AgentVMConfig()
-    cfg.vm.name = 'vm-restore-persistent-best-effort'
+    cfg.vm.name = 'vm-restore-persistent-continue-on-error'
     cfg.vm.user = 'agent'
     cfg_path = tmp_path / 'config.toml'
 
@@ -1105,7 +1105,7 @@ def test_restore_persistent_secondary_failure_is_best_effort(
         mirror_home=False,
     )
 
-    assert any('Could not replay persistent attachments for VM' in msg for msg in warnings)
+    assert any('persistent-restore: VM' in msg for msg in warnings)
     assert mounted
 
 
