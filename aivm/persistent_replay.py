@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import textwrap
 
-PERSISTENT_ATTACHMENT_HOST_META_DIR = '.aivm'
 PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME = 'persistent-attachments.json'
 PERSISTENT_ATTACHMENT_GUEST_STATE_DIR = '/var/lib/aivm'
 PERSISTENT_ATTACHMENT_GUEST_STATE_PATH = (
@@ -30,14 +29,16 @@ def persistent_replay_python() -> str:
         #!/usr/bin/env python3
         import json
         import os
+        import posixpath
         import subprocess
         import sys
-        import tempfile
-        from pathlib import Path, PurePosixPath
+        from pathlib import PurePosixPath
 
         PERSISTENT_ROOT_TAG = "{PERSISTENT_ROOT_VIRTIOFS_TAG}"
         PERSISTENT_ROOT_MOUNT = "{PERSISTENT_ROOT_GUEST_MOUNT_ROOT}"
-        HOST_MANIFEST = str(PurePosixPath(PERSISTENT_ROOT_MOUNT) / "{PERSISTENT_ATTACHMENT_HOST_META_DIR}" / "{PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME}")
+        # Guest replay is intentionally fed only from the VM-local manifest
+        # that the host syncs in. The helper must never read host desired state
+        # back through virtiofs.
         STATE_DIR = "{PERSISTENT_ATTACHMENT_GUEST_STATE_DIR}"
         STATE_PATH = "{PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}"
 
@@ -62,41 +63,53 @@ def persistent_replay_python() -> str:
                 with open(path, "r", encoding="utf-8") as file:
                     return json.load(file)
             except FileNotFoundError:
-                return {{}}
-
-        def atomic_write_json(path, payload):
-            path = Path(path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=str(path.parent),
-                delete=False,
-            ) as file:
-                json.dump(payload, file, indent=2, sort_keys=True)
-                file.write("\\n")
-                tmp_name = file.name
-            os.chmod(tmp_name, 0o644)
-            os.replace(tmp_name, path)
-
-        def sync_manifest():
-            previous = load_json(STATE_PATH)
-            if not os.path.exists(HOST_MANIFEST):
-                raise RuntimeError(
-                    f"persistent attachment manifest missing from mounted host export: {{HOST_MANIFEST}}"
+                raise FileNotFoundError(
+                    f"persistent attachment manifest missing from guest state dir: {{path}}"
                 )
-            desired = load_json(HOST_MANIFEST)
-            atomic_write_json(STATE_PATH, desired)
-            return previous, desired
+
+        def normalize_guest_dst(raw):
+            text = str(raw or "").strip()
+            if not text:
+                return ""
+            text = posixpath.normpath(text)
+            if not text.startswith("/"):
+                return ""
+            return text
+
+        def desired_option(record):
+            return "ro" if str(record.get("access") or "").strip() == "ro" else "rw"
 
         def mount_source_for(record):
             token = str(record.get("shared_root_token") or "").strip()
             if not token:
-                raise RuntimeError("persistent attachment record missing shared_root_token")
+                return ""
             return str(PurePosixPath(PERSISTENT_ROOT_MOUNT) / token)
 
-        def desired_option(record):
-            return "ro" if str(record.get("access") or "").strip() == "ro" else "rw"
+        def parse_findmnt_pairs(stdout):
+            values = {{}}
+            for token in (stdout or "").split():
+                if "=" not in token:
+                    continue
+                key, value = token.split("=", 1)
+                values[key.strip().upper()] = value.strip().strip('"')
+            return values
+
+        def current_mount_info(target):
+            result = subprocess.run(
+                ["findmnt", "-P", "-n", "-o", "SOURCE,OPTIONS", "--target", target],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode != 0:
+                return None
+            info = parse_findmnt_pairs(result.stdout)
+            if not info:
+                return None
+            return {{
+                "source": info.get("SOURCE", ""),
+                "options": info.get("OPTIONS", ""),
+            }}
 
         def unmount_guest_dst(guest_dst):
             probe = subprocess.run(["mountpoint", "-q", guest_dst])
@@ -117,55 +130,161 @@ def persistent_replay_python() -> str:
                 f"could not unmount {{guest_dst}}: {{(result.stderr or result.stdout).strip()}}"
             )
 
-        def ensure_record(record):
-            guest_dst = str(record.get("guest_dst") or "").strip()
-            if not guest_dst:
-                raise RuntimeError("persistent attachment record missing guest_dst")
-            source = mount_source_for(record)
-            if not os.path.isdir(source):
-                raise RuntimeError(f"persistent attachment source missing in shared root: {{source}}")
-            current = subprocess.run(
-                ["findmnt", "-n", "-o", "SOURCE", "--target", guest_dst],
+        def is_descendant(child, parent):
+            child_path = PurePosixPath(child)
+            parent_path = PurePosixPath(parent)
+            return child_path != parent_path and child_path.is_relative_to(parent_path)
+
+        def validate_records(records):
+            # Normalize the desired record set before replay. Nested child
+            # destinations are intentionally collapsed by keeping the parent
+            # and ignoring the child record.
+            normalized = []
+            for index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    print(
+                        f"WARNING: skipping malformed persistent attachment record at index {{index}}",
+                        file=sys.stderr,
+                    )
+                    continue
+                guest_dst = normalize_guest_dst(record.get("guest_dst"))
+                if not guest_dst:
+                    print(
+                        f"WARNING: skipping persistent attachment record with missing guest_dst at index {{index}}",
+                        file=sys.stderr,
+                    )
+                    continue
+                token = str(record.get("shared_root_token") or "").strip()
+                if not token:
+                    print(
+                        f"WARNING: skipping persistent attachment record with missing shared_root_token at index {{index}}",
+                        file=sys.stderr,
+                    )
+                    continue
+                normalized.append((guest_dst, index, record))
+
+            normalized.sort(key=lambda item: (len(PurePosixPath(item[0]).parts), item[0], item[1]))
+            accepted = []
+            seen_targets = {{}}
+            for guest_dst, index, record in normalized:
+                access = str(record.get("access") or "").strip() or "rw"
+                parent_hit = None
+                for accepted_guest_dst, accepted_record in accepted:
+                    if is_descendant(guest_dst, accepted_guest_dst):
+                        parent_hit = (accepted_guest_dst, accepted_record)
+                if parent_hit is not None:
+                    parent_guest_dst, parent_record = parent_hit
+                    parent_access = str(parent_record.get("access") or "").strip() or "rw"
+                    if access != parent_access:
+                        print(
+                            f"ERROR: ignoring nested persistent attachment child {{guest_dst}} under {{parent_guest_dst}} because access differs (child={{access}} parent={{parent_access}})",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"WARNING: ignoring nested persistent attachment child {{guest_dst}} under {{parent_guest_dst}}",
+                            file=sys.stderr,
+                        )
+                    continue
+                if guest_dst in seen_targets:
+                    first_index = seen_targets[guest_dst]
+                    print(
+                        f"ERROR: duplicate persistent attachment guest_dst {{guest_dst}} at index {{index}} duplicates index {{first_index}}; skipping",
+                        file=sys.stderr,
+                    )
+                    continue
+                seen_targets[guest_dst] = index
+                accepted.append((guest_dst, record))
+            return accepted
+
+        def prune_stale_mounts(desired_targets):
+            result = subprocess.run(
+                ["findmnt", "-P", "-n", "-o", "TARGET,SOURCE"],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
-            if current.returncode == 0 and (current.stdout or "").strip() not in {{source, "none"}}:
-                unmount_guest_dst(guest_dst)
-            os.makedirs(guest_dst, exist_ok=True)
-            if subprocess.run(["mountpoint", "-q", guest_dst]).returncode != 0:
-                run(["mount", "--bind", source, guest_dst])
-            run(["mount", "-o", f"remount,bind,{{desired_option(record)}}", guest_dst])
-
-        def prune_removed(previous, desired):
-            desired_ids = {{
-                str(rec.get("attachment_id") or rec.get("shared_root_token") or "")
-                for rec in desired.get("records", [])
-                if rec.get("enabled", True)
-            }}
-            for rec in previous.get("records", []):
-                rec_id = str(rec.get("attachment_id") or rec.get("shared_root_token") or "")
-                if rec_id and rec_id in desired_ids and rec.get("enabled", True):
+            if result.returncode != 0:
+                return
+            root_prefix = PERSISTENT_ROOT_MOUNT.rstrip("/") + "/"
+            for line in (result.stdout or "").splitlines():
+                info = parse_findmnt_pairs(line)
+                target = normalize_guest_dst(info.get("TARGET"))
+                source = str(info.get("SOURCE") or "").strip()
+                if not target or target == PERSISTENT_ROOT_MOUNT:
                     continue
-                guest_dst = str(rec.get("guest_dst") or "").strip()
-                if guest_dst:
-                    unmount_guest_dst(guest_dst)
+                if not source:
+                    continue
+                if not (source == PERSISTENT_ROOT_MOUNT or source.startswith(root_prefix)):
+                    continue
+                if target in desired_targets:
+                    continue
+                unmount_guest_dst(target)
 
-        def main():
-            mount_persistent_root()
-            previous, desired = sync_manifest()
-            prune_removed(previous, desired)
+        def ensure_record(record):
+            guest_dst = normalize_guest_dst(record.get("guest_dst"))
+            if not guest_dst:
+                raise RuntimeError("persistent attachment record missing guest_dst")
+            source = mount_source_for(record)
+            if not source:
+                print(
+                    f"WARNING: skipping persistent attachment record with missing shared_root_token for guest_dst {{guest_dst}}",
+                    file=sys.stderr,
+                )
+                return
+            if not os.path.isdir(source):
+                print(
+                    f"WARNING: skipping persistent attachment record with missing source in shared root: {{source}}",
+                    file=sys.stderr,
+                )
+                return
+            current = current_mount_info(guest_dst)
+            desired = desired_option(record)
+            if current is not None:
+                current_source = str(current.get("source") or "").strip()
+                current_options = str(current.get("options") or "").strip()
+                if current_source and current_source != source:
+                    unmount_guest_dst(guest_dst)
+                    current = None
+                elif desired in current_options.split(","):
+                    return
+            if current is None:
+                os.makedirs(guest_dst, exist_ok=True)
+                if subprocess.run(["mountpoint", "-q", guest_dst]).returncode != 0:
+                    run(["mount", "--bind", source, guest_dst])
+                current = current_mount_info(guest_dst)
+            if current is None:
+                raise RuntimeError(f"could not verify persistent attachment mount {{guest_dst}}")
+            current_options = str(current.get("options") or "").strip()
+            if desired not in current_options.split(","):
+                run(["mount", "-o", f"remount,bind,{{desired}}", guest_dst])
+
+        def sync_state():
+            desired = load_json(STATE_PATH)
+            records = validate_records(desired.get("records", []))
+            desired_targets = {{guest_dst for guest_dst, _ in records}}
+            prune_stale_mounts(desired_targets)
             failures = []
-            for record in desired.get("records", []):
+            for guest_dst, record in records:
                 if not record.get("enabled", True):
-                    guest_dst = str(record.get("guest_dst") or "").strip()
-                    if guest_dst:
+                    try:
                         unmount_guest_dst(guest_dst)
+                    except Exception as ex:  # pragma: no cover - guest runtime path
+                        failures.append(str(ex))
                     continue
                 try:
                     ensure_record(record)
                 except Exception as ex:  # pragma: no cover - guest runtime path
                     failures.append(str(ex))
+            return failures
+
+        def main():
+            mount_persistent_root()
+            try:
+                failures = sync_state()
+            except FileNotFoundError as ex:
+                print(str(ex), file=sys.stderr)
+                raise SystemExit(1)
             if failures:
                 for item in failures:
                     print(item, file=sys.stderr)

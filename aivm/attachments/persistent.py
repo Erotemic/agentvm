@@ -1,14 +1,17 @@
 """Persistent attachment helpers.
 
-This mode keeps host-side bind staging stable while persisting the desired
-guest-visible bind mounts so they can be replayed at boot or during
-lightweight reconcile.
+Host state is authoritative. The desired persistent-attachment manifest is
+stored on the host outside the virtiofs export tree, then synced one-way into
+the guest-local replay input at /var/lib/aivm/attachments.json. The guest
+replay helper only reads that local file and reapplies mounts from there.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -16,9 +19,9 @@ from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..persistent_replay import (
     PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME,
-    PERSISTENT_ATTACHMENT_HOST_META_DIR,
     PERSISTENT_ATTACHMENT_REPLAY_BIN,
     PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
+    PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
     PERSISTENT_ROOT_GUEST_MOUNT_ROOT,
     PERSISTENT_ROOT_VIRTIOFS_TAG,
     persistent_replay_python,
@@ -48,15 +51,30 @@ class PersistentAttachmentRecord:
     enabled: bool = True
 
 
-def _persistent_host_meta_dir(cfg: AgentVMConfig) -> Path:
-    return _persistent_root_host_dir(cfg) / PERSISTENT_ATTACHMENT_HOST_META_DIR
+def _persistent_host_state_dir(cfg: AgentVMConfig) -> Path:
+    # Keep the canonical manifest outside the exported persistent-root tree so
+    # the guest replay helper never depends on reading through virtiofs.
+    return Path(cfg.paths.base_dir) / cfg.vm.name / 'state'
 
 
 def _persistent_host_manifest_path(cfg: AgentVMConfig) -> Path:
-    return (
-        _persistent_host_meta_dir(cfg)
-        / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
-    )
+    return _persistent_host_state_dir(cfg) / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
+
+
+def _write_text_if_changed(path: Path, text: str) -> bool:
+    new_bytes = text.encode('utf-8')
+    if path.exists() and path.read_bytes() == new_bytes:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        'wb',
+        dir=str(path.parent),
+        delete=False,
+    ) as file:
+        file.write(new_bytes)
+        tmp_name = file.name
+    os.replace(tmp_name, path)
+    return True
 
 
 def _persistent_attachment_records_for_vm(
@@ -107,7 +125,7 @@ def _run_guest_root_script(
     summary: str,
     detail: str,
     dry_run: bool,
-) -> None:
+) -> object | None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     cmd = [
         'ssh',
@@ -124,8 +142,8 @@ def _run_guest_root_script(
         print(
             f'DRYRUN: would run guest reconcile command: {" ".join(shlex.quote(c) for c in cmd)}'
         )
-        return
-    CommandManager.current().run(
+        return None
+    return CommandManager.current().run(
         cmd,
         sudo=False,
         check=True,
@@ -133,6 +151,121 @@ def _run_guest_root_script(
         summary=summary,
         detail=detail,
     )
+
+
+def _install_guest_text_if_changed(
+    cfg: AgentVMConfig,
+    ip: str,
+    *,
+    target: str,
+    text: str,
+    mode: str,
+    summary: str,
+    detail: str,
+    dry_run: bool,
+) -> bool:
+    target_path = Path(target)
+    target_dir = shlex.quote(str(target_path.parent))
+    target_q = shlex.quote(str(target_path))
+    script = '\n'.join(
+        [
+            'set -euo pipefail',
+            'tmp="$(mktemp)"',
+            'cat > "$tmp" <<\'EOF\'',
+            text,
+            'EOF',
+            f'if [ -f {target_q} ] && cmp -s "$tmp" {target_q}; then',
+            '  rm -f "$tmp"',
+            '  printf "%s\\n" UNCHANGED',
+            '  exit 0',
+            'fi',
+            f'sudo -n mkdir -p {target_dir}',
+            f'sudo -n install -m {mode} "$tmp" {target_q}',
+            'rm -f "$tmp"',
+            'printf "%s\\n" CHANGED',
+        ]
+    )
+    result = _run_guest_root_script(
+        cfg,
+        ip,
+        script=script,
+        summary=summary,
+        detail=detail,
+        dry_run=dry_run,
+    )
+    if dry_run or result is None:
+        return False
+    stdout = str(getattr(result, 'stdout', '') or '').strip().splitlines()
+    return bool(stdout and stdout[-1] == 'CHANGED')
+
+
+def _sync_persistent_attachment_manifest_to_guest(
+    cfg: AgentVMConfig,
+    ip: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    manifest_path = _persistent_host_manifest_path(cfg)
+    remote_target = f'{cfg.vm.user}@{ip}:{PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}'
+    ident = require_ssh_identity(cfg.paths.ssh_identity_file)
+    ssh_args = [
+        'ssh',
+        *ssh_base_args(
+            ident,
+            strict_host_key_checking='accept-new',
+            connect_timeout=5,
+            batch_mode=True,
+        ),
+    ]
+    mgr = CommandManager.current()
+    if dry_run:
+        print(
+            'DRYRUN: would sync persistent attachment manifest with rsync '
+            f'{manifest_path} -> {remote_target}'
+        )
+        return False
+    with mgr.step(
+        'Sync persistent attachment manifest into guest',
+        why='Push the host canonical manifest into the guest-local replay input using a checksum-based rsync so unchanged content stays untouched.',
+        approval_scope=f'persistent-manifest-sync:{cfg.vm.name}',
+    ):
+        mgr.run(
+            [
+                *ssh_args,
+                f'{cfg.vm.user}@{ip}',
+                f'sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_GUEST_STATE_PATH).parent))}',
+            ],
+            sudo=False,
+            role='modify',
+            check=True,
+            capture=True,
+            summary='Prepare guest persistent manifest directory',
+            detail=f'target={PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}',
+        )
+        result = mgr.run(
+            [
+                'rsync',
+                '--archive',
+                '--checksum',
+                '--itemize-changes',
+                '--no-owner',
+                '--no-group',
+                '--chmod=F644',
+                '--rsync-path',
+                'sudo -n rsync',
+                '-e',
+                ' '.join(shlex.quote(arg) for arg in ssh_args),
+                str(manifest_path),
+                remote_target,
+            ],
+            sudo=False,
+            role='modify',
+            check=True,
+            capture=True,
+            summary='Sync persistent attachment manifest to guest',
+            detail=f'source={manifest_path} target={remote_target}',
+        )
+    return bool((result.stdout or '').strip())
 
 
 def _sync_persistent_attachment_manifest_on_host(
@@ -148,29 +281,7 @@ def _sync_persistent_attachment_manifest_on_host(
             f'DRYRUN: would write persistent attachment manifest to {manifest_path}'
         )
         return manifest_path
-    mgr = CommandManager.current()
-    meta_dir = _persistent_host_meta_dir(cfg)
-    manifest_q = shlex.quote(str(manifest_path))
-    payload = shlex.quote(manifest_text)
-    with mgr.step(
-        'Sync persistent attachment manifest',
-        why='Update the host-side persistent attachment manifest that the guest boot-time replay helper consumes.',
-        approval_scope=f'persistent-manifest:{cfg.vm.name}',
-    ):
-        mgr.submit(
-            ['mkdir', '-p', str(meta_dir)],
-            sudo=True,
-            role='modify',
-            summary='Create persistent attachment metadata directory',
-            detail=f'target={meta_dir}',
-        )
-        mgr.submit(
-            ['bash', '-c', f'printf %s {payload} > {manifest_q}'],
-            sudo=True,
-            role='modify',
-            summary='Write persistent attachment manifest',
-            detail=f'target={manifest_path}',
-        )
+    _write_text_if_changed(manifest_path, manifest_text)
     return manifest_path
 
 
@@ -282,39 +393,45 @@ def _install_persistent_attachment_replay(
     ip: str,
     *,
     dry_run: bool,
-) -> None:
+) -> bool:
     replay_py = persistent_replay_python().rstrip('\n')
     service_text = persistent_replay_service_unit().rstrip('\n')
-
-    script = '\n'.join(
-        [
-            'set -euo pipefail',
-            f'sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_REPLAY_BIN).parent))}',
-            'sudo -n mkdir -p /etc/systemd/system',
-            'tmp_py="$(mktemp)"',
-            'tmp_service="$(mktemp)"',
-            'cat > "$tmp_py" <<\'PYEOF\'',
-            replay_py,
-            'PYEOF',
-            'cat > "$tmp_service" <<\'SVCEOF\'',
-            service_text,
-            'SVCEOF',
-            f'sudo -n install -m 0755 "$tmp_py" {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
-            f'sudo -n install -m 0644 "$tmp_service" /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}',
-            'rm -f "$tmp_py" "$tmp_service"',
-            'sudo -n systemctl daemon-reload',
-            f'sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}',
-        ]
-    )
-
-    _run_guest_root_script(
+    helper_changed = _install_guest_text_if_changed(
         cfg,
         ip,
-        script=script,
+        target=PERSISTENT_ATTACHMENT_REPLAY_BIN,
+        text=replay_py,
+        mode='0755',
         summary='Install persistent attachment replay helper',
         detail='Install or refresh the guest systemd replay helper used for boot-time persistent attachment restore.',
         dry_run=dry_run,
     )
+    unit_changed = _install_guest_text_if_changed(
+        cfg,
+        ip,
+        target=f'/etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}',
+        text=service_text,
+        mode='0644',
+        summary='Install persistent attachment replay unit',
+        detail='Install or refresh the guest systemd unit that launches persistent attachment replay at boot.',
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return False
+    if unit_changed:
+        _run_guest_root_script(
+            cfg,
+            ip,
+            script=(
+                'set -euo pipefail; '
+                'sudo -n systemctl daemon-reload; '
+                f'sudo -n systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}'
+            ),
+            summary='Refresh persistent attachment replay unit',
+            detail='Reload systemd and ensure the persistent attachment replay service stays enabled after the unit file changes.',
+            dry_run=dry_run,
+        )
+    return helper_changed or unit_changed
 
 
 def _reconcile_persistent_attachments_in_guest(
@@ -324,16 +441,62 @@ def _reconcile_persistent_attachments_in_guest(
     *,
     dry_run: bool,
 ) -> None:
-    _sync_persistent_attachment_manifest_on_host(cfg, cfg_path, dry_run=dry_run)
-    _install_persistent_attachment_replay(cfg, ip, dry_run=dry_run)
-    _run_guest_root_script(
-        cfg,
-        ip,
-        script=f'sudo -n {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
-        summary='Replay persistent attachment mounts inside guest',
-        detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
-        dry_run=dry_run,
+    # Host writes the canonical desired-state manifest first, then best-effort
+    # syncs the guest-local replay input. Only a real content change should
+    # trigger the expensive guest replay path.
+    _sync_persistent_attachment_manifest_on_host(
+        cfg, cfg_path, dry_run=dry_run
     )
+    guest_manifest_changed = False
+    replay_changed = False
+    try:
+        guest_manifest_changed = _sync_persistent_attachment_manifest_to_guest(
+            cfg,
+            ip,
+            dry_run=dry_run,
+        )
+    except Exception as ex:  # pragma: no cover - guest runtime path
+        log.warning(
+            'Could not sync persistent attachment manifest into guest for VM {} ip={}: {}',
+            cfg.vm.name,
+            ip,
+            ex,
+        )
+        return
+    try:
+        replay_changed = _install_persistent_attachment_replay(
+            cfg,
+            ip,
+            dry_run=dry_run,
+        )
+    except Exception as ex:  # pragma: no cover - guest runtime path
+        log.warning(
+            'Could not refresh persistent attachment replay helper for VM {} ip={}: {}',
+            cfg.vm.name,
+            ip,
+            ex,
+        )
+        return
+    if dry_run:
+        return
+    if not (guest_manifest_changed or replay_changed):
+        return
+    try:
+        _run_guest_root_script(
+            cfg,
+            ip,
+            script=f'sudo -n {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
+            summary='Replay persistent attachment mounts inside guest',
+            detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
+            dry_run=dry_run,
+        )
+    except Exception as ex:  # pragma: no cover - guest runtime path
+        log.warning(
+            'Could not replay persistent attachments for VM {} ip={}: {}',
+            cfg.vm.name,
+            ip,
+            ex,
+        )
 
 
 def _prepare_persistent_attachment_host_and_vm(

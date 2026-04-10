@@ -218,6 +218,18 @@ State of mind / reflection: this change improves user trust and visibility witho
 
 Uncertainties / risks: inline edit prompts currently cover high-impact fields but are still text-based and minimal; users can still use `config edit` for full control after init. Prompt wording/output can drift over time and may require upkeep in tests.
 
+## 2026-04-10 15:03:59 +0000
+
+Worked on the persistent-attachment replay redesign that breaks the guest control plane off the virtiofs-exported host manifest. The host now writes the canonical manifest under the per-VM runtime state directory, syncs it one-way into `/var/lib/aivm/attachments.json` over SSH/rsync when the VM is reachable, and only reruns guest replay when that synced content or the helper/unit install actually changes. On the guest side, the replay helper now reads only the local VM-disk manifest, mounts the persistent root as needed, and degrades to best-effort warnings for malformed, duplicate, nested, or source-missing records instead of failing the whole run immediately.
+
+State of mind / reflection: this was a useful cleanup because the old design coupled replay correctness to a fragile virtiofs export tree. I’m glad the new flow is explicit about authority and directionality, and the tests gave me confidence that the new failure policy is still conservative without being brittle.
+
+Uncertainties / risks: the guest replay script is now doing more validation and mount-table inspection internally, so subtle differences in `findmnt` output or bind-mount semantics across distros could still surface. I also chose a conservative best-effort policy, which means some bad records are skipped rather than hard-failing; that’s intentional, but it can make operator debugging rely more on stderr warnings.
+
+Tradeoffs and what might break: host manifest writes, helper/unit installs, and manifest syncs are now byte-for-byte / checksum gated, which reduces unnecessary privileged work but adds a bit more control logic. The host canonical manifest path moved to `base_dir/<vm>/state/persistent-attachments.json`, so any external tooling that assumed the old `.aivm`-under-export-tree location would need to be updated.
+
+What I’m confident about: the focused attachment/session/detach suites all pass, including the new tests for checksum-based rsync sync, write-if-changed behavior, conditional replay, nested destination handling, and missing-token/source best-effort replay. The repo no longer has code paths that treat `/mnt/aivm-persistent/.aivm/persistent-attachments.json` as the control-plane source of truth.
+
 Tradeoffs and what might break: non-interactive `config init` now errors unless `--yes` or `--defaults` is provided. This is intentional for explicitness but could affect unattended scripts that previously relied on implicit defaults.
 
 What I am confident about: added targeted tests for non-interactive enforcement, `--defaults` bypass, and interactive summary confirmation (`tests/test_cli_config_init.py`), and existing CLI helper/dry-run tests still pass.
