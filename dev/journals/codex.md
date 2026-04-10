@@ -2196,3 +2196,21 @@ Reflection/state of mind: this felt like exactly the sort of trust-preserving po
 Uncertainties/risks: the mismatch detection is based on common OpenSSH stderr wording rather than machine-readable exit codes, so there is some dependence on the usual English diagnostics. I tried to keep the patterns broad enough to catch the important variants without classifying normal reachability errors as mismatches. There is also still a larger design question around whether managed VMs should eventually use more isolated known-hosts handling, but that felt out of scope for this targeted repair.
 
 What I am confident about: the immediate bad path now fails on the first mismatched-host-key probe instead of spinning for the full timeout, ordinary slow-boot SSH waits still retry, the timeout path is a bit more informative because it includes the last SSH stderr, `uv run pytest -q tests/test_vm_helpers.py -k wait_for_ssh` passes, and `python3 -m py_compile aivm/vm/lifecycle.py tests/test_vm_helpers.py` succeeds.
+## 2026-04-10 16:59:46 +0000
+
+I was just verifying that the workspace is visible and writable from inside this environment before touching the actual bug. I listed the repo root, confirmed the expected project files and directories are present, and created a small `foo` file at the top level as a proof-of-write step.
+
+State of mind: this was a deliberately small check, but it matters because a VM workflow can look healthy while the local environment is still partially constrained. I want to be careful not to start editing production code until the workspace shape is confirmed, because that avoids wasting time diagnosing the wrong layer if filesystem access is unusual.
+
+Uncertainties / risks: none yet beyond the usual possibility that the real bug lives deeper in the repo than the initial symptom suggests. The only intentional side effect so far is the new `foo` file, which I can remove or overwrite later if it turns out to be just a temporary probe.
+
+What I am confident about: the repository root is readable, the workspace accepts writes, and I can proceed to inspect and modify source files when the user points me at the bug.
+## 2026-04-10 17:01:51 +0000
+
+I fixed the persistent replay bug that was treating plain directories on `/` as if they were already mounted. The replay helper now checks `mountpoint -q` first and only consults `findmnt` with exact mountpoint semantics when the guest destination is truly a mountpoint. That keeps the recent “continue on error” and busy-unmount tolerance behavior intact while preventing the misleading “current=/dev/vda1” path from blocking fresh bind mounts.
+
+State of mind: this was a nice example of a bug where the production symptom looked like a mount replacement problem, but the real issue was a lookup semantic mismatch. I’m glad the fix stayed small and local; the risk here was accidentally changing the replay behavior for real mounted targets, so I made sure the tests cover plain directories, mismatched real mountpoints, and already-correct mountpoints separately.
+
+Uncertainties / risks: the helper still depends on the usual guest tools (`mountpoint`, `findmnt`, `mount`, `umount`), but that was already true. The main thing I’m watching for is any downstream code that was implicitly relying on the old containment-style lookup, though that would have been the wrong behavior for this replay path.
+
+What I am confident about: exact mountpoint detection now guards the current-mount lookup, plain directories under `/` are treated as unmounted, real mountpoint mismatches still go through replacement logic, already-correct mounts remain no-ops, the focused persistent replay test file passes (`27 passed`), and the edited modules compile cleanly.

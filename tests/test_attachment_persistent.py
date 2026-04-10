@@ -57,6 +57,17 @@ def _make_guest_replay_fake_run(
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
             return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
+        if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
+            target = cmd[-1]
+            info = mounts.get(target)
+            if info is None:
+                return _FakeSubprocessResult(returncode=1)
+            return _FakeSubprocessResult(
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
+            )
         if cmd[:2] == ['mount', '-t']:
             root_mount = cmd[-1]
             mounts[root_mount] = {'source': root_mount, 'options': 'rw'}
@@ -80,9 +91,14 @@ def _make_guest_replay_fake_run(
             target = cmd[-1]
             info = mounts.get(target)
             if info is None:
-                return _FakeSubprocessResult(returncode=1)
+                return _FakeSubprocessResult(
+                    stdout='TARGET="/" SOURCE="/dev/vda1" OPTIONS="rw"'
+                )
             return _FakeSubprocessResult(
-                stdout=f'SOURCE="{info["source"]}" OPTIONS="{info["options"]}"'
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
             )
         if cmd and cmd[0] == 'findmnt':
             lines = [
@@ -838,6 +854,201 @@ def test_persistent_replay_helper_uses_guest_local_manifest_and_skips_bad_record
     assert '/workspace/proj/sub' not in mounts
 
 
+def test_persistent_replay_helper_treats_plain_root_directory_as_unmounted(
+    tmp_path: Path,
+) -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    source = persistent_replay_python()
+    ns = _exec_guest_replay_helper(source)
+    ns['PERSISTENT_ROOT_MOUNT'] = str(tmp_path / 'mnt')
+    ns['STATE_PATH'] = str(tmp_path / 'attachments.json')
+    ns['os'].makedirs = lambda *a, **k: None  # type: ignore[attr-defined]
+
+    desired_source = str(Path(ns['PERSISTENT_ROOT_MOUNT']) / 'token')
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, check=False, capture_output=False, text=False, stdout=None, stderr=None, **kwargs):
+        del check, capture_output, text, stdout, stderr, kwargs
+        calls.append(list(cmd))
+        if cmd[:2] == ['mountpoint', '-q']:
+            target = cmd[-1]
+            return _FakeSubprocessResult(returncode=0 if target == ns['PERSISTENT_ROOT_MOUNT'] or target in mounts else 1)
+        if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
+            return _FakeSubprocessResult(
+                stdout='TARGET="/" SOURCE="/dev/vda1" OPTIONS="rw"'
+            )
+        if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
+            target = cmd[-1]
+            info = mounts.get(target)
+            if info is None:
+                return _FakeSubprocessResult(returncode=1)
+            return _FakeSubprocessResult(
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
+            )
+        if cmd and cmd[0] == 'findmnt':
+            lines = [
+                f'TARGET="{target}" SOURCE="{info["source"]}"'
+                for target, info in mounts.items()
+            ]
+            return _FakeSubprocessResult(stdout='\n'.join(lines))
+        if cmd[:2] == ['mount', '-t']:
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'mount' and '--bind' in cmd:
+            target = cmd[-1]
+            source_path = cmd[cmd.index('--bind') + 1]
+            mounts[target] = {'source': source_path, 'options': 'rw'}
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'mount' and 'remount,bind,ro' in cmd[-2]:
+            target = cmd[-1]
+            if target in mounts:
+                mounts[target]['options'] = 'ro'
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'mount' and 'remount,bind,rw' in cmd[-2]:
+            target = cmd[-1]
+            if target in mounts:
+                mounts[target]['options'] = 'rw'
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'umount':
+            return _FakeSubprocessResult()
+        raise AssertionError(f'unhandled fake command: {cmd}')
+
+    mounts: dict[str, dict[str, str]] = {}
+    ns['subprocess'].run = fake_run  # type: ignore[index]
+
+    Path(ns['PERSISTENT_ROOT_MOUNT']).mkdir(parents=True, exist_ok=True)
+    Path(desired_source).mkdir(parents=True, exist_ok=True)
+    Path(ns['STATE_PATH']).write_text(
+        json.dumps(
+            {
+                'schema_version': 1,
+                'vm_name': 'vm',
+                'shared_root_mount': ns['PERSISTENT_ROOT_MOUNT'],
+                'records': [
+                    {
+                        'guest_dst': '/data/joncrall/dvc-repos/shitspotter_expt_dvc',
+                        'shared_root_token': 'token',
+                        'access': 'rw',
+                        'enabled': True,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    stderr = StringIO()
+    with redirect_stderr(stderr):
+        ns['main']()
+
+    assert any('--mountpoint' in call for call in calls)
+    assert not any('--target' in call for call in calls)
+    assert mounts['/data/joncrall/dvc-repos/shitspotter_expt_dvc']['source'] == desired_source
+    assert 'busy mount' not in stderr.getvalue()
+
+
+def test_persistent_replay_helper_replaces_wrong_source_on_real_mountpoint(
+    tmp_path: Path,
+) -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    source = persistent_replay_python()
+    ns = _exec_guest_replay_helper(source)
+    ns['PERSISTENT_ROOT_MOUNT'] = str(tmp_path / 'mnt')
+    ns['STATE_PATH'] = str(tmp_path / 'attachments.json')
+    ns['os'].makedirs = lambda *a, **k: None  # type: ignore[attr-defined]
+
+    desired_source = str(Path(ns['PERSISTENT_ROOT_MOUNT']) / 'desired-token')
+    wrong_source = str(Path(ns['PERSISTENT_ROOT_MOUNT']) / 'wrong-token')
+    mounts = {
+        '/workspace/proj': {
+            'source': wrong_source,
+            'options': 'rw',
+        }
+    }
+    ns['subprocess'].run = _make_guest_replay_fake_run(mounts)  # type: ignore[index]
+
+    Path(ns['PERSISTENT_ROOT_MOUNT']).mkdir(parents=True, exist_ok=True)
+    Path(desired_source).mkdir(parents=True, exist_ok=True)
+    Path(ns['STATE_PATH']).write_text(
+        json.dumps(
+            {
+                'schema_version': 1,
+                'vm_name': 'vm',
+                'shared_root_mount': ns['PERSISTENT_ROOT_MOUNT'],
+                'records': [
+                    {
+                        'guest_dst': '/workspace/proj',
+                        'shared_root_token': 'desired-token',
+                        'access': 'rw',
+                        'enabled': True,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    stderr = StringIO()
+    with redirect_stderr(stderr):
+        ns['main']()
+
+    assert mounts['/workspace/proj']['source'] == desired_source
+    assert 'busy mount' not in stderr.getvalue()
+
+
+def test_persistent_replay_helper_keeps_correct_real_mountpoint(
+    tmp_path: Path,
+) -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    source = persistent_replay_python()
+    ns = _exec_guest_replay_helper(source)
+    ns['PERSISTENT_ROOT_MOUNT'] = str(tmp_path / 'mnt')
+    ns['STATE_PATH'] = str(tmp_path / 'attachments.json')
+    ns['os'].makedirs = lambda *a, **k: None  # type: ignore[attr-defined]
+
+    desired_source = str(Path(ns['PERSISTENT_ROOT_MOUNT']) / 'desired-token')
+    mounts = {
+        '/workspace/proj': {
+            'source': desired_source,
+            'options': 'rw',
+        }
+    }
+    ns['subprocess'].run = _make_guest_replay_fake_run(mounts)  # type: ignore[index]
+
+    Path(ns['PERSISTENT_ROOT_MOUNT']).mkdir(parents=True, exist_ok=True)
+    Path(desired_source).mkdir(parents=True, exist_ok=True)
+    Path(ns['STATE_PATH']).write_text(
+        json.dumps(
+            {
+                'schema_version': 1,
+                'vm_name': 'vm',
+                'shared_root_mount': ns['PERSISTENT_ROOT_MOUNT'],
+                'records': [
+                    {
+                        'guest_dst': '/workspace/proj',
+                        'shared_root_token': 'desired-token',
+                        'access': 'rw',
+                        'enabled': True,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    stderr = StringIO()
+    with redirect_stderr(stderr):
+        ns['main']()
+
+    assert mounts['/workspace/proj']['source'] == desired_source
+    assert stderr.getvalue() == ''
+
+
 def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
     tmp_path: Path,
 ) -> None:
@@ -862,13 +1073,29 @@ def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
             return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
-        if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
+        if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
             target = cmd[-1]
             info = mounts.get(target)
             if info is None:
                 return _FakeSubprocessResult(returncode=1)
             return _FakeSubprocessResult(
-                stdout=f'SOURCE="{info["source"]}" OPTIONS="{info["options"]}"'
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
+            )
+        if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
+            target = cmd[-1]
+            info = mounts.get(target)
+            if info is None:
+                return _FakeSubprocessResult(
+                    stdout='TARGET="/" SOURCE="/dev/vda1" OPTIONS="rw"'
+                )
+            return _FakeSubprocessResult(
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
             )
         if cmd and cmd[0] == 'findmnt':
             lines = [
@@ -952,13 +1179,29 @@ def test_persistent_replay_helper_skips_busy_source_replacement_and_continues(
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
             return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
-        if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
+        if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
             target = cmd[-1]
             info = mounts.get(target)
             if info is None:
                 return _FakeSubprocessResult(returncode=1)
             return _FakeSubprocessResult(
-                stdout=f'SOURCE="{info["source"]}" OPTIONS="{info["options"]}"'
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
+            )
+        if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
+            target = cmd[-1]
+            info = mounts.get(target)
+            if info is None:
+                return _FakeSubprocessResult(
+                    stdout='TARGET="/" SOURCE="/dev/vda1" OPTIONS="rw"'
+                )
+            return _FakeSubprocessResult(
+                stdout=(
+                    f'TARGET="{target}" SOURCE="{info["source"]}" '
+                    f'OPTIONS="{info["options"]}"'
+                )
             )
         if cmd and cmd[0] == 'findmnt':
             lines = [

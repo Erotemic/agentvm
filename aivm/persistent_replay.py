@@ -94,9 +94,23 @@ def persistent_replay_python() -> str:
                 values[key.strip().upper()] = value.strip().strip('"')
             return values
 
+        def is_mountpoint(target):
+            probe = subprocess.run(["mountpoint", "-q", target])
+            return probe.returncode == 0
+
         def current_mount_info(target):
+            if not is_mountpoint(target):
+                return None
             result = subprocess.run(
-                ["findmnt", "-P", "-n", "-o", "SOURCE,OPTIONS", "--target", target],
+                [
+                    "findmnt",
+                    "-P",
+                    "-n",
+                    "-o",
+                    "TARGET,SOURCE,OPTIONS",
+                    "--mountpoint",
+                    target,
+                ],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -106,7 +120,11 @@ def persistent_replay_python() -> str:
             info = parse_findmnt_pairs(result.stdout)
             if not info:
                 return None
+            normalized_target = normalize_guest_dst(info.get("TARGET"))
+            if normalized_target != target:
+                return None
             return {{
+                "target": normalized_target,
                 "source": info.get("SOURCE", ""),
                 "options": info.get("OPTIONS", ""),
             }}
