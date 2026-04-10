@@ -10,10 +10,8 @@ from .guest import (
     _git_current_branch,
     _git_repo_context,
     _guest_repo_root_for_attachment,
-    _push_host_repo_to_guest,
     _upsert_host_git_remote,
     _upsert_ssh_config_entry,
-    _warn_if_git_repo_dirty,
 )
 from .persistent import (
     PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME,
@@ -116,7 +114,6 @@ __all__ = [
     '_normalize_attachment_mode',
     '_prepare_attached_session',
     '_probe_vm_running_nonsudo',
-    '_push_host_repo_to_guest',
     '_reconcile_attached_vm',
     '_record_attachment',
     '_resolve_attachment',
@@ -131,5 +128,4 @@ __all__ = [
     '_upsert_ssh_config_entry',
     '_sync_persistent_attachment_manifest_on_host',
     '_virtiofs_mapping_for_attachment',
-    '_warn_if_git_repo_dirty',
 ]

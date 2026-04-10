@@ -432,7 +432,7 @@ def test_vm_attach_escalates_when_nonsudo_probe_inconclusive(
     assert mounted
 
 
-def test_vm_attach_git_mode_syncs_guest_repo_when_running(
+def test_vm_attach_git_mode_sets_up_guest_repo_when_running(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()

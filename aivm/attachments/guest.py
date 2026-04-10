@@ -428,19 +428,6 @@ def _upsert_host_git_remote(
     return git_cfg, True
 
 
-def _warn_if_git_repo_dirty(repo_root: Path) -> None:
-    dirty = CommandManager.current().run(
-        ['git', '-C', str(repo_root), 'status', '--porcelain'],
-        sudo=False,
-        check=False,
-        capture=True,
-    )
-    if (dirty.stdout or '').strip():
-        print(
-            f'Warning: host repo {repo_root} has uncommitted changes; Git attachment sync only transfers committed branch state.'
-        )
-
-
 def _git_current_branch(repo_root: Path) -> str:
     branch = CommandManager.current().run(
         ['git', '-C', str(repo_root), 'rev-parse', '--abbrev-ref', 'HEAD'],
@@ -466,7 +453,6 @@ def _git_current_branch(repo_root: Path) -> str:
 def _ensure_guest_git_repo(
     cfg: AgentVMConfig,
     guest_repo_root: str,
-    branch: str,
 ) -> None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     root_q = shlex.quote(guest_repo_root)
@@ -478,14 +464,9 @@ def _ensure_guest_git_repo(
         f'if ! mkdir -p {root_q} 2>/dev/null; then '
         f'sudo -n mkdir -p {root_q} && sudo -n chown {user_q}:{user_q} {root_q}; fi && '
         f'if [ ! -d {shlex.quote(guest_repo_root + "/.git")} ]; then '
-        f'if [ -n "$(find {root_q} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then '
-        f'echo "guest target directory is not empty and is not a git repo: {guest_repo_root}" >&2; '
-        f'exit 2; '
-        f'fi; '
         f'git init {root_q} >/dev/null; '
         f'fi && '
-        f'git -C {root_q} config receive.denyCurrentBranch updateInstead && '
-        f'git -C {root_q} symbolic-ref HEAD refs/heads/{shlex.quote(branch)}'
+        f'git -C {root_q} config receive.denyCurrentBranch updateInstead'
     )
     res = CommandManager.current().run(
         [
@@ -506,42 +487,6 @@ def _ensure_guest_git_repo(
         )
 
 
-def _push_host_repo_to_guest(
-    repo_root: Path,
-    *,
-    remote_name: str,
-    branch: str,
-) -> None:
-    push = CommandManager.current().run(
-        [
-            'git',
-            '-C',
-            str(repo_root),
-            'push',
-            remote_name,
-            f'HEAD:refs/heads/{branch}',
-        ],
-        sudo=False,
-        check=False,
-        capture=True,
-    )
-    if push.code != 0:
-        msg = (push.stderr or push.stdout).strip()
-        if 'working tree has unstaged or staged changes' in msg.lower():
-            raise RuntimeError(
-                'Guest Git repo rejected host push because its working tree is not clean.\n'
-                f'Remote: {remote_name}\n'
-                f'Branch: {branch}\n'
-                f'Git said: {msg}'
-            )
-        raise RuntimeError(
-            'Failed to push host branch into guest Git repo.\n'
-            f'Remote: {remote_name}\n'
-            f'Branch: {branch}\n'
-            f'Git said: {msg}'
-        )
-
-
 def _ensure_git_clone_attachment(
     cfg: AgentVMConfig,
     host_src: Path,
@@ -553,7 +498,6 @@ def _ensure_git_clone_attachment(
 ) -> tuple[Path, str, str]:
     del ip
     repo_root, repo_rel = _git_repo_context(host_src)
-    branch = _git_current_branch(repo_root)
     guest_repo_root = _guest_repo_root_for_attachment(attachment, repo_rel)
     remote_name = _git_attachment_remote_name(cfg, repo_root)
     remote_url = f'{cfg.vm.name}:{guest_repo_root}'
@@ -567,30 +511,5 @@ def _ensure_git_clone_attachment(
     if dry_run:
         return repo_root, ssh_cfg.as_posix(), git_cfg.as_posix()
 
-    _warn_if_git_repo_dirty(repo_root)
-    _ensure_guest_git_repo(cfg, guest_repo_root, branch)
-    _push_host_repo_to_guest(
-        repo_root,
-        remote_name=remote_name,
-        branch=branch,
-    )
-    ident = require_ssh_identity(cfg.paths.ssh_identity_file)
-    final_probe = CommandManager.current().run(
-        [
-            'ssh',
-            *ssh_base_args(ident, strict_host_key_checking='accept-new'),
-            cfg.vm.name,
-            f'test -e {shlex.quote(attachment.guest_dst)}',
-        ],
-        sudo=False,
-        check=False,
-        capture=True,
-    )
-    if final_probe.code != 0:
-        raise RuntimeError(
-            'Guest Git sync completed, but the requested path is missing inside the guest repo.\n'
-            f'Host source: {host_src}\n'
-            f'Guest path: {attachment.guest_dst}\n'
-            'If this path only exists in uncommitted host changes, commit them before using git attachment mode.'
-        )
+    _ensure_guest_git_repo(cfg, guest_repo_root)
     return repo_root, str(ssh_cfg), str(git_cfg)

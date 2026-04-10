@@ -596,13 +596,16 @@ def test_ensure_guest_git_repo_uses_sudo_for_parent_creation(
         ),
     )
 
-    _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo', 'main')
+    _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo')
 
     assert len(cmds) == 1
     script = cmds[0][-1]
     assert 'sudo -n mkdir -p' in script
     assert 'sudo -n chown' in script
     assert '/home/joncrall/code/myrepo' in script
+    assert 'git init' in script
+    assert 'symbolic-ref' not in script
+    assert 'working tree' not in script
 
 
 def test_ensure_guest_symlink_uses_sudo_for_ln(
@@ -667,7 +670,7 @@ def test_ensure_guest_git_repo_uses_sudo_mkdir_for_full_path(
         lambda cmd, **kwargs: scripts.append(cmd[-1]) or _Proc(0, '', ''),
     )
 
-    _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo', 'main')
+    _ensure_guest_git_repo(cfg, '/home/joncrall/code/myrepo')
 
     assert scripts
     script = scripts[0]
@@ -677,6 +680,126 @@ def test_ensure_guest_git_repo_uses_sudo_mkdir_for_full_path(
     assert 'sudo -n chown' in script
     # Confirm no stale parent_q variable reference (parent-only mkdir)
     assert 'sudo -n mkdir -p /home/joncrall/code\n' not in script
+    assert 'symbolic-ref' not in script
+
+
+def test_ensure_guest_git_repo_allows_existing_dirty_tree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from aivm.attachments.guest import _ensure_guest_git_repo
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git-dirty-guest'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = ''
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
+
+    scripts: list[str] = []
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        lambda cmd, **kwargs: scripts.append(cmd[-1]) or _Proc(0, '', ''),
+    )
+
+    _ensure_guest_git_repo(cfg, '/home/joncrall/code/dirty-repo')
+
+    script = scripts[0]
+    assert 'git init' in script
+    assert 'is not empty and is not a git repo' not in script
+    assert 'symbolic-ref' not in script
+
+
+def test_ensure_git_clone_attachment_skips_push_and_dirty_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from aivm.attachments.guest import _ensure_git_clone_attachment
+
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    subprocess.run(['git', 'init'], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ['git', '-C', str(repo), 'config', 'user.email', 'test@example.com'],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ['git', '-C', str(repo), 'config', 'user.name', 'Test User'],
+        check=True,
+        capture_output=True,
+    )
+    (repo / 'tracked.txt').write_text('tracked\n', encoding='utf-8')
+    subprocess.run(
+        ['git', '-C', str(repo), 'add', 'tracked.txt'],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ['git', '-C', str(repo), 'commit', '-m', 'init'],
+        check=True,
+        capture_output=True,
+    )
+    (repo / 'dirty.txt').write_text('dirty\n', encoding='utf-8')
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-git-light'
+    cfg.vm.user = 'agent'
+    cfg.paths.ssh_identity_file = '/tmp/id'
+    attachment = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.GIT,
+        source_dir=str(repo.resolve()),
+        guest_dst='/workspace/repo',
+        tag='',
+    )
+
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr(
+        'aivm.attachments.guest.require_ssh_identity', lambda p: '/tmp/id'
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest.ssh_base_args', lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest._upsert_ssh_config_entry',
+        lambda *a, **k: (tmp_path / 'ssh-config', False),
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.guest._upsert_host_git_remote',
+        lambda *a, **k: (tmp_path / 'git-config', False),
+    )
+    guest_repo_calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.attachments.guest._ensure_guest_git_repo',
+        lambda *a, **k: guest_repo_calls.append((a, k)) or None,
+    )
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        'aivm.attachments.guest.log.warning',
+        lambda fmt, *args: warnings.append(fmt.format(*args)),
+    )
+
+    repo_root, ssh_cfg, git_cfg = _ensure_git_clone_attachment(
+        cfg,
+        repo,
+        attachment,
+        '10.0.0.5',
+        yes=True,
+        dry_run=False,
+    )
+
+    assert repo_root == repo.resolve()
+    assert ssh_cfg == str(tmp_path / 'ssh-config')
+    assert git_cfg == str(tmp_path / 'git-config')
+    assert guest_repo_calls
+    assert warnings == []
 
 
 def test_apply_guest_derived_symlinks_companion_only(
