@@ -179,6 +179,11 @@ def _install_guest_text_if_changed(
     target_path = Path(target)
     target_dir = shlex.quote(str(target_path.parent))
     target_q = shlex.quote(str(target_path))
+    # TODO: We could probably get a cleaner TRACE log (and less privledged average cases)
+    # if we instead build the text, get the sha256 hash, and then ask the guest to 
+    # give us the sha256 hash of what it has. That command check would be much easier
+    # for the user to read, and then only if we need to do a write will the larger 
+    # script be written. 
     script = '\n'.join(
         [
             'set -euo pipefail',
