@@ -124,6 +124,9 @@ def _emit_toml_kv(lines: list[str], key: str, val: object) -> None:
 
 
 def load_store(path: Path | None = None) -> Store:
+    # FIXME: This is called very often and touches the disk.
+    # we likely can do something more elegant hewhere a store is loaded once 
+    # (with a real architectural change, not just a functools.cache patch) 
     log.trace(f'Start load store {path}')
     fpath = path or store_path()
     if not fpath.exists():

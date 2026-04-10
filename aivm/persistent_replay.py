@@ -111,7 +111,7 @@ def persistent_replay_python() -> str:
                 "options": info.get("OPTIONS", ""),
             }}
 
-        def unmount_guest_dst(guest_dst):
+        def unmount_guest_dst(guest_dst, *, ignore_busy=False):
             probe = subprocess.run(["mountpoint", "-q", guest_dst])
             if probe.returncode != 0:
                 return
@@ -125,6 +125,12 @@ def persistent_replay_python() -> str:
                 return
             message = ((result.stderr or "") + "\\n" + (result.stdout or "")).lower()
             if "not mounted" in message:
+                return
+            if ignore_busy and "busy" in message:
+                print(
+                    f"WARNING: skipping busy stale persistent attachment mount {{guest_dst}}: {{(result.stderr or result.stdout).strip()}}",
+                    file=sys.stderr,
+                )
                 return
             raise RuntimeError(
                 f"could not unmount {{guest_dst}}: {{(result.stderr or result.stdout).strip()}}"
@@ -231,7 +237,7 @@ def persistent_replay_python() -> str:
                     continue
                 if target in desired_targets:
                     continue
-                unmount_guest_dst(target)
+                unmount_guest_dst(target, ignore_busy=True)
 
         def ensure_record(record):
             guest_dst = normalize_guest_dst(record.get("guest_dst"))
@@ -282,7 +288,7 @@ def persistent_replay_python() -> str:
             for guest_dst, enabled, record in records:
                 if not enabled:
                     try:
-                        unmount_guest_dst(guest_dst)
+                        unmount_guest_dst(guest_dst, ignore_busy=True)
                     except Exception as ex:  # pragma: no cover - guest runtime path
                         failures.append(str(ex))
                     continue

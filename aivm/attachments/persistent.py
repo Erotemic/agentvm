@@ -484,6 +484,13 @@ def _reconcile_persistent_attachments_in_guest(
     if not continue_on_error:
         _strict_reconcile()
         return
+    outer_manager = CommandManager.current()
+    isolated_manager = CommandManager(
+        yes=outer_manager.yes,
+        yes_sudo=outer_manager.yes_sudo,
+        auto_approve_readonly_sudo=outer_manager.auto_approve_readonly_sudo,
+    )
+    CommandManager.activate(isolated_manager)
     try:
         _strict_reconcile()
     except Exception as ex:  # pragma: no cover - guest runtime path
@@ -493,6 +500,8 @@ def _reconcile_persistent_attachments_in_guest(
             ip,
             ex,
         )
+    finally:
+        CommandManager.activate(outer_manager)
 
 
 def _prepare_persistent_attachment_host_and_vm(
