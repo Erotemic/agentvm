@@ -262,8 +262,19 @@ def persistent_replay_python() -> str:
                 current_source = str(current.get("source") or "").strip()
                 current_options = str(current.get("options") or "").strip()
                 if current_source and current_source != source:
-                    unmount_guest_dst(guest_dst)
-                    current = None
+                    unmount_guest_dst(guest_dst, ignore_busy=True)
+                    current = current_mount_info(guest_dst)
+                    if current is not None:
+                        current_source = str(current.get("source") or "").strip()
+                        if current_source and current_source != source:
+                            print(
+                                f"WARNING: skipping persistent attachment replacement for busy mount {{guest_dst}} (current={{current_source}} desired={{source}})",
+                                file=sys.stderr,
+                            )
+                            return
+                        current_options = str(current.get("options") or "").strip()
+                        if desired in current_options.split(","):
+                            return
                 elif desired in current_options.split(","):
                     return
             if current is None:

@@ -17,6 +17,7 @@ from aivm.attachments.persistent import (
     _reconcile_persistent_attachments_in_guest,
     _sync_persistent_attachment_manifest_on_host,
     _sync_persistent_attachment_manifest_to_guest,
+    _run_guest_root_script,
     _write_text_if_changed,
 )
 from aivm.commands import CommandError, CommandManager
@@ -659,9 +660,12 @@ def test_persistent_reconcile_continue_on_error_isolates_outer_command_queue(
         'aivm.attachments.persistent._install_persistent_attachment_replay',
         lambda *a, **k: False,
     )
+    replay_calls: list[dict] = []
     monkeypatch.setattr(
         'aivm.attachments.persistent._run_guest_root_script',
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError('replay boom')),
+        lambda *a, **k: replay_calls.append(k) or SimpleNamespace(
+            code=1, stdout='', stderr='replay boom'
+        ),
     )
 
     _reconcile_persistent_attachments_in_guest(
@@ -673,9 +677,52 @@ def test_persistent_reconcile_continue_on_error_isolates_outer_command_queue(
     )
 
     assert any('persistent-reconcile: VM' in msg for msg in warnings)
+    assert replay_calls and replay_calls[0]['check'] is False
     assert pending.done() is False
     with pytest.raises(CommandError):
         pending.result()
+
+
+def test_persistent_replay_script_nonchecking_path_avoids_error_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-nonchecking-replay'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    _activate_manager(monkeypatch)
+
+    calls: list[list[str]] = []
+
+    def fake_subprocess_run(cmd, **kwargs):
+        del kwargs
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=1, stdout='', stderr='replay boom')
+
+    errors: list[tuple] = []
+    monkeypatch.setattr(
+        'aivm.commands.subprocess.run',
+        fake_subprocess_run,
+    )
+    monkeypatch.setattr(
+        'aivm.commands.log.error',
+        lambda *args, **kwargs: errors.append((args, kwargs)),
+    )
+
+    with pytest.raises(RuntimeError, match='replay boom'):
+        _run_guest_root_script(
+            cfg,
+            '10.0.0.5',
+            script='echo replay',
+            summary='Replay persistent attachment mounts inside guest',
+            detail='',
+            dry_run=False,
+            check=False,
+        )
+
+    assert calls
+    assert not errors
 
 
 def test_persistent_reconcile_replays_when_guest_manifest_changes(
@@ -879,6 +926,104 @@ def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
     assert f'WARNING: skipping busy stale persistent attachment mount {stale_source}' in stderr.getvalue()
     assert '/workspace/keep' in mounts
     assert stale_source in mounts
+
+
+def test_persistent_replay_helper_skips_busy_source_replacement_and_continues(
+    tmp_path: Path,
+) -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    source = persistent_replay_python()
+    ns = _exec_guest_replay_helper(source)
+    ns['PERSISTENT_ROOT_MOUNT'] = str(tmp_path / 'mnt')
+    ns['STATE_PATH'] = str(tmp_path / 'attachments.json')
+    ns['os'].makedirs = lambda *a, **k: None  # type: ignore[attr-defined]
+
+    wrong_source = str(Path(ns['PERSISTENT_ROOT_MOUNT']) / 'wrong-token')
+    mounts = {
+        '/workspace/proj': {
+            'source': wrong_source,
+            'options': 'rw',
+        }
+    }
+
+    def fake_run(cmd, check=False, capture_output=False, text=False, stdout=None, stderr=None, **kwargs):
+        del check, capture_output, text, stdout, stderr, kwargs
+        if cmd[:2] == ['mountpoint', '-q']:
+            target = cmd[-1]
+            return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
+        if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
+            target = cmd[-1]
+            info = mounts.get(target)
+            if info is None:
+                return _FakeSubprocessResult(returncode=1)
+            return _FakeSubprocessResult(
+                stdout=f'SOURCE="{info["source"]}" OPTIONS="{info["options"]}"'
+            )
+        if cmd and cmd[0] == 'findmnt':
+            lines = [
+                f'TARGET="{target}" SOURCE="{info["source"]}"'
+                for target, info in mounts.items()
+            ]
+            return _FakeSubprocessResult(stdout='\n'.join(lines))
+        if cmd and cmd[0] == 'umount':
+            return _FakeSubprocessResult(returncode=16, stderr='umount: target is busy')
+        if cmd[:2] == ['mount', '-t']:
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'mount' and '--bind' in cmd:
+            target = cmd[-1]
+            source_path = cmd[cmd.index('--bind') + 1]
+            mounts[target] = {'source': source_path, 'options': 'rw'}
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'mount' and 'remount,bind,ro' in cmd[-2]:
+            target = cmd[-1]
+            if target in mounts:
+                mounts[target]['options'] = 'ro'
+            return _FakeSubprocessResult()
+        if cmd and cmd[0] == 'mount' and 'remount,bind,rw' in cmd[-2]:
+            target = cmd[-1]
+            if target in mounts:
+                mounts[target]['options'] = 'rw'
+            return _FakeSubprocessResult()
+        raise AssertionError(f'unhandled fake command: {cmd}')
+
+    ns['subprocess'].run = fake_run  # type: ignore[index]
+
+    Path(ns['PERSISTENT_ROOT_MOUNT']).mkdir(parents=True, exist_ok=True)
+    (Path(ns['PERSISTENT_ROOT_MOUNT']) / 'desired-token').mkdir(parents=True, exist_ok=True)
+    Path(ns['STATE_PATH']).write_text(
+        json.dumps(
+            {
+                'schema_version': 1,
+                'vm_name': 'vm',
+                'shared_root_mount': ns['PERSISTENT_ROOT_MOUNT'],
+                'records': [
+                    {
+                        'guest_dst': '/workspace/proj',
+                        'shared_root_token': 'desired-token',
+                        'access': 'rw',
+                        'enabled': True,
+                    },
+                    {
+                        'guest_dst': '/workspace/keep',
+                        'shared_root_token': 'desired-token',
+                        'access': 'rw',
+                        'enabled': True,
+                    },
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    stderr = StringIO()
+    with redirect_stderr(stderr):
+        ns['main']()
+
+    messages = stderr.getvalue()
+    assert 'WARNING: skipping persistent attachment replacement for busy mount /workspace/proj' in messages
+    assert '/workspace/keep' in mounts
+    assert mounts['/workspace/proj']['source'] == wrong_source
 
 
 def test_persistent_replay_helper_removes_nonbusy_stale_mount(

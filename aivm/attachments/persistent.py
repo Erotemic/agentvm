@@ -128,6 +128,7 @@ def _run_guest_root_script(
     summary: str,
     detail: str,
     dry_run: bool,
+    check: bool = True,
 ) -> object | None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     cmd = [
@@ -146,14 +147,21 @@ def _run_guest_root_script(
             f'DRYRUN: would run guest reconcile command: {" ".join(shlex.quote(c) for c in cmd)}'
         )
         return None
-    return CommandManager.current().run(
+    result = CommandManager.current().run(
         cmd,
         sudo=False,
-        check=True,
+        check=check,
         capture=True,
         summary=summary,
         detail=detail,
     )
+    if not check:
+        code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
+        if code != 0:
+            stderr = str(getattr(result, 'stderr', '') or '').strip()
+            stdout = str(getattr(result, 'stdout', '') or '').strip()
+            raise RuntimeError(stderr or stdout or f'guest command failed code={code}')
+    return result
 
 
 def _install_guest_text_if_changed(
@@ -166,6 +174,7 @@ def _install_guest_text_if_changed(
     summary: str,
     detail: str,
     dry_run: bool,
+    check: bool = True,
 ) -> bool:
     target_path = Path(target)
     target_dir = shlex.quote(str(target_path.parent))
@@ -195,9 +204,16 @@ def _install_guest_text_if_changed(
         summary=summary,
         detail=detail,
         dry_run=dry_run,
+        check=check,
     )
     if dry_run or result is None:
         return False
+    if not check:
+        code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
+        if code != 0:
+            stderr = str(getattr(result, 'stderr', '') or '').strip()
+            stdout = str(getattr(result, 'stdout', '') or '').strip()
+            raise RuntimeError(stderr or stdout or f'guest command failed code={code}')
     stdout = str(getattr(result, 'stdout', '') or '').strip().splitlines()
     return bool(stdout and stdout[-1] == 'CHANGED')
 
@@ -207,6 +223,7 @@ def _sync_persistent_attachment_manifest_to_guest(
     ip: str,
     *,
     dry_run: bool,
+    check: bool = True,
 ) -> bool:
     manifest_path = _persistent_host_manifest_path(cfg)
     remote_target = f'{cfg.vm.user}@{ip}:{PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}'
@@ -240,7 +257,7 @@ def _sync_persistent_attachment_manifest_to_guest(
             ],
             sudo=False,
             role='modify',
-            check=True,
+            check=check,
             capture=True,
             summary='Prepare guest persistent manifest directory',
             detail=f'target={PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}',
@@ -263,11 +280,17 @@ def _sync_persistent_attachment_manifest_to_guest(
             ],
             sudo=False,
             role='modify',
-            check=True,
+            check=check,
             capture=True,
             summary='Sync persistent attachment manifest to guest',
             detail=f'source={manifest_path} target={remote_target}',
         )
+    if not check:
+        code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
+        if code != 0:
+            stderr = str(getattr(result, 'stderr', '') or '').strip()
+            stdout = str(getattr(result, 'stdout', '') or '').strip()
+            raise RuntimeError(stderr or stdout or f'rsync failed code={code}')
     return bool((result.stdout or '').strip())
 
 
@@ -396,6 +419,7 @@ def _install_persistent_attachment_replay(
     ip: str,
     *,
     dry_run: bool,
+    check: bool = True,
 ) -> bool:
     replay_py = persistent_replay_python().rstrip('\n')
     service_text = persistent_replay_service_unit().rstrip('\n')
@@ -408,6 +432,7 @@ def _install_persistent_attachment_replay(
         summary='Install persistent attachment replay helper',
         detail='Install or refresh the guest systemd replay helper used for boot-time persistent attachment restore.',
         dry_run=dry_run,
+        check=check,
     )
     unit_changed = _install_guest_text_if_changed(
         cfg,
@@ -418,6 +443,7 @@ def _install_persistent_attachment_replay(
         summary='Install persistent attachment replay unit',
         detail='Install or refresh the guest systemd unit that launches persistent attachment replay at boot.',
         dry_run=dry_run,
+        check=check,
     )
     if dry_run:
         return False
@@ -433,6 +459,7 @@ def _install_persistent_attachment_replay(
             summary='Refresh persistent attachment replay unit',
             detail='Reload systemd and ensure the persistent attachment replay service stays enabled after the unit file changes.',
             dry_run=dry_run,
+            check=check,
         )
     return helper_changed or unit_changed
 
@@ -459,11 +486,13 @@ def _reconcile_persistent_attachments_in_guest(
             cfg,
             ip,
             dry_run=dry_run,
+            check=not continue_on_error,
         )
         replay_changed = _install_persistent_attachment_replay(
             cfg,
             ip,
             dry_run=dry_run,
+            check=not continue_on_error,
         )
         if dry_run:
             return
@@ -472,14 +501,23 @@ def _reconcile_persistent_attachments_in_guest(
             or guest_manifest_changed
             or replay_changed
         ):
-            _run_guest_root_script(
+            replay_result = _run_guest_root_script(
                 cfg,
                 ip,
                 script=f'sudo -n {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
                 summary='Replay persistent attachment mounts inside guest',
                 detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
                 dry_run=dry_run,
+                check=not continue_on_error,
             )
+            if continue_on_error and replay_result is not None:
+                code = int(
+                    getattr(replay_result, 'code', getattr(replay_result, 'returncode', 0))
+                )
+                if code != 0:
+                    stderr = str(getattr(replay_result, 'stderr', '') or '').strip()
+                    stdout = str(getattr(replay_result, 'stdout', '') or '').strip()
+                    raise RuntimeError(stderr or stdout or f'guest replay failed code={code}')
 
     if not continue_on_error:
         _strict_reconcile()
