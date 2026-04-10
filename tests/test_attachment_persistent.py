@@ -296,7 +296,7 @@ def test_persistent_replay_install_skips_refresh_when_unchanged(
     assert not any('daemon-reload' in script for _, script in calls)
 
 
-def test_persistent_reconcile_skips_replay_when_guest_manifest_unchanged(
+def test_persistent_reconcile_reruns_replay_when_guest_manifest_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
@@ -331,7 +331,172 @@ def test_persistent_reconcile_skips_replay_when_guest_manifest_unchanged(
         dry_run=False,
     )
 
-    assert [item[0] for item in calls] == ['host', 'guest-sync', 'install']
+    assert [item[0] for item in calls] == ['host', 'guest-sync', 'install', 'replay']
+
+
+def test_persistent_manifest_sync_returns_false_when_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-sync-unchanged'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    _activate_manager(monkeypatch)
+
+    calls: list[list[str]] = []
+
+    class FakeManager:
+        def step(self, *args, **kwargs):
+            del args, kwargs
+            return nullcontext()
+
+        def run(self, cmd, **kwargs):
+            del kwargs
+            calls.append(list(cmd))
+            if cmd and cmd[0] == 'rsync':
+                return SimpleNamespace(stdout='')
+            return SimpleNamespace(stdout='')
+
+    monkeypatch.setattr(
+        'aivm.attachments.persistent.CommandManager.current',
+        lambda: FakeManager(),
+    )
+
+    changed = _sync_persistent_attachment_manifest_to_guest(
+        cfg,
+        '10.0.0.5',
+        dry_run=False,
+    )
+
+    assert changed is False
+    assert any(cmd[0] == 'rsync' for cmd in calls)
+
+
+@pytest.mark.parametrize(
+    'phase',
+    ['sync', 'install', 'replay'],
+)
+def test_persistent_reconcile_propagates_primary_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = f'vm-persistent-fail-{phase}'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+    save_store(Store(), cfg_path)
+    _activate_manager(monkeypatch)
+
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_on_host',
+        lambda *a, **k: cfg_path,
+    )
+    if phase == 'sync':
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError('sync boom')),
+        )
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._install_persistent_attachment_replay',
+            lambda *a, **k: False,
+        )
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._run_guest_root_script',
+            lambda *a, **k: None,
+        )
+        with pytest.raises(RuntimeError, match='sync boom'):
+            _reconcile_persistent_attachments_in_guest(
+                cfg,
+                cfg_path,
+                '10.0.0.5',
+                dry_run=False,
+            )
+    elif phase == 'install':
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+            lambda *a, **k: False,
+        )
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._install_persistent_attachment_replay',
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError('install boom')),
+        )
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._run_guest_root_script',
+            lambda *a, **k: None,
+        )
+        with pytest.raises(RuntimeError, match='install boom'):
+            _reconcile_persistent_attachments_in_guest(
+                cfg,
+                cfg_path,
+                '10.0.0.5',
+                dry_run=False,
+            )
+    else:
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+            lambda *a, **k: False,
+        )
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._install_persistent_attachment_replay',
+            lambda *a, **k: False,
+        )
+
+        def fake_run(*args, **kwargs):
+            del args
+            if kwargs.get('summary') == 'Replay persistent attachment mounts inside guest':
+                raise RuntimeError('replay boom')
+            return SimpleNamespace(stdout='')
+
+        monkeypatch.setattr(
+            'aivm.attachments.persistent._run_guest_root_script',
+            fake_run,
+        )
+        with pytest.raises(RuntimeError, match='replay boom'):
+            _reconcile_persistent_attachments_in_guest(
+                cfg,
+                cfg_path,
+                '10.0.0.5',
+                dry_run=False,
+            )
+
+
+def test_persistent_reconcile_best_effort_logs_and_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-best-effort'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+    save_store(Store(), cfg_path)
+    _activate_manager(monkeypatch)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        'aivm.attachments.persistent.log.warning',
+        lambda fmt, *args: warnings.append(fmt.format(*args)),
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_on_host',
+        lambda *a, **k: cfg_path,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError('sync boom')),
+    )
+
+    _reconcile_persistent_attachments_in_guest(
+        cfg,
+        cfg_path,
+        '10.0.0.5',
+        dry_run=False,
+        best_effort=True,
+    )
+
+    assert any('Could not reconcile persistent attachments for VM' in msg for msg in warnings)
 
 
 def test_persistent_reconcile_replays_when_guest_manifest_changes(
@@ -444,4 +609,102 @@ def test_persistent_replay_helper_uses_guest_local_manifest_and_skips_bad_record
     mounts = ns['subprocess'].run.mounts  # type: ignore[attr-defined]
     assert '/workspace/proj' in mounts
     assert '/workspace/dup' in mounts
+    assert '/workspace/proj/sub' not in mounts
+
+
+def test_persistent_replay_helper_allows_enabled_child_under_disabled_parent(
+    tmp_path: Path,
+) -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    source = persistent_replay_python()
+    ns = _exec_guest_replay_helper(source)
+    ns['PERSISTENT_ROOT_MOUNT'] = str(tmp_path / 'mnt')
+    ns['STATE_PATH'] = str(tmp_path / 'attachments.json')
+    ns['os'].makedirs = lambda *a, **k: None  # type: ignore[attr-defined]
+    ns['subprocess'].run = _make_guest_replay_fake_run({})  # type: ignore[index]
+
+    mount_root = Path(ns['PERSISTENT_ROOT_MOUNT'])
+    mount_root.mkdir(parents=True, exist_ok=True)
+    for token in ['parent', 'child']:
+        (mount_root / token).mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        'schema_version': 1,
+        'vm_name': 'vm',
+        'shared_root_mount': ns['PERSISTENT_ROOT_MOUNT'],
+        'records': [
+            {
+                'guest_dst': '/workspace/proj',
+                'shared_root_token': 'parent',
+                'access': 'rw',
+                'enabled': False,
+            },
+            {
+                'guest_dst': '/workspace/proj/sub',
+                'shared_root_token': 'child',
+                'access': 'rw',
+                'enabled': True,
+            },
+        ],
+    }
+    Path(ns['STATE_PATH']).write_text(json.dumps(payload), encoding='utf-8')
+
+    stderr = StringIO()
+    with redirect_stderr(stderr):
+        ns['main']()
+
+    messages = stderr.getvalue()
+    assert 'ignoring nested persistent attachment child' not in messages
+    mounts = ns['subprocess'].run.mounts  # type: ignore[attr-defined]
+    assert '/workspace/proj/sub' in mounts
+    assert '/workspace/proj' not in mounts
+
+
+def test_persistent_replay_helper_ignores_enabled_child_under_enabled_parent(
+    tmp_path: Path,
+) -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    source = persistent_replay_python()
+    ns = _exec_guest_replay_helper(source)
+    ns['PERSISTENT_ROOT_MOUNT'] = str(tmp_path / 'mnt')
+    ns['STATE_PATH'] = str(tmp_path / 'attachments.json')
+    ns['os'].makedirs = lambda *a, **k: None  # type: ignore[attr-defined]
+    ns['subprocess'].run = _make_guest_replay_fake_run({})  # type: ignore[index]
+
+    mount_root = Path(ns['PERSISTENT_ROOT_MOUNT'])
+    mount_root.mkdir(parents=True, exist_ok=True)
+    for token in ['parent', 'child']:
+        (mount_root / token).mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        'schema_version': 1,
+        'vm_name': 'vm',
+        'shared_root_mount': ns['PERSISTENT_ROOT_MOUNT'],
+        'records': [
+            {
+                'guest_dst': '/workspace/proj',
+                'shared_root_token': 'parent',
+                'access': 'rw',
+                'enabled': True,
+            },
+            {
+                'guest_dst': '/workspace/proj/sub',
+                'shared_root_token': 'child',
+                'access': 'rw',
+                'enabled': True,
+            },
+        ],
+    }
+    Path(ns['STATE_PATH']).write_text(json.dumps(payload), encoding='utf-8')
+
+    stderr = StringIO()
+    with redirect_stderr(stderr):
+        ns['main']()
+
+    messages = stderr.getvalue()
+    assert 'WARNING: ignoring nested persistent attachment child /workspace/proj/sub under /workspace/proj' in messages
+    mounts = ns['subprocess'].run.mounts  # type: ignore[attr-defined]
+    assert '/workspace/proj' in mounts
     assert '/workspace/proj/sub' not in mounts

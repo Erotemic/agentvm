@@ -1025,6 +1025,90 @@ def test_restore_shared_root_attachment_passes_mirror_home(
     assert ensure_calls[0]['allow_disruptive'] is False
 
 
+def test_restore_persistent_secondary_failure_is_best_effort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from aivm.attachments.session import _restore_saved_vm_attachments
+
+    _activate_manager(monkeypatch)
+
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-restore-persistent-best-effort'
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+
+    primary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(tmp_path / 'primary'),
+        guest_dst=str(tmp_path / 'primary'),
+        tag='tag-primary',
+    )
+    (tmp_path / 'primary').mkdir()
+
+    persistent_secondary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.PERSISTENT,
+        source_dir=str(tmp_path / 'persistent'),
+        guest_dst='/workspace/persistent',
+        tag='tag-persistent',
+    )
+    shared_secondary = ResolvedAttachment(
+        vm_name=cfg.vm.name,
+        mode=AttachmentMode.SHARED,
+        source_dir=str(tmp_path / 'shared'),
+        guest_dst='/workspace/shared',
+        tag='tag-shared',
+    )
+    (tmp_path / 'shared').mkdir()
+
+    mounted: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.attachments.session._saved_vm_attachments',
+        lambda *a, **k: [primary, persistent_secondary, shared_secondary],
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session._reconcile_persistent_attachments_in_guest',
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError('persistent boom')),
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session.vm_share_mappings',
+        lambda *a, **k: [(str(shared_secondary.source_dir), 'tag-shared')],
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session.drift_align_attachment_tag_with_mappings',
+        lambda att, *a, **k: att,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session.drift_attachment_has_mapping',
+        lambda cfg_a, att, mappings: True,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session.ensure_share_mounted',
+        lambda *a, **k: mounted.append((a, k)) or None,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.session._record_attachment', lambda *a, **k: cfg_path
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        'aivm.attachments.session.log.warning',
+        lambda fmt, *args: warnings.append(fmt.format(*args)),
+    )
+
+    _restore_saved_vm_attachments(
+        cfg,
+        cfg_path,
+        ip='10.0.0.1',
+        primary_attachment=primary,
+        yes=True,
+        mirror_home=False,
+    )
+
+    assert any('Could not replay persistent attachments for VM' in msg for msg in warnings)
+    assert mounted
+
+
 def test_record_attachment_persists_lexical_path_for_symlink(
     tmp_path: Path,
 ) -> None:

@@ -313,6 +313,7 @@ def _restore_saved_vm_attachments(
                 cfg_path,
                 ip,
                 dry_run=False,
+                best_effort=True,
             )
         except Exception as ex:
             log.warning(

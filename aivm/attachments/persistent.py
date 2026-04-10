@@ -15,6 +15,8 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from loguru import logger as log
+
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..persistent_replay import (
@@ -440,59 +442,48 @@ def _reconcile_persistent_attachments_in_guest(
     ip: str,
     *,
     dry_run: bool,
+    force_replay: bool = True,
+    best_effort: bool = False,
 ) -> None:
-    # Host writes the canonical desired-state manifest first, then best-effort
-    # syncs the guest-local replay input. Only a real content change should
-    # trigger the expensive guest replay path.
-    _sync_persistent_attachment_manifest_on_host(
-        cfg, cfg_path, dry_run=dry_run
-    )
-    guest_manifest_changed = False
-    replay_changed = False
-    try:
+    # Host writes the canonical desired-state manifest first. The guest-local
+    # manifest and helper are refreshed next, and explicit reconcile paths
+    # always run replay even when the bytes were unchanged. Secondary restore
+    # paths can opt into best-effort handling so a single bad VM does not abort
+    # the broader restore pass.
+    def _strict_reconcile() -> None:
+        _sync_persistent_attachment_manifest_on_host(
+            cfg, cfg_path, dry_run=dry_run
+        )
         guest_manifest_changed = _sync_persistent_attachment_manifest_to_guest(
             cfg,
             ip,
             dry_run=dry_run,
         )
-    except Exception as ex:  # pragma: no cover - guest runtime path
-        log.warning(
-            'Could not sync persistent attachment manifest into guest for VM {} ip={}: {}',
-            cfg.vm.name,
-            ip,
-            ex,
-        )
-        return
-    try:
         replay_changed = _install_persistent_attachment_replay(
             cfg,
             ip,
             dry_run=dry_run,
         )
-    except Exception as ex:  # pragma: no cover - guest runtime path
-        log.warning(
-            'Could not refresh persistent attachment replay helper for VM {} ip={}: {}',
-            cfg.vm.name,
-            ip,
-            ex,
-        )
-        return
-    if dry_run:
-        return
-    if not (guest_manifest_changed or replay_changed):
+        if dry_run:
+            return
+        if force_replay or guest_manifest_changed or replay_changed:
+            _run_guest_root_script(
+                cfg,
+                ip,
+                script=f'sudo -n {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
+                summary='Replay persistent attachment mounts inside guest',
+                detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
+                dry_run=dry_run,
+            )
+
+    if not best_effort:
+        _strict_reconcile()
         return
     try:
-        _run_guest_root_script(
-            cfg,
-            ip,
-            script=f'sudo -n {shlex.quote(PERSISTENT_ATTACHMENT_REPLAY_BIN)}',
-            summary='Replay persistent attachment mounts inside guest',
-            detail='Verify and repair guest-visible persistent attachment bind mounts from the persisted manifest.',
-            dry_run=dry_run,
-        )
+        _strict_reconcile()
     except Exception as ex:  # pragma: no cover - guest runtime path
         log.warning(
-            'Could not replay persistent attachments for VM {} ip={}: {}',
+            'Could not reconcile persistent attachments for VM {} ip={}: {}',
             cfg.vm.name,
             ip,
             ex,

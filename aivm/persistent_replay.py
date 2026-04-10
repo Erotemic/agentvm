@@ -136,9 +136,12 @@ def persistent_replay_python() -> str:
             return child_path != parent_path and child_path.is_relative_to(parent_path)
 
         def validate_records(records):
-            # Normalize the desired record set before replay. Nested child
-            # destinations are intentionally collapsed by keeping the parent
-            # and ignoring the child record.
+            # Normalize the desired record set before replay.
+            #
+            # Enabled parents are the only entries that may suppress nested
+            # enabled children. Disabled entries are still tracked so we can
+            # unmount them explicitly, but they never act as blockers for
+            # descendant mounts.
             normalized = []
             for index, record in enumerate(records):
                 if not isinstance(record, dict):
@@ -161,31 +164,21 @@ def persistent_replay_python() -> str:
                         file=sys.stderr,
                     )
                     continue
-                normalized.append((guest_dst, index, record))
-
-            normalized.sort(key=lambda item: (len(PurePosixPath(item[0]).parts), item[0], item[1]))
-            accepted = []
-            seen_targets = {{}}
-            for guest_dst, index, record in normalized:
+                enabled = bool(record.get("enabled", True))
                 access = str(record.get("access") or "").strip() or "rw"
-                parent_hit = None
-                for accepted_guest_dst, accepted_record in accepted:
-                    if is_descendant(guest_dst, accepted_guest_dst):
-                        parent_hit = (accepted_guest_dst, accepted_record)
-                if parent_hit is not None:
-                    parent_guest_dst, parent_record = parent_hit
-                    parent_access = str(parent_record.get("access") or "").strip() or "rw"
-                    if access != parent_access:
-                        print(
-                            f"ERROR: ignoring nested persistent attachment child {{guest_dst}} under {{parent_guest_dst}} because access differs (child={{access}} parent={{parent_access}})",
-                            file=sys.stderr,
-                        )
-                    else:
-                        print(
-                            f"WARNING: ignoring nested persistent attachment child {{guest_dst}} under {{parent_guest_dst}}",
-                            file=sys.stderr,
-                        )
-                    continue
+                normalized.append((guest_dst, index, enabled, access, record))
+
+            normalized.sort(
+                key=lambda item: (
+                    len(PurePosixPath(item[0]).parts),
+                    item[0],
+                    item[1],
+                )
+            )
+            accepted = []
+            blockers = []
+            seen_targets = {{}}
+            for guest_dst, index, enabled, access, record in normalized:
                 if guest_dst in seen_targets:
                     first_index = seen_targets[guest_dst]
                     print(
@@ -194,7 +187,26 @@ def persistent_replay_python() -> str:
                     )
                     continue
                 seen_targets[guest_dst] = index
-                accepted.append((guest_dst, record))
+                if enabled:
+                    parent_hit = None
+                    for accepted_guest_dst, accepted_access in blockers:
+                        if is_descendant(guest_dst, accepted_guest_dst):
+                            parent_hit = (accepted_guest_dst, accepted_access)
+                    if parent_hit is not None:
+                        parent_guest_dst, parent_access = parent_hit
+                        if access != parent_access:
+                            print(
+                                f"ERROR: ignoring nested persistent attachment child {{guest_dst}} under {{parent_guest_dst}} because access differs (child={{access}} parent={{parent_access}})",
+                                file=sys.stderr,
+                            )
+                        else:
+                            print(
+                                f"WARNING: ignoring nested persistent attachment child {{guest_dst}} under {{parent_guest_dst}}",
+                                file=sys.stderr,
+                            )
+                        continue
+                    blockers.append((guest_dst, access))
+                accepted.append((guest_dst, enabled, record))
             return accepted
 
         def prune_stale_mounts(desired_targets):
@@ -262,10 +274,12 @@ def persistent_replay_python() -> str:
         def sync_state():
             desired = load_json(STATE_PATH)
             records = validate_records(desired.get("records", []))
-            desired_targets = {{guest_dst for guest_dst, _ in records}}
+            desired_targets = {{
+                guest_dst for guest_dst, _enabled, _record in records
+            }}
             prune_stale_mounts(desired_targets)
             failures = []
-            for guest_dst, record in records:
+            for guest_dst, enabled, record in records:
                 if not record.get("enabled", True):
                     try:
                         unmount_guest_dst(guest_dst)
