@@ -1072,7 +1072,11 @@ def test_wait_for_ssh_retries_transient_startup_errors(
         del self, cmd, kwargs
         calls['n'] += 1
         if calls['n'] == 1:
-            return CmdResult(255, '', 'ssh: connect to host 10.0.0.2 port 22: Connection refused')
+            return CmdResult(
+                255,
+                '',
+                'ssh: connect to host 10.0.0.2 port 22: Connection refused',
+            )
         if calls['n'] == 2:
             return CmdResult(124, '', 'command timed out')
         return CmdResult(0, '', '')

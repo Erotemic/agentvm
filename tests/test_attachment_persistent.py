@@ -15,9 +15,9 @@ from aivm.attachments.persistent import (
     _persistent_attachment_manifest_text,
     _persistent_host_manifest_path,
     _reconcile_persistent_attachments_in_guest,
+    _run_guest_root_script,
     _sync_persistent_attachment_manifest_on_host,
     _sync_persistent_attachment_manifest_to_guest,
-    _run_guest_root_script,
     _write_text_if_changed,
 )
 from aivm.commands import CommandError, CommandManager
@@ -51,12 +51,22 @@ def _make_guest_replay_fake_run(
 ):
     root_mount: str = ''
 
-    def fake_run(cmd, check=False, capture_output=False, text=False, stdout=None, stderr=None, **kwargs):
+    def fake_run(
+        cmd,
+        check=False,
+        capture_output=False,
+        text=False,
+        stdout=None,
+        stderr=None,
+        **kwargs,
+    ):
         del check, capture_output, text, stdout, stderr, kwargs
         nonlocal root_mount
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
-            return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
+            return _FakeSubprocessResult(
+                returncode=0 if target in mounts else 1
+            )
         if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
             target = cmd[-1]
             info = mounts.get(target)
@@ -205,7 +215,14 @@ def test_persistent_host_manifest_path_uses_app_data_dir(
     path = _persistent_host_manifest_path(cfg)
 
     assert calls == [('aivm', 'data')]
-    assert path == tmp_path / 'data' / cfg.vm.name / 'state' / 'persistent-attachments.json'
+    assert (
+        path
+        == tmp_path
+        / 'data'
+        / cfg.vm.name
+        / 'state'
+        / 'persistent-attachments.json'
+    )
     assert str(cfg.paths.base_dir) not in str(path)
 
 
@@ -233,7 +250,9 @@ def test_persistent_manifest_sync_uses_checksum_rsync(
             del kwargs
             calls.append(list(cmd))
             if cmd and cmd[0] == 'rsync':
-                return SimpleNamespace(stdout='>f..t...... persistent-attachments.json\n')
+                return SimpleNamespace(
+                    stdout='>f..t...... persistent-attachments.json\n'
+                )
             return SimpleNamespace(stdout='')
 
     monkeypatch.setattr(
@@ -316,7 +335,9 @@ def test_persistent_replay_install_skips_refresh_when_unchanged(
         if 'helper' in summary.lower() or 'unit' in summary.lower():
             return SimpleNamespace(stdout='UNCHANGED\n')
         if 'Refresh persistent attachment replay unit' in summary:
-            raise AssertionError('daemon-reload should be skipped when unchanged')
+            raise AssertionError(
+                'daemon-reload should be skipped when unchanged'
+            )
         raise AssertionError(f'unexpected summary: {summary}')
 
     monkeypatch.setattr(
@@ -370,7 +391,12 @@ def test_persistent_reconcile_reruns_replay_when_guest_manifest_unchanged(
         dry_run=False,
     )
 
-    assert [item[0] for item in calls] == ['host', 'guest-sync', 'install', 'replay']
+    assert [item[0] for item in calls] == [
+        'host',
+        'guest-sync',
+        'install',
+        'replay',
+    ]
 
 
 def test_persistent_reconcile_skips_replay_when_not_forced_and_unchanged(
@@ -523,7 +549,10 @@ def test_persistent_reconcile_propagates_primary_failures(
 
         def fake_run(*args, **kwargs):
             del args
-            if kwargs.get('summary') == 'Replay persistent attachment mounts inside guest':
+            if (
+                kwargs.get('summary')
+                == 'Replay persistent attachment mounts inside guest'
+            ):
                 raise RuntimeError('replay boom')
             return SimpleNamespace(stdout='')
 
@@ -620,7 +649,10 @@ def test_persistent_reconcile_continue_on_error_logs_and_continues_on_late_failu
 
         def fake_run(*args, **kwargs):
             del args
-            if kwargs.get('summary') == 'Replay persistent attachment mounts inside guest':
+            if (
+                kwargs.get('summary')
+                == 'Replay persistent attachment mounts inside guest'
+            ):
                 raise RuntimeError('replay boom')
             return SimpleNamespace(stdout='')
 
@@ -679,9 +711,8 @@ def test_persistent_reconcile_continue_on_error_isolates_outer_command_queue(
     replay_calls: list[dict] = []
     monkeypatch.setattr(
         'aivm.attachments.persistent._run_guest_root_script',
-        lambda *a, **k: replay_calls.append(k) or SimpleNamespace(
-            code=1, stdout='', stderr='replay boom'
-        ),
+        lambda *a, **k: replay_calls.append(k)
+        or SimpleNamespace(code=1, stdout='', stderr='replay boom'),
     )
 
     _reconcile_persistent_attachments_in_guest(
@@ -776,8 +807,16 @@ def test_persistent_reconcile_replays_when_guest_manifest_changes(
         dry_run=False,
     )
 
-    assert [item[0] for item in calls] == ['host', 'guest-sync', 'install', 'replay']
-    assert calls[-1][2]['summary'] == 'Replay persistent attachment mounts inside guest'
+    assert [item[0] for item in calls] == [
+        'host',
+        'guest-sync',
+        'install',
+        'replay',
+    ]
+    assert (
+        calls[-1][2]['summary']
+        == 'Replay persistent attachment mounts inside guest'
+    )
 
 
 def test_persistent_replay_helper_uses_guest_local_manifest_and_skips_bad_records(
@@ -846,8 +885,13 @@ def test_persistent_replay_helper_uses_guest_local_manifest_and_skips_bad_record
     messages = stderr.getvalue()
     assert 'HOST_MANIFEST' not in messages
     assert 'missing shared_root_token' in messages
-    assert 'nested persistent attachment child /workspace/proj/sub under /workspace/proj' in messages
-    assert 'duplicate persistent attachment guest_dst /workspace/dup' in messages
+    assert (
+        'nested persistent attachment child /workspace/proj/sub under /workspace/proj'
+        in messages
+    )
+    assert (
+        'duplicate persistent attachment guest_dst /workspace/dup' in messages
+    )
     mounts = ns['subprocess'].run.mounts  # type: ignore[attr-defined]
     assert '/workspace/proj' in mounts
     assert '/workspace/dup' in mounts
@@ -868,12 +912,24 @@ def test_persistent_replay_helper_treats_plain_root_directory_as_unmounted(
     desired_source = str(Path(ns['PERSISTENT_ROOT_MOUNT']) / 'token')
     calls: list[list[str]] = []
 
-    def fake_run(cmd, check=False, capture_output=False, text=False, stdout=None, stderr=None, **kwargs):
+    def fake_run(
+        cmd,
+        check=False,
+        capture_output=False,
+        text=False,
+        stdout=None,
+        stderr=None,
+        **kwargs,
+    ):
         del check, capture_output, text, stdout, stderr, kwargs
         calls.append(list(cmd))
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
-            return _FakeSubprocessResult(returncode=0 if target == ns['PERSISTENT_ROOT_MOUNT'] or target in mounts else 1)
+            return _FakeSubprocessResult(
+                returncode=0
+                if target == ns['PERSISTENT_ROOT_MOUNT'] or target in mounts
+                else 1
+            )
         if cmd and cmd[0] == 'findmnt' and '--target' in cmd:
             return _FakeSubprocessResult(
                 stdout='TARGET="/" SOURCE="/dev/vda1" OPTIONS="rw"'
@@ -946,7 +1002,10 @@ def test_persistent_replay_helper_treats_plain_root_directory_as_unmounted(
 
     assert any('--mountpoint' in call for call in calls)
     assert not any('--target' in call for call in calls)
-    assert mounts['/data/joncrall/dvc-repos/shitspotter_expt_dvc']['source'] == desired_source
+    assert (
+        mounts['/data/joncrall/dvc-repos/shitspotter_expt_dvc']['source']
+        == desired_source
+    )
     assert 'busy mount' not in stderr.getvalue()
 
 
@@ -1068,11 +1127,21 @@ def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
         }
     }
 
-    def fake_run(cmd, check=False, capture_output=False, text=False, stdout=None, stderr=None, **kwargs):
+    def fake_run(
+        cmd,
+        check=False,
+        capture_output=False,
+        text=False,
+        stdout=None,
+        stderr=None,
+        **kwargs,
+    ):
         del check, capture_output, text, stdout, stderr, kwargs
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
-            return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
+            return _FakeSubprocessResult(
+                returncode=0 if target in mounts else 1
+            )
         if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
             target = cmd[-1]
             info = mounts.get(target)
@@ -1104,7 +1173,9 @@ def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
             ]
             return _FakeSubprocessResult(stdout='\n'.join(lines))
         if cmd and cmd[0] == 'umount':
-            return _FakeSubprocessResult(returncode=16, stderr='umount: target is busy')
+            return _FakeSubprocessResult(
+                returncode=16, stderr='umount: target is busy'
+            )
         if cmd[:2] == ['mount', '-t']:
             return _FakeSubprocessResult()
         if cmd and cmd[0] == 'mount' and '--bind' in cmd:
@@ -1126,7 +1197,9 @@ def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
 
     ns['subprocess'].run = fake_run  # type: ignore[index]
 
-    (Path(ns['PERSISTENT_ROOT_MOUNT']) / 'keep').mkdir(parents=True, exist_ok=True)
+    (Path(ns['PERSISTENT_ROOT_MOUNT']) / 'keep').mkdir(
+        parents=True, exist_ok=True
+    )
     Path(ns['STATE_PATH']).write_text(
         json.dumps(
             {
@@ -1150,7 +1223,10 @@ def test_persistent_replay_helper_skips_busy_stale_prune_and_continues(
     with redirect_stderr(stderr):
         ns['main']()
 
-    assert f'WARNING: skipping busy stale persistent attachment mount {stale_source}' in stderr.getvalue()
+    assert (
+        f'WARNING: skipping busy stale persistent attachment mount {stale_source}'
+        in stderr.getvalue()
+    )
     assert '/workspace/keep' in mounts
     assert stale_source in mounts
 
@@ -1174,11 +1250,21 @@ def test_persistent_replay_helper_skips_busy_source_replacement_and_continues(
         }
     }
 
-    def fake_run(cmd, check=False, capture_output=False, text=False, stdout=None, stderr=None, **kwargs):
+    def fake_run(
+        cmd,
+        check=False,
+        capture_output=False,
+        text=False,
+        stdout=None,
+        stderr=None,
+        **kwargs,
+    ):
         del check, capture_output, text, stdout, stderr, kwargs
         if cmd[:2] == ['mountpoint', '-q']:
             target = cmd[-1]
-            return _FakeSubprocessResult(returncode=0 if target in mounts else 1)
+            return _FakeSubprocessResult(
+                returncode=0 if target in mounts else 1
+            )
         if cmd and cmd[0] == 'findmnt' and '--mountpoint' in cmd:
             target = cmd[-1]
             info = mounts.get(target)
@@ -1210,7 +1296,9 @@ def test_persistent_replay_helper_skips_busy_source_replacement_and_continues(
             ]
             return _FakeSubprocessResult(stdout='\n'.join(lines))
         if cmd and cmd[0] == 'umount':
-            return _FakeSubprocessResult(returncode=16, stderr='umount: target is busy')
+            return _FakeSubprocessResult(
+                returncode=16, stderr='umount: target is busy'
+            )
         if cmd[:2] == ['mount', '-t']:
             return _FakeSubprocessResult()
         if cmd and cmd[0] == 'mount' and '--bind' in cmd:
@@ -1233,7 +1321,9 @@ def test_persistent_replay_helper_skips_busy_source_replacement_and_continues(
     ns['subprocess'].run = fake_run  # type: ignore[index]
 
     Path(ns['PERSISTENT_ROOT_MOUNT']).mkdir(parents=True, exist_ok=True)
-    (Path(ns['PERSISTENT_ROOT_MOUNT']) / 'desired-token').mkdir(parents=True, exist_ok=True)
+    (Path(ns['PERSISTENT_ROOT_MOUNT']) / 'desired-token').mkdir(
+        parents=True, exist_ok=True
+    )
     Path(ns['STATE_PATH']).write_text(
         json.dumps(
             {
@@ -1264,7 +1354,10 @@ def test_persistent_replay_helper_skips_busy_source_replacement_and_continues(
         ns['main']()
 
     messages = stderr.getvalue()
-    assert 'WARNING: skipping persistent attachment replacement for busy mount /workspace/proj' in messages
+    assert (
+        'WARNING: skipping persistent attachment replacement for busy mount /workspace/proj'
+        in messages
+    )
     assert '/workspace/keep' in mounts
     assert mounts['/workspace/proj']['source'] == wrong_source
 
@@ -1400,7 +1493,10 @@ def test_persistent_replay_helper_ignores_enabled_child_under_enabled_parent(
         ns['main']()
 
     messages = stderr.getvalue()
-    assert 'WARNING: ignoring nested persistent attachment child /workspace/proj/sub under /workspace/proj' in messages
+    assert (
+        'WARNING: ignoring nested persistent attachment child /workspace/proj/sub under /workspace/proj'
+        in messages
+    )
     mounts = ns['subprocess'].run.mounts  # type: ignore[attr-defined]
     assert '/workspace/proj' in mounts
     assert '/workspace/proj/sub' not in mounts

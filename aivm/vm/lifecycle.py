@@ -1762,13 +1762,13 @@ def _is_ssh_host_key_mismatch(stderr: str) -> bool:
 
 def _ssh_host_key_mismatch_message(cfg: AgentVMConfig, ip: str) -> str:
     return textwrap.dedent(
-        f'''
+        f"""
         SSH host key mismatch while waiting for VM {cfg.vm.name} at {ip}.
         The VM appears to have booted and obtained an IP, but SSH is failing
         because the cached host key for this address no longer matches.
         Try removing the stale key and retrying:
           ssh-keygen -f ~/.ssh/known_hosts -R {ip}
-        '''
+        """
     ).strip()
 
 

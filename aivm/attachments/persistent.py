@@ -20,17 +20,21 @@ from loguru import logger as log
 from ..commands import CommandManager
 from ..config import AgentVMConfig
 from ..persistent_replay import (
+    PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
     PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME,
     PERSISTENT_ATTACHMENT_REPLAY_BIN,
     PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
-    PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
     PERSISTENT_ROOT_GUEST_MOUNT_ROOT,
     PERSISTENT_ROOT_VIRTIOFS_TAG,
     persistent_replay_python,
     persistent_replay_service_unit,
 )
 from ..runtime import require_ssh_identity, ssh_base_args
-from ..store import find_attachments_for_vm, load_store, persistent_host_state_dir
+from ..store import (
+    find_attachments_for_vm,
+    load_store,
+    persistent_host_state_dir,
+)
 from ..vm import attach_vm_share, vm_share_mappings
 from ..vm.share import ResolvedAttachment
 from .resolve import ATTACHMENT_MODE_PERSISTENT
@@ -61,7 +65,10 @@ def _persistent_host_state_dir(cfg: AgentVMConfig) -> Path:
 
 
 def _persistent_host_manifest_path(cfg: AgentVMConfig) -> Path:
-    return _persistent_host_state_dir(cfg) / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
+    return (
+        _persistent_host_state_dir(cfg)
+        / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
+    )
 
 
 def _write_text_if_changed(path: Path, text: str) -> bool:
@@ -160,7 +167,9 @@ def _run_guest_root_script(
         if code != 0:
             stderr = str(getattr(result, 'stderr', '') or '').strip()
             stdout = str(getattr(result, 'stdout', '') or '').strip()
-            raise RuntimeError(stderr or stdout or f'guest command failed code={code}')
+            raise RuntimeError(
+                stderr or stdout or f'guest command failed code={code}'
+            )
     return result
 
 
@@ -180,10 +189,10 @@ def _install_guest_text_if_changed(
     target_dir = shlex.quote(str(target_path.parent))
     target_q = shlex.quote(str(target_path))
     # TODO: We could probably get a cleaner TRACE log (and less privledged average cases)
-    # if we instead build the text, get the sha256 hash, and then ask the guest to 
+    # if we instead build the text, get the sha256 hash, and then ask the guest to
     # give us the sha256 hash of what it has. That command check would be much easier
-    # for the user to read, and then only if we need to do a write will the larger 
-    # script be written. 
+    # for the user to read, and then only if we need to do a write will the larger
+    # script be written.
     script = '\n'.join(
         [
             'set -euo pipefail',
@@ -218,7 +227,9 @@ def _install_guest_text_if_changed(
         if code != 0:
             stderr = str(getattr(result, 'stderr', '') or '').strip()
             stdout = str(getattr(result, 'stdout', '') or '').strip()
-            raise RuntimeError(stderr or stdout or f'guest command failed code={code}')
+            raise RuntimeError(
+                stderr or stdout or f'guest command failed code={code}'
+            )
     stdout = str(getattr(result, 'stdout', '') or '').strip().splitlines()
     return bool(stdout and stdout[-1] == 'CHANGED')
 
@@ -231,7 +242,9 @@ def _sync_persistent_attachment_manifest_to_guest(
     check: bool = True,
 ) -> bool:
     manifest_path = _persistent_host_manifest_path(cfg)
-    remote_target = f'{cfg.vm.user}@{ip}:{PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}'
+    remote_target = (
+        f'{cfg.vm.user}@{ip}:{PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}'
+    )
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     ssh_args = [
         'ssh',
@@ -501,11 +514,7 @@ def _reconcile_persistent_attachments_in_guest(
         )
         if dry_run:
             return
-        if (
-            replay_even_if_unchanged
-            or guest_manifest_changed
-            or replay_changed
-        ):
+        if replay_even_if_unchanged or guest_manifest_changed or replay_changed:
             replay_result = _run_guest_root_script(
                 cfg,
                 ip,
@@ -517,12 +526,22 @@ def _reconcile_persistent_attachments_in_guest(
             )
             if continue_on_error and replay_result is not None:
                 code = int(
-                    getattr(replay_result, 'code', getattr(replay_result, 'returncode', 0))
+                    getattr(
+                        replay_result,
+                        'code',
+                        getattr(replay_result, 'returncode', 0),
+                    )
                 )
                 if code != 0:
-                    stderr = str(getattr(replay_result, 'stderr', '') or '').strip()
-                    stdout = str(getattr(replay_result, 'stdout', '') or '').strip()
-                    raise RuntimeError(stderr or stdout or f'guest replay failed code={code}')
+                    stderr = str(
+                        getattr(replay_result, 'stderr', '') or ''
+                    ).strip()
+                    stdout = str(
+                        getattr(replay_result, 'stdout', '') or ''
+                    ).strip()
+                    raise RuntimeError(
+                        stderr or stdout or f'guest replay failed code={code}'
+                    )
 
     if not continue_on_error:
         _strict_reconcile()
