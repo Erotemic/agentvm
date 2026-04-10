@@ -170,6 +170,28 @@ def test_persistent_manifest_write_is_byte_for_byte_noop(
     assert path.read_bytes() == before
 
 
+def test_persistent_host_manifest_path_uses_app_data_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-app-data'
+    cfg.paths.base_dir = '/var/lib/libvirt/aivm/aivm-2404'
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_appdir(appname: str, kind: str) -> Path:
+        calls.append((appname, kind))
+        return tmp_path / kind
+
+    monkeypatch.setattr('aivm.store._appdir', fake_appdir)
+
+    path = _persistent_host_manifest_path(cfg)
+
+    assert calls == [('aivm', 'data')]
+    assert path == tmp_path / 'data' / cfg.vm.name / 'state' / 'persistent-attachments.json'
+    assert str(cfg.paths.base_dir) not in str(path)
+
+
 def test_persistent_manifest_sync_uses_checksum_rsync(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -30,7 +30,7 @@ from ..persistent_replay import (
     persistent_replay_service_unit,
 )
 from ..runtime import require_ssh_identity, ssh_base_args
-from ..store import find_attachments_for_vm, load_store
+from ..store import find_attachments_for_vm, load_store, persistent_host_state_dir
 from ..vm import attach_vm_share, vm_share_mappings
 from ..vm.share import ResolvedAttachment
 from .resolve import ATTACHMENT_MODE_PERSISTENT
@@ -56,7 +56,8 @@ class PersistentAttachmentRecord:
 def _persistent_host_state_dir(cfg: AgentVMConfig) -> Path:
     # Keep the canonical manifest outside the exported persistent-root tree so
     # the guest replay helper never depends on reading through virtiofs.
-    return Path(cfg.paths.base_dir) / cfg.vm.name / 'state'
+    # This lives in user-owned app data, not under the libvirt-managed VM tree.
+    return persistent_host_state_dir(cfg.vm.name)
 
 
 def _persistent_host_manifest_path(cfg: AgentVMConfig) -> Path:
