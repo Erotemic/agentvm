@@ -8,10 +8,12 @@ replay helper only reads that local file and reapplies mounts from there.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
 import tempfile
+import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -135,6 +137,7 @@ def _run_guest_root_script(
     summary: str,
     detail: str,
     dry_run: bool,
+    role: str | None = None,
     check: bool = True,
 ) -> object | None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
@@ -157,6 +160,7 @@ def _run_guest_root_script(
     result = CommandManager.current().run(
         cmd,
         sudo=False,
+        role=role,
         check=check,
         capture=True,
         summary=summary,
@@ -173,6 +177,30 @@ def _run_guest_root_script(
     return result
 
 
+def _guest_text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def _guest_text_hash_check_script(target: str, expected_sha256: str) -> str:
+    target_q = shlex.quote(target)
+    expected_q = shlex.quote(expected_sha256)
+    return textwrap.dedent(
+        f"""\
+        set -euo pipefail
+        if [ ! -f {target_q} ]; then
+            printf '%s\\n' MISSING
+            exit 0
+        fi
+        actual="$(sudo -n sha256sum {target_q} | cut -d ' ' -f1)"
+        if [ "$actual" = {expected_q} ]; then
+            printf '%s\\n' MATCH
+        else
+            printf '%s\\n' MISMATCH
+        fi
+        """
+    ).strip()
+
+
 def _install_guest_text_if_changed(
     cfg: AgentVMConfig,
     ip: str,
@@ -180,58 +208,75 @@ def _install_guest_text_if_changed(
     target: str,
     text: str,
     mode: str,
-    summary: str,
-    detail: str,
+    label: str,
     dry_run: bool,
     check: bool = True,
 ) -> bool:
-    target_path = Path(target)
-    target_dir = shlex.quote(str(target_path.parent))
-    target_q = shlex.quote(str(target_path))
-    # TODO: We could probably get a cleaner TRACE log (and less privledged average cases)
-    # if we instead build the text, get the sha256 hash, and then ask the guest to
-    # give us the sha256 hash of what it has. That command check would be much easier
-    # for the user to read, and then only if we need to do a write will the larger
-    # script be written.
-    script = '\n'.join(
-        [
-            'set -euo pipefail',
-            'tmp="$(mktemp)"',
-            'cat > "$tmp" <<\'EOF\'',
-            text,
-            'EOF',
-            f'if [ -f {target_q} ] && cmp -s "$tmp" {target_q}; then',
-            '  rm -f "$tmp"',
-            '  printf "%s\\n" UNCHANGED',
-            '  exit 0',
-            'fi',
-            f'sudo -n mkdir -p {target_dir}',
-            f'sudo -n install -m {mode} "$tmp" {target_q}',
-            'rm -f "$tmp"',
-            'printf "%s\\n" CHANGED',
-        ]
-    )
-    result = _run_guest_root_script(
-        cfg,
-        ip,
-        script=script,
-        summary=summary,
-        detail=detail,
-        dry_run=dry_run,
-        check=check,
-    )
-    if dry_run or result is None:
+    label = str(label).strip() or 'guest text'
+    label_title = label[0].upper() + label[1:]
+    expected_sha256 = _guest_text_sha256(text)
+    check_script = _guest_text_hash_check_script(target, expected_sha256)
+    mgr = CommandManager.current()
+    with mgr.step(
+        f'Check {label} hash',
+        why=(
+            'Compare the host-rendered helper content against the guest copy '
+            'using a checksum so unchanged files stay untouched.'
+        ),
+        approval_scope=f'{label.replace(" ", "-")}:check:{cfg.vm.name}:{target}',
+    ):
+        check_result = _run_guest_root_script(
+            cfg,
+            ip,
+            script=check_script,
+            summary=f'Check {label} hash',
+            detail=f'target={target} expected_sha256={expected_sha256}',
+            dry_run=dry_run,
+            role='read',
+            check=check,
+        )
+    if dry_run or check_result is None:
         return False
-    if not check:
-        code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
-        if code != 0:
-            stderr = str(getattr(result, 'stderr', '') or '').strip()
-            stdout = str(getattr(result, 'stdout', '') or '').strip()
-            raise RuntimeError(
-                stderr or stdout or f'guest command failed code={code}'
-            )
-    stdout = str(getattr(result, 'stdout', '') or '').strip().splitlines()
-    return bool(stdout and stdout[-1] == 'CHANGED')
+    status = str(getattr(check_result, 'stdout', '') or '').strip().splitlines()
+    status = status[-1].strip().upper() if status else ''
+    if status not in {'MATCH', 'MISSING', 'MISMATCH'}:
+        raise RuntimeError(
+            f'Unexpected guest file hash check result for {target}: {status or "<empty>"}'
+        )
+    log.info('{} hash check result: {}', label_title, status)
+    if status == 'MATCH':
+        return False
+    with mgr.step(
+        f'{label_title} differs, installing updated content',
+        why=(
+            'The guest file hash did not match the host-rendered content, so '
+            'the updated file must be written explicitly.'
+        ),
+        approval_scope=f'{label.replace(" ", "-")}:{cfg.vm.name}:{target}',
+    ):
+        write_script = '\n'.join(
+            [
+                'set -euo pipefail',
+                'tmp="$(mktemp)"',
+                "cat > \"$tmp\" <<'EOF'",
+                text,
+                'EOF',
+                f'sudo -n mkdir -p {shlex.quote(str(Path(target).parent))}',
+                f'sudo -n install -m {mode} "$tmp" {shlex.quote(target)}',
+                'rm -f "$tmp"',
+            ]
+        )
+        _run_guest_root_script(
+            cfg,
+            ip,
+            script=write_script,
+            summary=f'Install {label}',
+            detail=f'target={target} expected_sha256={expected_sha256}',
+            dry_run=dry_run,
+            role='modify',
+            check=check,
+        )
+    return True
 
 
 def _sync_persistent_attachment_manifest_to_guest(
@@ -447,8 +492,7 @@ def _install_persistent_attachment_replay(
         target=PERSISTENT_ATTACHMENT_REPLAY_BIN,
         text=replay_py,
         mode='0755',
-        summary='Install persistent attachment replay helper',
-        detail='Install or refresh the guest systemd replay helper used for boot-time persistent attachment restore.',
+        label='guest replay helper',
         dry_run=dry_run,
         check=check,
     )
@@ -458,8 +502,7 @@ def _install_persistent_attachment_replay(
         target=f'/etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}',
         text=service_text,
         mode='0644',
-        summary='Install persistent attachment replay unit',
-        detail='Install or refresh the guest systemd unit that launches persistent attachment replay at boot.',
+        label='guest replay unit',
         dry_run=dry_run,
         check=check,
     )

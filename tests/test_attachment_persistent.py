@@ -12,6 +12,7 @@ import pytest
 
 from aivm.attachments.persistent import (
     _install_persistent_attachment_replay,
+    _install_guest_text_if_changed,
     _persistent_attachment_manifest_text,
     _persistent_host_manifest_path,
     _reconcile_persistent_attachments_in_guest,
@@ -274,7 +275,66 @@ def test_persistent_manifest_sync_uses_checksum_rsync(
     assert '--itemize-changes' in rsync_cmd
 
 
-def test_persistent_replay_install_is_write_if_changed(
+@pytest.mark.parametrize(
+    'status, expect_install',
+    [('MISSING', True), ('MATCH', False), ('MISMATCH', True)],
+)
+def test_persistent_guest_text_sync_checks_hash_before_installing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str, expect_install: bool
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = f'vm-persistent-install-{status.lower()}'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    _activate_manager(monkeypatch)
+
+    calls: list[tuple[str, str, str | None]] = []
+
+    def fake_run(*args, **kwargs):
+        del args
+        summary = str(kwargs.get('summary') or '')
+        script = str(kwargs.get('script') or '')
+        role = kwargs.get('role')
+        calls.append((summary, script, role))
+        if summary == 'Check guest replay helper hash':
+            assert 'cmp -s' not in script
+            assert 'sha256sum' in script
+            assert 'MISSING' in script
+            return SimpleNamespace(stdout=f'{status}\n')
+        if summary == 'Install guest replay helper':
+            assert expect_install
+            assert 'cat > "$tmp" <<\'EOF\'' in script
+            assert 'install -m 0755' in script
+            assert role == 'modify'
+            return SimpleNamespace(stdout='')
+        raise AssertionError(f'unexpected summary: {summary}')
+
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._run_guest_root_script',
+        fake_run,
+    )
+
+    changed = _install_guest_text_if_changed(
+        cfg,
+        '10.0.0.5',
+        target='/usr/local/libexec/aivm-persistent-attachment-replay',
+        text='helper body\n',
+        mode='0755',
+        label='guest replay helper',
+        dry_run=False,
+    )
+
+    assert changed is expect_install
+    assert [summary for summary, _, _ in calls] == (
+        ['Check guest replay helper hash', 'Install guest replay helper']
+        if expect_install
+        else ['Check guest replay helper hash']
+    )
+    assert all(role == 'read' for summary, _, role in calls if 'Check' in summary)
+
+
+def test_persistent_replay_install_refreshes_when_unit_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = AgentVMConfig()
@@ -284,18 +344,29 @@ def test_persistent_replay_install_is_write_if_changed(
     cfg.vm.user = 'agent'
     _activate_manager(monkeypatch)
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str | None]] = []
+    statuses = {
+        'Check guest replay helper hash': 'MATCH',
+        'Check guest replay unit hash': 'MISMATCH',
+    }
 
     def fake_run(*args, **kwargs):
         del args
         summary = str(kwargs.get('summary') or '')
         script = str(kwargs.get('script') or '')
-        calls.append((summary, script))
-        if 'helper' in summary.lower():
-            return SimpleNamespace(stdout='UNCHANGED\n')
-        if 'unit' in summary.lower() and 'Refresh' not in summary:
-            return SimpleNamespace(stdout='CHANGED\n')
-        if 'Refresh persistent attachment replay unit' in summary:
+        role = kwargs.get('role')
+        calls.append((summary, script, role))
+        if summary in statuses:
+            assert 'cmp -s' not in script
+            assert 'sha256sum' in script
+            return SimpleNamespace(stdout=f'{statuses[summary]}\n')
+        if summary == 'Install guest replay unit':
+            assert 'install -m 0644' in script
+            assert role == 'modify'
+            return SimpleNamespace(stdout='')
+        if summary == 'Refresh persistent attachment replay unit':
+            assert 'systemctl daemon-reload' in script
+            assert 'systemctl enable aivm-persistent-attachment-replay.service' in script
             return SimpleNamespace(stdout='')
         raise AssertionError(f'unexpected summary: {summary}')
 
@@ -311,8 +382,12 @@ def test_persistent_replay_install_is_write_if_changed(
     )
 
     assert changed is True
-    assert any('cmp -s' in script for _, script in calls)
-    assert any('systemctl daemon-reload' in script for _, script in calls)
+    assert [summary for summary, _, _ in calls] == [
+        'Check guest replay helper hash',
+        'Check guest replay unit hash',
+        'Install guest replay unit',
+        'Refresh persistent attachment replay unit',
+    ]
 
 
 def test_persistent_replay_install_skips_refresh_when_unchanged(
@@ -325,16 +400,21 @@ def test_persistent_replay_install_skips_refresh_when_unchanged(
     cfg.vm.user = 'agent'
     _activate_manager(monkeypatch)
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str | None]] = []
 
     def fake_run(*args, **kwargs):
         del args
         summary = str(kwargs.get('summary') or '')
         script = str(kwargs.get('script') or '')
-        calls.append((summary, script))
-        if 'helper' in summary.lower() or 'unit' in summary.lower():
-            return SimpleNamespace(stdout='UNCHANGED\n')
-        if 'Refresh persistent attachment replay unit' in summary:
+        role = kwargs.get('role')
+        calls.append((summary, script, role))
+        if 'Check guest replay helper hash' == summary:
+            assert 'sha256sum' in script
+            return SimpleNamespace(stdout='MATCH\n')
+        if 'Check guest replay unit hash' == summary:
+            assert 'sha256sum' in script
+            return SimpleNamespace(stdout='MATCH\n')
+        if 'Refresh persistent attachment replay unit' == summary:
             raise AssertionError(
                 'daemon-reload should be skipped when unchanged'
             )
@@ -352,8 +432,8 @@ def test_persistent_replay_install_skips_refresh_when_unchanged(
     )
 
     assert changed is False
-    assert any('cmp -s' in script for _, script in calls)
-    assert not any('daemon-reload' in script for _, script in calls)
+    assert not any('cmp -s' in script for _, script, _ in calls)
+    assert not any('daemon-reload' in script for _, script, _ in calls)
 
 
 def test_persistent_reconcile_reruns_replay_when_guest_manifest_unchanged(
