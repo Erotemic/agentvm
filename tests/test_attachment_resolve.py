@@ -49,7 +49,7 @@ def test_resolve_attachment_uses_saved_git_mode(
     assert resolved.tag == ''
 
 
-def test_resolve_attachment_defaults_to_shared_root_for_new_folder(
+def test_resolve_attachment_defaults_for_new_folder(
     tmp_path: Path,
 ) -> None:
     cfg = AgentVMConfig()
@@ -61,7 +61,7 @@ def test_resolve_attachment_defaults_to_shared_root_for_new_folder(
 
     resolved = _resolve_attachment(cfg, cfg_path, host_src, '', '')
 
-    assert resolved.mode == AttachmentMode.SHARED_ROOT
+    assert resolved.mode == AttachmentMode.PERSISTENT
     assert resolved.tag
 
 
