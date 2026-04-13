@@ -740,6 +740,7 @@ def _write_cloud_init(
           - ca-certificates
           - curl
           - git
+          - rsync
           - python3
           - python3-venv
           - python3-pip

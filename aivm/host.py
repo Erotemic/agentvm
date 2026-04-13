@@ -21,6 +21,7 @@ REQUIRED_CMDS = [
     'virt-install',
     'qemu-img',
     'cloud-localds',
+    'dnsmasq',
     'curl',
     'ip',
     'ssh',
@@ -118,6 +119,8 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
         # libvirt daemon + client tooling used by almost every host operation.
         'libvirt-daemon-system',
         'libvirt-clients',
+        # libvirt NAT/DHCP networks require dnsmasq at runtime.
+        'dnsmasq-base',
         # `virt-install` and cloud image helpers used to define new VMs.
         'virtinst',
         'cloud-image-utils',

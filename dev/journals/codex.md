@@ -2243,3 +2243,27 @@ State of mind: this felt like a good course correction. The earlier behavior was
 Uncertainties / risks: the guest-side git bootstrap is now intentionally permissive, so it will happily initialize in a dirty tree rather than trying to reason about divergence. That matches the requested semantics, but it does mean the backend is less protective by design. The main thing I’m watching for is any caller that implicitly relied on the old push to materialize branch content; those callers will now need to treat git mode as setup-only, which is exactly the point of the change.
 
 What I am confident about: host repo dirtiness is no longer warned about in git mode, the guest repo is still initialized and configured with the expected plumbing, no push is performed, no final sync probe is performed, and the focused git attachment tests for guest/session helpers pass after the change.
+
+## 2026-04-13 23:17:40 +0000
+
+Worked on the bootstrap-context e2e failure chain that surfaced after DNS/network setup was already fixed. The latest blocker lived in the persistent attachment manifest sync path: nested SSH was technically up, but the immediate follow-up rsync was too optimistic for a freshly booted guest and also assumed remote `rsync` was present. I kept the fix intentionally small by teaching cloud-init to install `rsync` on new guests and hardening only the persistent sync path with a longer SSH connect timeout plus targeted retries for transport-level SSH banner/connection failures.
+
+State of mind / reflection: this felt like the right balance between “make it reliable” and “don’t paper over real guest errors.” The tricky part was avoiding a broad retry blanket, because auth failures, host-key mismatches, or missing `rsync` should still fail loudly. I leaned toward a narrow transient-failure classifier and left the generic SSH wait logic alone because the failure is specific to the manifest sync handoff after a successful readiness probe.
+
+Uncertainties / risks: the new retry set still depends on the failure text being recognizable, and there may be other ssh/rsync transient strings in the wild that are not covered yet. I also don’t know whether the next e2e failure, if any, will be in guest package availability or in a later persistent-replay step, but the current path now has the right ingredients for a fresh boot.
+
+Tradeoffs: adding `rsync` to cloud-init slightly expands every guest image footprint, but it is a direct dependency of the persistent sync workflow, so that cost is easy to justify. The retry logic adds a little latency on transient failure, but only when the guest is still settling.
+
+What I’m confident about: the patch is localized to cloud-init package generation and persistent attachment sync, the retry behavior is testable without a full nested VM, and the existing “SSH ready” semantics remain intact for the rest of the codebase.
+
+## 2026-04-13 23:45:10 +0000
+
+Follow-up on the nested bootstrap flow after the failure moved from manifest sync to persistent replay helper installation. The important realization was that the nested guest is not just slow to boot; it is also still flaky immediately after `wait_ip` and a one-off SSH success, so the guest-side persistent helper commands themselves need transport retries. I tightened the fix by making `_run_guest_root_script()` use the same transient SSH retry logic and longer connect timeout that the manifest sync path already uses, rather than widening the global `wait_for_ssh()` contract.
+
+State of mind / reflection: this feels like a better fit than trying to redefine “SSH ready” globally. The code path that actually fails is the guest helper install/check over SSH, so hardening that exact executor keeps the blast radius small while still addressing the observed timeout during the helper hash check. I did not add a broader “re-check until stable” gate yet because the retryable executor already models the observed failure more directly and is easier to reason about in tests.
+
+Uncertainties / risks: if the guest remains unstable for longer than the retry budget, the attach flow will still fail, just later and with a clearer transport error. That may still happen in some nested environments, but now the failure should reflect sustained instability rather than a single banner timeout. I’m also aware that `status` can still say “not ready” immediately after `wait_ip`; that’s still informational rather than a hard gate.
+
+Tradeoffs: this adds a few extra SSH attempts only in the persistent replay path. That is a deliberate latency tradeoff for a path that is already expensive and fragile under nested virtualization. I kept the generic readiness probe untouched so normal SSH workflows do not inherit slower behavior.
+
+What I’m confident about: the persistent attach/replay path now retries the exact helper command that was failing, the guest-side rsync path is still hardened, and the focused attach/persistent tests pass after the change.

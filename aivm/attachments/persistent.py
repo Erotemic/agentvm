@@ -14,12 +14,14 @@ import os
 import shlex
 import tempfile
 import textwrap
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from loguru import logger as log
 
 from ..commands import CommandManager
+from ..commands import CommandError, CommandResult
 from ..config import AgentVMConfig
 from ..persistent_replay import (
     PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
@@ -140,31 +142,17 @@ def _run_guest_root_script(
     role: str | None = None,
     check: bool = True,
 ) -> object | None:
-    ident = require_ssh_identity(cfg.paths.ssh_identity_file)
-    cmd = [
-        'ssh',
-        *ssh_base_args(
-            ident,
-            strict_host_key_checking='accept-new',
-            connect_timeout=5,
-            batch_mode=True,
-        ),
-        f'{cfg.vm.user}@{ip}',
-        script,
-    ]
-    if dry_run:
-        print(
-            f'DRYRUN: would run guest reconcile command: {" ".join(shlex.quote(c) for c in cmd)}'
-        )
-        return None
-    result = CommandManager.current().run(
-        cmd,
-        sudo=False,
-        role=role,
-        check=check,
-        capture=True,
+    result = _run_guest_ssh_script_with_retry(
+        cfg,
+        ip,
+        script=script,
         summary=summary,
         detail=detail,
+        dry_run=dry_run,
+        role=role,
+        check=check,
+        connect_timeout_s=15,
+        retries=3,
     )
     if not check:
         code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
@@ -220,6 +208,149 @@ def _guest_text_install_script(target: str, text: str, mode: str) -> str:
             'rm -f "$tmp"',
         ]
     )
+
+
+def _is_transient_ssh_transport_failure(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            'connection timed out during banner exchange',
+            'connection timed out',
+            'connection refused',
+            'connection reset by peer',
+            'connection closed by remote host',
+            'broken pipe',
+            'kex_exchange_identification',
+            'no route to host',
+        )
+    )
+
+
+def _run_guest_ssh_script_with_retry(
+    cfg: AgentVMConfig,
+    ip: str,
+    *,
+    script: str,
+    summary: str,
+    detail: str,
+    dry_run: bool,
+    role: str | None = None,
+    check: bool = True,
+    connect_timeout_s: int = 15,
+    retries: int = 3,
+) -> object | None:
+    ident = require_ssh_identity(cfg.paths.ssh_identity_file)
+    cmd = [
+        'ssh',
+        *ssh_base_args(
+            ident,
+            strict_host_key_checking='accept-new',
+            connect_timeout=connect_timeout_s,
+            batch_mode=True,
+        ),
+        f'{cfg.vm.user}@{ip}',
+        script,
+    ]
+    if dry_run:
+        print(
+            f'DRYRUN: would run guest reconcile command: {" ".join(shlex.quote(c) for c in cmd)}'
+        )
+        return None
+    mgr = CommandManager.current()
+    last_result: object | None = None
+    for attempt in range(retries + 1):
+        result = mgr.run(
+            cmd,
+            sudo=False,
+            role=role,
+            check=False,
+            capture=True,
+            summary=summary,
+            detail=detail,
+        )
+        last_result = result
+        code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
+        if code == 0:
+            return result
+        stderr = str(getattr(result, 'stderr', '') or '').strip()
+        stdout = str(getattr(result, 'stdout', '') or '').strip()
+        transport_error = '\n'.join(
+            part for part in (stderr, stdout, f'code={code}') if part
+        )
+        if attempt < retries and _is_transient_ssh_transport_failure(
+            transport_error
+        ):
+            log.warning(
+                (
+                    'Transient SSH failure while {} (attempt {}/{}): {}'
+                ),
+                summary,
+                attempt + 1,
+                retries + 1,
+                stderr or stdout or f'code={code}',
+            )
+            time.sleep(min(2 * (attempt + 1), 6))
+            continue
+        if check:
+            raise CommandError(cmd, CommandResult(code, stdout, stderr))
+        return result
+    return last_result
+
+
+def _run_rsync_with_retry(
+    cmd: list[str],
+    *,
+    summary: str,
+    detail: str,
+    dry_run: bool,
+    check: bool = True,
+    retries: int = 3,
+) -> object | None:
+    if dry_run:
+        print(
+            f'DRYRUN: would run rsync command: {" ".join(shlex.quote(c) for c in cmd)}'
+        )
+        return None
+    mgr = CommandManager.current()
+    last_result: object | None = None
+    for attempt in range(retries + 1):
+        result = mgr.run(
+            cmd,
+            sudo=False,
+            role='modify',
+            check=False,
+            capture=True,
+            summary=summary,
+            detail=detail,
+        )
+        last_result = result
+        code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
+        if code == 0:
+            return result
+        stderr = str(getattr(result, 'stderr', '') or '').strip()
+        stdout = str(getattr(result, 'stdout', '') or '').strip()
+        transport_error = '\n'.join(
+            part for part in (stderr, stdout, f'code={code}') if part
+        )
+        if attempt < retries and _is_transient_ssh_transport_failure(
+            transport_error
+        ):
+            log.warning(
+                (
+                    'Transient rsync failure while {} (attempt {}/{}): {}'
+                ),
+                summary,
+                attempt + 1,
+                retries + 1,
+                stderr or stdout or f'code={code}',
+            )
+            time.sleep(min(2 * (attempt + 1), 6))
+            continue
+        if check:
+            raise CommandError(cmd, CommandResult(code, stdout, stderr))
+        return result
+    return last_result
 
 
 def _diagnose_guest_text_mismatch(
@@ -413,7 +544,7 @@ def _sync_persistent_attachment_manifest_to_guest(
         *ssh_base_args(
             ident,
             strict_host_key_checking='accept-new',
-            connect_timeout=5,
+            connect_timeout=15,
             batch_mode=True,
         ),
     ]
@@ -429,20 +560,19 @@ def _sync_persistent_attachment_manifest_to_guest(
         why='Push the host canonical manifest into the guest-local replay input using a checksum-based rsync so unchanged content stays untouched.',
         approval_scope=f'persistent-manifest-sync:{cfg.vm.name}',
     ):
-        mgr.run(
-            [
-                *ssh_args,
-                f'{cfg.vm.user}@{ip}',
-                f'sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_GUEST_STATE_PATH).parent))}',
-            ],
-            sudo=False,
-            role='modify',
-            check=check,
-            capture=True,
+        _run_guest_ssh_script_with_retry(
+            cfg,
+            ip,
+            script=(
+                f'sudo -n mkdir -p {shlex.quote(str(Path(PERSISTENT_ATTACHMENT_GUEST_STATE_PATH).parent))}'
+            ),
             summary='Prepare guest persistent manifest directory',
             detail=f'target={PERSISTENT_ATTACHMENT_GUEST_STATE_PATH}',
+            dry_run=dry_run,
+            role='modify',
+            check=check,
         )
-        result = mgr.run(
+        result = _run_rsync_with_retry(
             [
                 'rsync',
                 '--archive',
@@ -458,12 +588,10 @@ def _sync_persistent_attachment_manifest_to_guest(
                 str(manifest_path),
                 remote_target,
             ],
-            sudo=False,
-            role='modify',
-            check=check,
-            capture=True,
             summary='Sync persistent attachment manifest to guest',
             detail=f'source={manifest_path} target={remote_target}',
+            dry_run=dry_run,
+            check=check,
         )
     if not check:
         code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))

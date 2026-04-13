@@ -529,6 +529,7 @@ def test_write_cloud_init_user_data_avoids_invalid_datasource_keys(
     assert '#cloud-config' in user_data_script
     assert 'datasource_list:' not in user_data_script
     assert '\ndatasource:\n' not in user_data_script
+    assert '  - rsync' in user_data_script
     assert (
         '/usr/local/libexec/aivm-persistent-attachment-replay'
         in user_data_script

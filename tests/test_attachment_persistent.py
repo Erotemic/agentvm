@@ -316,6 +316,70 @@ def test_persistent_manifest_sync_uses_checksum_rsync(
     assert '--itemize-changes' in rsync_cmd
 
 
+def test_persistent_manifest_sync_retries_transient_ssh_banner_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-sync-retry'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    cfg_path = tmp_path / 'config.toml'
+    save_store(Store(), cfg_path)
+    _sync_persistent_attachment_manifest_on_host(cfg, cfg_path, dry_run=False)
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.attachments.persistent.time.sleep', lambda s: None)
+
+    calls: list[list[str]] = []
+    rsync_calls = {'n': 0}
+
+    class FakeManager:
+        def step(self, *args, **kwargs):
+            del args, kwargs
+            return nullcontext()
+
+        def run(self, cmd, **kwargs):
+            del kwargs
+            calls.append(list(cmd))
+            if cmd and cmd[0] == 'ssh':
+                return SimpleNamespace(stdout='')
+            if cmd and cmd[0] == 'rsync':
+                rsync_calls['n'] += 1
+                if rsync_calls['n'] == 1:
+                    return SimpleNamespace(
+                        stdout='',
+                        stderr=(
+                            'Connection timed out during banner exchange\n'
+                            'Connection to 10.0.0.5 port 22 timed out'
+                        ),
+                        code=255,
+                    )
+                return SimpleNamespace(
+                    stdout='>f..t...... persistent-attachments.json\n',
+                    stderr='',
+                    code=0,
+                )
+            return SimpleNamespace(stdout='')
+
+    monkeypatch.setattr(
+        'aivm.attachments.persistent.CommandManager.current',
+        lambda: FakeManager(),
+    )
+
+    changed = _sync_persistent_attachment_manifest_to_guest(
+        cfg,
+        '10.0.0.5',
+        dry_run=False,
+    )
+
+    assert changed is True
+    assert rsync_calls['n'] == 2
+    ssh_cmd = next(cmd for cmd in calls if cmd and cmd[0] == 'ssh')
+    assert any('ConnectTimeout=15' in arg for arg in ssh_cmd)
+    rsync_cmd = next(cmd for cmd in calls if cmd and cmd[0] == 'rsync')
+    assert any('ConnectTimeout=15' in arg for arg in rsync_cmd)
+
+
 @pytest.mark.parametrize(
     'status, expect_install',
     [('MISSING', True), ('MATCH', False), ('MISMATCH', True)],
@@ -907,6 +971,58 @@ def test_persistent_replay_script_nonchecking_path_avoids_error_log(
 
     assert calls
     assert not errors
+
+
+def test_persistent_guest_root_script_retries_transient_banner_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-guest-root-retry'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg.paths.ssh_identity_file = str(tmp_path / 'id_ed25519')
+    cfg.vm.user = 'agent'
+    _activate_manager(monkeypatch)
+    monkeypatch.setattr('aivm.attachments.persistent.time.sleep', lambda s: None)
+
+    calls: list[list[str]] = []
+    attempts = {'n': 0}
+
+    class FakeManager:
+        def run(self, cmd, **kwargs):
+            del kwargs
+            calls.append(list(cmd))
+            attempts['n'] += 1
+            if attempts['n'] == 1:
+                return SimpleNamespace(
+                    code=255,
+                    stdout='',
+                    stderr=(
+                        'Connection timed out during banner exchange\n'
+                        'Connection to 10.0.0.5 port 22 timed out'
+                    ),
+                )
+            return SimpleNamespace(code=0, stdout='ok\n', stderr='')
+
+    monkeypatch.setattr(
+        'aivm.attachments.persistent.CommandManager.current',
+        lambda: FakeManager(),
+    )
+
+    result = _run_guest_root_script(
+        cfg,
+        '10.0.0.5',
+        script='echo ok',
+        summary='Check guest helper',
+        detail='',
+        dry_run=False,
+        check=True,
+    )
+
+    assert attempts['n'] == 2
+    assert result is not None
+    ssh_cmd = calls[0]
+    assert ssh_cmd[0] == 'ssh'
+    assert any('ConnectTimeout=15' in arg for arg in ssh_cmd)
 
 
 def test_persistent_reconcile_replays_when_guest_manifest_changes(
