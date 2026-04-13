@@ -233,7 +233,7 @@ def test_e2e_full_cycle(tmp_path: Path) -> None:
             reg_after_default_attach, share_dir, cfg.vm.name
         )
         assert default_att is not None
-        assert default_att.mode == 'shared-root'
+        assert default_att.mode == 'persistent'
 
         # Explicit mode disagreement on existing attachment should error.
         mismatch_res = _run_cli(
