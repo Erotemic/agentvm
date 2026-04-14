@@ -39,6 +39,12 @@ def _activate_manager(
 def _exec_guest_replay_helper(source: str) -> dict[str, object]:
     ns: dict[str, object] = {'__name__': 'not_main'}
     exec(source, ns)
+    real_subprocess = ns.get('subprocess')
+    ns['subprocess'] = SimpleNamespace(
+        run=getattr(real_subprocess, 'run', subprocess.run),
+        PIPE=getattr(real_subprocess, 'PIPE', subprocess.PIPE),
+        DEVNULL=getattr(real_subprocess, 'DEVNULL', subprocess.DEVNULL),
+    )
     return ns
 
 
@@ -126,6 +132,17 @@ def _make_guest_replay_fake_run(
 
     fake_run.mounts = mounts  # type: ignore[attr-defined]
     return fake_run
+
+
+def test_exec_guest_replay_helper_does_not_leak_subprocess_run() -> None:
+    from aivm.persistent_replay import persistent_replay_python
+
+    original_run = subprocess.run
+    ns = _exec_guest_replay_helper(persistent_replay_python())
+
+    assert ns['subprocess'] is not subprocess
+    ns['subprocess'].run = lambda *a, **k: None
+    assert subprocess.run is original_run
 
 
 def test_persistent_replay_templates_are_deterministic_in_process() -> None:
