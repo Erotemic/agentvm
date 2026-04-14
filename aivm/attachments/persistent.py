@@ -21,7 +21,7 @@ from pathlib import Path
 from loguru import logger as log
 
 from ..commands import CommandManager
-from ..commands import CommandError, CommandResult
+from ..commands import CommandError, CommandResult, CommandRole
 from ..config import AgentVMConfig
 from ..persistent_replay import (
     PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
@@ -139,9 +139,9 @@ def _run_guest_root_script(
     summary: str,
     detail: str,
     dry_run: bool,
-    role: str | None = None,
+    role: CommandRole | None = None,
     check: bool = True,
-) -> object | None:
+) -> CommandResult | None:
     result = _run_guest_ssh_script_with_retry(
         cfg,
         ip,
@@ -235,11 +235,11 @@ def _run_guest_ssh_script_with_retry(
     summary: str,
     detail: str,
     dry_run: bool,
-    role: str | None = None,
+    role: CommandRole | None = None,
     check: bool = True,
     connect_timeout_s: int = 15,
     retries: int = 3,
-) -> object | None:
+) -> CommandResult | None:
     ident = require_ssh_identity(cfg.paths.ssh_identity_file)
     cmd = [
         'ssh',
@@ -306,7 +306,7 @@ def _run_rsync_with_retry(
     dry_run: bool,
     check: bool = True,
     retries: int = 3,
-) -> object | None:
+) -> CommandResult | None:
     if dry_run:
         print(
             f'DRYRUN: would run rsync command: {" ".join(shlex.quote(c) for c in cmd)}'
@@ -403,6 +403,7 @@ def _diagnose_guest_text_mismatch(
         role='read',
         check=False,
     )
+    assert content is not None
     actual_bytes = (content.stdout or '').encode('utf-8')
     actual_sha_calc = hashlib.sha256(actual_bytes).hexdigest()
     actual_len_calc = len(actual_bytes)
@@ -593,6 +594,7 @@ def _sync_persistent_attachment_manifest_to_guest(
             dry_run=dry_run,
             check=check,
         )
+    assert result is not None
     if not check:
         code = int(getattr(result, 'code', getattr(result, 'returncode', 0)))
         if code != 0:
