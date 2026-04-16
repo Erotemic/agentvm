@@ -205,6 +205,27 @@ def test_persistent_replay_templates_are_deterministic_across_processes() -> Non
     assert first == second
 
 
+def test_persistent_host_replay_service_unit_renders_values() -> None:
+    from aivm.persistent_replay import (
+        PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX,
+        persistent_host_replay_service_unit,
+    )
+
+    unit = persistent_host_replay_service_unit(
+        vm_name='vm',
+        manifest_path='/tmp/manifest.json',
+        export_root='/tmp/export-root',
+    )
+
+    assert (
+        f'Description={PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX}-vm'
+        in unit
+    )
+    assert 'ConditionPathExists=/tmp/manifest.json' in unit
+    assert '{service_name}' not in unit
+    assert '{manifest_path}' not in unit
+
+
 def test_persistent_manifest_persists_records_and_access_modes(
     tmp_path: Path,
 ) -> None:

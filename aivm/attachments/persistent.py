@@ -99,7 +99,6 @@ def _install_host_text_if_changed(
     if dry_run:
         print(f'DRYRUN: would install {label} to {target}')
         return True
-    target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile('wb', delete=False) as file:
         file.write(new_bytes)
         tmp_name = file.name

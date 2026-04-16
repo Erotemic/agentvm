@@ -491,9 +491,9 @@ def persistent_host_replay_service_unit(
     service_name = f"{PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX}-{vm_name}"
     return textwrap.dedent(
         f"""        [Unit]
-        Description={{service_name}}
+        Description={service_name}
         After=local-fs.target
-        ConditionPathExists={{manifest_path}}
+        ConditionPathExists={manifest_path}
 
         [Service]
         Type=oneshot
