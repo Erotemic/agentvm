@@ -44,8 +44,11 @@ from ..store import (
     persistent_host_state_dir,
 )
 from ..vm import attach_vm_share, vm_share_mappings
-from ..vm.share import ResolvedAttachment
-from .resolve import ATTACHMENT_MODE_PERSISTENT
+from ..vm.share import AttachmentMode, ResolvedAttachment
+from .resolve import (
+    ATTACHMENT_MODE_PERSISTENT,
+    _normalize_attachment_access,
+)
 from .shared_root import _shared_root_host_target
 
 
@@ -210,8 +213,8 @@ def _reconcile_persistent_host_binds(
             continue
         attachment = ResolvedAttachment(
             vm_name=cfg.vm.name,
-            mode=ATTACHMENT_MODE_PERSISTENT,
-            access=str(record.access or 'rw'),
+            mode=AttachmentMode.PERSISTENT,
+            access=_normalize_attachment_access(str(record.access or 'rw')),
             source_dir=str(host_src.resolve()),
             guest_dst=str(record.guest_dst or ''),
             tag=str(record.shared_root_token or ''),
