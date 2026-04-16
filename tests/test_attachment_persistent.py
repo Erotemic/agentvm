@@ -14,10 +14,12 @@ import pytest
 
 from aivm.attachments.persistent import (
     _install_persistent_attachment_replay,
+    _install_persistent_host_bind_replay,
     _install_guest_text_if_changed,
     _persistent_attachment_manifest_text,
     _persistent_host_manifest_path,
     _reconcile_persistent_attachments_in_guest,
+    _reconcile_persistent_host_binds,
     _run_guest_root_script,
     _sync_persistent_attachment_manifest_on_host,
     _sync_persistent_attachment_manifest_to_guest,
@@ -147,26 +149,45 @@ def test_exec_guest_replay_helper_does_not_leak_subprocess_run() -> None:
 
 def test_persistent_replay_templates_are_deterministic_in_process() -> None:
     from aivm.persistent_replay import (
+        persistent_host_replay_python,
+        persistent_host_replay_service_unit,
         persistent_replay_python,
         persistent_replay_service_unit,
     )
 
     helper_a = persistent_replay_python()
     helper_b = persistent_replay_python()
+    host_helper_a = persistent_host_replay_python()
+    host_helper_b = persistent_host_replay_python()
     unit_a = persistent_replay_service_unit()
     unit_b = persistent_replay_service_unit()
+    host_unit_a = persistent_host_replay_service_unit(
+        vm_name='vm',
+        manifest_path='/tmp/manifest.json',
+        export_root='/tmp/export-root',
+    )
+    host_unit_b = persistent_host_replay_service_unit(
+        vm_name='vm',
+        manifest_path='/tmp/manifest.json',
+        export_root='/tmp/export-root',
+    )
 
     assert helper_a == helper_b
+    assert host_helper_a == host_helper_b
     assert unit_a == unit_b
+    assert host_unit_a == host_unit_b
 
 
 def test_persistent_replay_templates_are_deterministic_across_processes() -> None:
     script = (
         'from aivm.persistent_replay import '
+        'persistent_host_replay_python, persistent_host_replay_service_unit, '
         'persistent_replay_python, persistent_replay_service_unit; '
         'from hashlib import sha256; '
         'print(sha256(persistent_replay_python().encode()).hexdigest()); '
-        'print(sha256(persistent_replay_service_unit().encode()).hexdigest())'
+        'print(sha256(persistent_replay_service_unit().encode()).hexdigest()); '
+        'print(sha256(persistent_host_replay_python().encode()).hexdigest()); '
+        'print(sha256(persistent_host_replay_service_unit(vm_name="vm", manifest_path="/tmp/manifest.json", export_root="/tmp/export-root").encode()).hexdigest())'
     )
     first = subprocess.run(
         [sys.executable, '-c', script],
@@ -1770,3 +1791,98 @@ def test_persistent_replay_helper_ignores_enabled_child_under_enabled_parent(
     mounts = ns['subprocess'].run.mounts  # type: ignore[attr-defined]
     assert '/workspace/proj' in mounts
     assert '/workspace/proj/sub' not in mounts
+
+
+
+def test_persistent_reconcile_repairs_host_binds_before_guest_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-host-replay-order'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg_path = tmp_path / 'config.toml'
+    _activate_manager(monkeypatch)
+
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_on_host',
+        lambda *a, **k: calls.append(('host-manifest', a, k))
+        or _persistent_host_manifest_path(cfg),
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._reconcile_persistent_host_binds',
+        lambda *a, **k: calls.append(('host-binds', a, k)) or None,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._sync_persistent_attachment_manifest_to_guest',
+        lambda *a, **k: calls.append(('guest-sync', a, k)) or False,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._install_persistent_attachment_replay',
+        lambda *a, **k: calls.append(('install', a, k)) or False,
+    )
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._run_guest_root_script',
+        lambda *a, **k: calls.append(('guest-replay', a, k)) or None,
+    )
+
+    _reconcile_persistent_attachments_in_guest(
+        cfg,
+        cfg_path,
+        '10.0.0.5',
+        dry_run=False,
+    )
+
+    assert [item[0] for item in calls] == [
+        'host-manifest',
+        'host-binds',
+        'guest-sync',
+        'install',
+        'guest-replay',
+    ]
+
+
+
+def test_install_persistent_host_bind_replay_enables_service(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = AgentVMConfig()
+    cfg.vm.name = 'vm-persistent-host-service'
+    cfg.paths.base_dir = str(tmp_path / 'base')
+    cfg_path = tmp_path / 'config.toml'
+    _activate_manager(monkeypatch)
+
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(
+        'aivm.attachments.persistent._install_host_text_if_changed',
+        lambda *a, **k: calls.append(('install-host-text', a, k)) or True,
+    )
+
+    class FakeManager:
+        def step(self, *args, **kwargs):
+            del args, kwargs
+            return nullcontext()
+
+        def submit(self, cmd, **kwargs):
+            calls.append(('submit', tuple(cmd), kwargs))
+            return SimpleNamespace(code=0, stdout='', stderr='')
+
+    monkeypatch.setattr(
+        'aivm.attachments.persistent.CommandManager.current',
+        lambda: FakeManager(),
+    )
+
+    changed = _install_persistent_host_bind_replay(
+        cfg,
+        cfg_path,
+        dry_run=False,
+    )
+
+    assert changed is True
+    submit_cmds = [item[1] for item in calls if item[0] == 'submit']
+    assert ('systemctl', 'daemon-reload') in submit_cmds
+    assert (
+        'systemctl',
+        'enable',
+        'aivm-persistent-host-bind-replay-vm-persistent-host-service.service',
+    ) in submit_cmds

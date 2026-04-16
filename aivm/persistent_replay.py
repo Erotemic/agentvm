@@ -19,6 +19,12 @@ PERSISTENT_ATTACHMENT_REPLAY_BIN = (
 PERSISTENT_ATTACHMENT_REPLAY_SERVICE = (
     'aivm-persistent-attachment-replay.service'
 )
+PERSISTENT_ATTACHMENT_HOST_REPLAY_BIN = (
+    '/usr/local/libexec/aivm-persistent-host-bind-replay'
+)
+PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX = (
+    'aivm-persistent-host-bind-replay'
+)
 PERSISTENT_ROOT_VIRTIOFS_TAG = 'aivm-persistent-root'
 PERSISTENT_ROOT_GUEST_MOUNT_ROOT = '/mnt/aivm-persistent'
 
@@ -355,6 +361,143 @@ def persistent_replay_service_unit() -> str:
         [Service]
         Type=oneshot
         ExecStart={PERSISTENT_ATTACHMENT_REPLAY_BIN}
+
+        [Install]
+        WantedBy=multi-user.target
+        """
+    )
+
+
+
+def persistent_host_replay_python() -> str:
+    return textwrap.dedent(
+        f"""        #!/usr/bin/env python3
+        import argparse
+        import json
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        def run(cmd, check=True, capture=False):
+            return subprocess.run(
+                cmd,
+                check=check,
+                text=True,
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.PIPE if capture else None,
+            )
+
+        def is_mountpoint(target):
+            return subprocess.run(["mountpoint", "-q", target]).returncode == 0
+
+        def same_tree(source, target):
+            try:
+                src_stat = os.stat(source)
+                dst_stat = os.stat(target)
+            except OSError:
+                return False
+            return (
+                src_stat.st_dev == dst_stat.st_dev
+                and src_stat.st_ino == dst_stat.st_ino
+            )
+
+        def ensure_record(export_root, record):
+            token = str(record.get("shared_root_token") or "").strip()
+            source_dir = str(record.get("source_dir") or "").strip()
+            enabled = bool(record.get("enabled", True))
+            if not enabled:
+                return
+            if not token:
+                print(
+                    "WARNING: skipping persistent host bind record with missing shared_root_token",
+                    file=sys.stderr,
+                )
+                return
+            if not source_dir:
+                print(
+                    f"WARNING: skipping persistent host bind record {{token}} with missing source_dir",
+                    file=sys.stderr,
+                )
+                return
+            if not os.path.isdir(source_dir):
+                print(
+                    f"WARNING: skipping persistent host bind record {{token}} because source_dir is missing: {{source_dir}}",
+                    file=sys.stderr,
+                )
+                return
+            target = str(Path(export_root) / token)
+            os.makedirs(target, exist_ok=True)
+            if is_mountpoint(target) and same_tree(source_dir, target):
+                return
+            if is_mountpoint(target):
+                run(["umount", target])
+                if is_mountpoint(target) and same_tree(source_dir, target):
+                    return
+                if is_mountpoint(target):
+                    raise RuntimeError(
+                        f"could not replace existing persistent host bind {{target}}"
+                    )
+            run(["mount", "--bind", source_dir, target])
+            if not (is_mountpoint(target) and same_tree(source_dir, target)):
+                raise RuntimeError(
+                    f"could not verify persistent host bind {{target}} -> {{source_dir}}"
+                )
+
+        def prune_stale_mounts(export_root, desired_tokens):
+            root = Path(export_root)
+            if not root.exists():
+                return
+            for child in root.iterdir():
+                if child.name in desired_tokens:
+                    continue
+                if is_mountpoint(str(child)):
+                    run(["umount", str(child)])
+
+        def main(argv=None):
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--manifest", required=True)
+            parser.add_argument("--export-root", required=True)
+            parser.add_argument("--prune-stale", action="store_true")
+            args = parser.parse_args(argv)
+
+            with open(args.manifest, "r", encoding="utf-8") as file:
+                payload = json.load(file)
+
+            desired_tokens = set()
+            for record in payload.get("records", []):
+                if bool(record.get("enabled", True)):
+                    token = str(record.get("shared_root_token") or "").strip()
+                    if token:
+                        desired_tokens.add(token)
+                ensure_record(args.export_root, record)
+
+            if args.prune_stale:
+                prune_stale_mounts(args.export_root, desired_tokens)
+
+        if __name__ == "__main__":
+            main()
+        """
+    )
+
+
+
+def persistent_host_replay_service_unit(
+    *,
+    vm_name: str,
+    manifest_path: str,
+    export_root: str,
+) -> str:
+    service_name = f"{PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX}-{vm_name}"
+    return textwrap.dedent(
+        f"""        [Unit]
+        Description={{service_name}}
+        After=local-fs.target
+        ConditionPathExists={{manifest_path}}
+
+        [Service]
+        Type=oneshot
+        ExecStart={PERSISTENT_ATTACHMENT_HOST_REPLAY_BIN} --manifest {manifest_path} --export-root {export_root} --prune-stale
 
         [Install]
         WantedBy=multi-user.target

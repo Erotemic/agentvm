@@ -13,8 +13,10 @@ from ..attachments.guest import (
     _upsert_ssh_config_entry,
 )
 from ..attachments.persistent import (
+    _install_persistent_host_bind_replay,
     _prepare_persistent_attachment_host_and_vm,
     _reconcile_persistent_attachments_in_guest,
+    _reconcile_persistent_host_binds,
     _sync_persistent_attachment_manifest_on_host,
 )
 from ..attachments.resolve import (
@@ -129,6 +131,17 @@ class VMUpCLI(_BaseCommand):
         if not args.dry_run and not args.recreate:
             _maybe_warn_hardware_drift(cfg)
         if not args.dry_run:
+            _sync_persistent_attachment_manifest_on_host(
+                cfg,
+                cfg_path,
+                dry_run=False,
+            )
+            _reconcile_persistent_host_binds(
+                cfg,
+                cfg_path,
+                dry_run=False,
+                vm_running=True,
+            )
             _record_vm(cfg, cfg_path)
         return 0
 
@@ -1090,6 +1103,74 @@ class VMDetachCLI(_BaseCommand):
         return 0
 
 
+
+class VMPersistentHostReplayCLI(_BaseCommand):
+    """Replay host-side persistent bind mounts from the saved manifest."""
+
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    dry_run: Any = scfg.Value(
+        False, isflag=True, help='Print actions without running.'
+    )
+
+    @classmethod
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
+        _sync_persistent_attachment_manifest_on_host(
+            cfg,
+            cfg_path,
+            dry_run=bool(args.dry_run),
+        )
+        _reconcile_persistent_host_binds(
+            cfg,
+            cfg_path,
+            dry_run=bool(args.dry_run),
+            vm_running=None,
+        )
+        if args.dry_run:
+            print(
+                f'DRYRUN: would replay host-side persistent bind mounts for VM {cfg.vm.name}'
+            )
+        else:
+            print(
+                f'Replayed host-side persistent bind mounts for VM {cfg.vm.name}'
+            )
+        return 0
+
+
+class VMInstallPersistentHostReplayServiceCLI(_BaseCommand):
+    """Install and enable a host systemd service for persistent bind replay."""
+
+    vm: Any = scfg.Value('', help='Optional VM name override.')
+    dry_run: Any = scfg.Value(
+        False, isflag=True, help='Print actions without running.'
+    )
+
+    @classmethod
+    def main(cls, argv: bool = True, **kwargs: Any) -> int:
+        args = cls.cli(argv=argv, data=kwargs)
+        cfg, cfg_path = _load_cfg_with_path(args.config, vm_opt=args.vm)
+        _sync_persistent_attachment_manifest_on_host(
+            cfg,
+            cfg_path,
+            dry_run=bool(args.dry_run),
+        )
+        _install_persistent_host_bind_replay(
+            cfg,
+            cfg_path,
+            dry_run=bool(args.dry_run),
+        )
+        if args.dry_run:
+            print(
+                f'DRYRUN: would install the persistent host replay service for VM {cfg.vm.name}'
+            )
+        else:
+            print(
+                f'Installed and enabled the persistent host replay service for VM {cfg.vm.name}'
+            )
+        return 0
+
+
 class VMListCLI(_BaseCommand):
     """List managed VM records (VM-focused view)."""
 
@@ -1175,6 +1256,10 @@ class VMModalCLI(scfg.ModalCLI):
     sync_settings = VMSyncSettingsCLI
     attach = VMAttachCLI
     detach = VMDetachCLI
+    persistent_host_replay = VMPersistentHostReplayCLI
+    install_persistent_host_replay_service = (
+        VMInstallPersistentHostReplayServiceCLI
+    )
     code = VMCodeCLI
 
 
