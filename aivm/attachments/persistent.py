@@ -26,10 +26,14 @@ from ..config import AgentVMConfig
 from ..persistent_replay import (
     PERSISTENT_ATTACHMENT_GUEST_STATE_PATH,
     PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME,
+    PERSISTENT_ATTACHMENT_HOST_REPLAY_BIN,
+    PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX,
     PERSISTENT_ATTACHMENT_REPLAY_BIN,
     PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
     PERSISTENT_ROOT_GUEST_MOUNT_ROOT,
     PERSISTENT_ROOT_VIRTIOFS_TAG,
+    persistent_host_replay_python,
+    persistent_host_replay_service_unit,
     persistent_replay_python,
     persistent_replay_service_unit,
 )
@@ -40,8 +44,11 @@ from ..store import (
     persistent_host_state_dir,
 )
 from ..vm import attach_vm_share, vm_share_mappings
-from ..vm.share import ResolvedAttachment
-from .resolve import ATTACHMENT_MODE_PERSISTENT
+from ..vm.share import AttachmentMode, ResolvedAttachment
+from .resolve import (
+    ATTACHMENT_MODE_PERSISTENT,
+    _normalize_attachment_access,
+)
 from .shared_root import _shared_root_host_target
 
 
@@ -73,6 +80,151 @@ def _persistent_host_manifest_path(cfg: AgentVMConfig) -> Path:
         _persistent_host_state_dir(cfg)
         / PERSISTENT_ATTACHMENT_HOST_MANIFEST_NAME
     )
+
+
+
+def _persistent_host_replay_service_name(vm_name: str) -> str:
+    return f'{PERSISTENT_ATTACHMENT_HOST_REPLAY_SERVICE_PREFIX}-{vm_name}.service'
+
+
+
+def _install_host_text_if_changed(
+    target: Path,
+    text: str,
+    mode: str,
+    *,
+    label: str,
+    dry_run: bool,
+) -> bool:
+    new_bytes = text.encode('utf-8')
+    if target.exists() and target.read_bytes() == new_bytes:
+        return False
+    if dry_run:
+        print(f'DRYRUN: would install {label} to {target}')
+        return True
+    with tempfile.NamedTemporaryFile('wb', delete=False) as file:
+        file.write(new_bytes)
+        tmp_name = file.name
+    mgr = CommandManager.current()
+    try:
+        with mgr.step(
+            f'Install {label}',
+            why=f'Install updated host-side {label} content for persistent attachment replay.',
+            approval_scope=f'{label.replace(" ", "-")}:host:{target}',
+        ):
+            mgr.submit(
+                ['mkdir', '-p', str(target.parent)],
+                sudo=True,
+                role='modify',
+                summary=f'Create parent directory for {label}',
+                detail=f'target={target.parent}',
+            )
+            mgr.submit(
+                ['install', '-m', mode, tmp_name, str(target)],
+                sudo=True,
+                role='modify',
+                summary=f'Install {label}',
+                detail=f'target={target}',
+            )
+    finally:
+        Path(tmp_name).unlink(missing_ok=True)
+    return True
+
+
+
+def _install_persistent_host_bind_replay(
+    cfg: AgentVMConfig,
+    cfg_path: Path,
+    *,
+    dry_run: bool,
+) -> bool:
+    del cfg_path
+    helper_changed = _install_host_text_if_changed(
+        Path(PERSISTENT_ATTACHMENT_HOST_REPLAY_BIN),
+        persistent_host_replay_python(),
+        '0755',
+        label='persistent host replay helper',
+        dry_run=dry_run,
+    )
+    service_name = _persistent_host_replay_service_name(cfg.vm.name)
+    unit_changed = _install_host_text_if_changed(
+        Path('/etc/systemd/system') / service_name,
+        persistent_host_replay_service_unit(
+            vm_name=cfg.vm.name,
+            manifest_path=str(_persistent_host_manifest_path(cfg)),
+            export_root=str(_persistent_root_host_dir(cfg)),
+        ),
+        '0644',
+        label='persistent host replay unit',
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return helper_changed or unit_changed
+    mgr = CommandManager.current()
+    with mgr.step(
+        'Enable persistent host replay service',
+        why='Ensure the host-side persistent bind replay service is available after reboot.',
+        approval_scope=f'persistent-host-replay-service:{cfg.vm.name}',
+    ):
+        if unit_changed:
+            mgr.submit(
+                ['systemctl', 'daemon-reload'],
+                sudo=True,
+                role='modify',
+                summary='Reload systemd after persistent host replay unit changes',
+                detail=f'service={service_name}',
+            )
+        mgr.submit(
+            ['systemctl', 'enable', service_name],
+            sudo=True,
+            role='modify',
+            summary='Enable persistent host replay service',
+            detail=f'service={service_name}',
+        )
+    return helper_changed or unit_changed
+
+
+
+def _reconcile_persistent_host_binds(
+    cfg: AgentVMConfig,
+    cfg_path: Path,
+    *,
+    dry_run: bool,
+    vm_running: bool | None = None,
+) -> None:
+    records = _persistent_attachment_records_for_vm(cfg, cfg_path)
+    for record in records:
+        if not record.enabled:
+            continue
+        host_src = Path(record.source_dir).expanduser()
+        if not host_src.exists():
+            log.warning(
+                'Skipping persistent host bind replay for VM {} because host path is missing: {}',
+                cfg.vm.name,
+                host_src,
+            )
+            continue
+        if not host_src.is_dir():
+            log.warning(
+                'Skipping persistent host bind replay for VM {} because host path is not a directory: {}',
+                cfg.vm.name,
+                host_src,
+            )
+            continue
+        attachment = ResolvedAttachment(
+            vm_name=cfg.vm.name,
+            mode=AttachmentMode.PERSISTENT,
+            access=_normalize_attachment_access(str(record.access or 'rw')),
+            source_dir=str(host_src.resolve()),
+            guest_dst=str(record.guest_dst or ''),
+            tag=str(record.shared_root_token or ''),
+        )
+        _prepare_persistent_attachment_host_and_vm(
+            cfg,
+            attachment,
+            dry_run=dry_run,
+            vm_running=vm_running,
+        )
 
 
 def _write_text_if_changed(path: Path, text: str) -> bool:
@@ -789,6 +941,12 @@ def _reconcile_persistent_attachments_in_guest(
     def _strict_reconcile() -> None:
         _sync_persistent_attachment_manifest_on_host(
             cfg, cfg_path, dry_run=dry_run
+        )
+        _reconcile_persistent_host_binds(
+            cfg,
+            cfg_path,
+            dry_run=dry_run,
+            vm_running=True,
         )
         guest_manifest_changed = _sync_persistent_attachment_manifest_to_guest(
             cfg,

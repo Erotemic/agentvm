@@ -19,11 +19,13 @@ from .persistent import (
     PERSISTENT_ROOT_GUEST_MOUNT_ROOT,
     PERSISTENT_ROOT_VIRTIOFS_TAG,
     _install_persistent_attachment_replay,
+    _install_persistent_host_bind_replay,
     _persistent_attachment_manifest_text,
     _persistent_attachment_records_for_vm,
     _persistent_host_manifest_path,
     _prepare_persistent_attachment_host_and_vm,
     _reconcile_persistent_attachments_in_guest,
+    _reconcile_persistent_host_binds,
     _sync_persistent_attachment_manifest_on_host,
 )
 from .resolve import (
@@ -109,7 +111,9 @@ __all__ = [
     '_maybe_warn_hardware_drift',
     '_missing_virtiofs_dir_from_error',
     '_install_persistent_attachment_replay',
+    '_install_persistent_host_bind_replay',
     '_prepare_persistent_attachment_host_and_vm',
+    '_reconcile_persistent_host_binds',
     '_normalize_attachment_access',
     '_normalize_attachment_mode',
     '_prepare_attached_session',
