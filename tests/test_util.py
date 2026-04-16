@@ -32,13 +32,13 @@ def test_shell_join_quotes() -> None:
 
 def test_manager_run_success_and_failure() -> None:
     mgr = _activate_manager()
-    ok = mgr.run(['bash', '-lc', 'printf ok'], check=True, capture=True)
+    ok = mgr.run(['bash', '-c', 'printf ok'], check=True, capture=True)
     assert ok.code == 0
     assert ok.stdout == 'ok'
-    bad = mgr.run(['bash', '-lc', 'exit 7'], check=False, capture=True)
+    bad = mgr.run(['bash', '-c', 'exit 7'], check=False, capture=True)
     assert bad.code == 7
     with pytest.raises(CmdError):
-        mgr.run(['bash', '-lc', 'exit 9'], check=True, capture=True)
+        mgr.run(['bash', '-c', 'exit 9'], check=True, capture=True)
 
 
 def test_nested_intent_breadcrumb_rendering() -> None:
@@ -68,11 +68,11 @@ def test_plan_prompts_once_for_multiple_sudo_commands(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
+        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or P(),
     )
 
     mgr = CommandManager.current()
@@ -116,7 +116,7 @@ def test_command_handle_result_flushes_through_handle(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
 
     mgr = CommandManager.current()
@@ -152,7 +152,7 @@ def test_plan_yes_approves_current_block_only(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or next(answers)),
+        lambda prompt: prompts.append(prompt) or next(answers),
     )
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
@@ -187,7 +187,7 @@ def test_plan_all_approves_current_and_future_blocks(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'a'),
+        lambda prompt: prompts.append(prompt) or 'a',
     )
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
@@ -231,7 +231,7 @@ def test_plan_show_full_commands_then_reprompts(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or next(answers)),
+        lambda prompt: prompts.append(prompt) or next(answers),
     )
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
     monkeypatch.setattr(
@@ -242,7 +242,7 @@ def test_plan_show_full_commands_then_reprompts(
     mgr = CommandManager.current()
     with PlanScope(mgr, 'Write cloud-init'):
         mgr.submit(
-            ['bash', '-lc', "cat > /tmp/user-data <<'EOF'\nhello\nEOF"],
+            ['bash', '-c', "cat > /tmp/user-data <<'EOF'\nhello\nEOF"],
             sudo=True,
             role='modify',
             summary='Write cloud-init user-data',
@@ -254,7 +254,7 @@ def test_plan_show_full_commands_then_reprompts(
     ]
     joined = '\n'.join(messages)
     assert 'Full commands for step: Write cloud-init' in joined
-    assert "sudo bash -lc 'cat > /tmp/user-data <<'\"'\"'EOF'" in joined
+    assert "sudo bash -c 'cat > /tmp/user-data <<'\"'\"'EOF'" in joined
 
 
 def test_manager_run_uses_submit_execution_path(
@@ -272,7 +272,7 @@ def test_manager_run_uses_submit_execution_path(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
 
     mgr.run(['virsh', 'dominfo', 'vm'], sudo=True, check=True, capture=True)
@@ -321,7 +321,7 @@ def test_confirm_sudo_scope_autoauthenticates_read_auth_with_autoapprove(
     monkeypatch.setattr(
         builtins,
         'input',
-        lambda prompt: (prompts.append(prompt) or 'y'),
+        lambda prompt: prompts.append(prompt) or 'y',
     )
     monkeypatch.setattr('aivm.commands.log.opt', lambda **kwargs: _FakeLog())
     monkeypatch.setattr('aivm.commands.subprocess.run', fake_run)
@@ -502,7 +502,7 @@ def test_read_only_command_stays_read_inside_modify_intent(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: False)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
 
     mgr = CommandManager.current()

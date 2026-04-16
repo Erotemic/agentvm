@@ -38,6 +38,7 @@ class AttachmentEntry:
     access: str = 'rw'
     guest_dst: str = ''
     tag: str = ''
+    host_lexical_path: str = ''
 
 
 @dataclass
@@ -54,6 +55,21 @@ class Store:
 def _appdir(appname: str, kind: str) -> Path:
     p = ub.Path.appdir(appname, type=kind).ensuredir()
     return Path(p)
+
+
+def app_data_dir() -> Path:
+    """User-writable application data directory for operational artifacts."""
+    return _appdir('aivm', 'data')
+
+
+def app_data_path(*parts: str) -> Path:
+    """Return a path under the user-owned aivm data directory."""
+    return app_data_dir().joinpath(*parts)
+
+
+def persistent_host_state_dir(vm_name: str) -> Path:
+    """User-owned host-side sync state for persistent attachments."""
+    return app_data_path(vm_name, 'state')
 
 
 def store_path() -> Path:
@@ -108,6 +124,9 @@ def _emit_toml_kv(lines: list[str], key: str, val: object) -> None:
 
 
 def load_store(path: Path | None = None) -> Store:
+    # FIXME: This is called very often and touches the disk.
+    # we likely can do something more elegant hewhere a store is loaded once
+    # (with a real architectural change, not just a functools.cache patch)
     log.trace(f'Start load store {path}')
     fpath = path or store_path()
     if not fpath.exists():
@@ -179,6 +198,9 @@ def load_store(path: Path | None = None) -> Store:
                 access=str(item.get('access', 'rw') or 'rw'),
                 guest_dst=str(item.get('guest_dst', '')).strip(),
                 tag=str(item.get('tag', '')).strip(),
+                host_lexical_path=str(
+                    item.get('host_lexical_path', '')
+                ).strip(),
             )
         )
     log.trace('Finish load store')
@@ -201,6 +223,11 @@ def save_store(
         bool(reg.behavior.auto_approve_readonly_sudo),
     )
     _emit_toml_kv(lines, 'verbose', int(reg.behavior.verbose))
+    _emit_toml_kv(
+        lines,
+        'mirror_shared_home_folders',
+        bool(reg.behavior.mirror_shared_home_folders),
+    )
     lines.append('')
 
     if reg.defaults is not None:
@@ -267,6 +294,10 @@ def save_store(
         lines.append(f'access = "{_toml_escape(att.access)}"')
         lines.append(f'guest_dst = "{_toml_escape(att.guest_dst)}"')
         lines.append(f'tag = "{_toml_escape(att.tag)}"')
+        if att.host_lexical_path:
+            lines.append(
+                f'host_lexical_path = "{_toml_escape(att.host_lexical_path)}"'
+            )
         lines.append('')
 
     log.info('Writing config store to {}', fpath)
@@ -397,6 +428,7 @@ def upsert_attachment(
     access: str = 'rw',
     guest_dst: str = '',
     tag: str = '',
+    host_lexical_path: str = '',
     force: bool = False,
 ) -> None:
     del force
@@ -413,6 +445,7 @@ def upsert_attachment(
         access=access,
         guest_dst=guest_dst,
         tag=tag,
+        host_lexical_path=host_lexical_path,
     )
     if existing:
         i = reg.attachments.index(existing[0])

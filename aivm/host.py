@@ -21,6 +21,7 @@ REQUIRED_CMDS = [
     'virt-install',
     'qemu-img',
     'cloud-localds',
+    'dnsmasq',
     'curl',
     'ip',
     'ssh',
@@ -49,7 +50,7 @@ def check_commands_with_sudo() -> tuple[list[str], str | None]:
     for cmd in REQUIRED_CMDS:
         # Match sudo's effective PATH and shell command lookup behavior.
         probe = mgr.run(
-            ['sudo', '-n', 'sh', '-lc', f'command -v {shlex.quote(cmd)}'],
+            ['sudo', '-n', 'sh', '-c', f'command -v {shlex.quote(cmd)}'],
             check=False,
             capture=True,
             text=True,
@@ -80,6 +81,17 @@ def _debian_noninteractive_cmd(*args: str) -> list[str]:
     ]
 
 
+def _debian_apt_install_cmd(*packages: str) -> list[str]:
+    # CI/bootstrap flows should avoid recommended desktop/media packages.
+    return _debian_noninteractive_cmd(
+        'apt-get',
+        'install',
+        '-y',
+        '--no-install-recommends',
+        *packages,
+    )
+
+
 def _is_apt_lock_error(ex: Exception) -> bool:
     if not isinstance(ex, CommandError):
         return False
@@ -107,6 +119,8 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
         # libvirt daemon + client tooling used by almost every host operation.
         'libvirt-daemon-system',
         'libvirt-clients',
+        # libvirt NAT/DHCP networks require dnsmasq at runtime.
+        'dnsmasq-base',
         # `virt-install` and cloud image helpers used to define new VMs.
         'virtinst',
         'cloud-image-utils',
@@ -146,9 +160,7 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
                     summary='Refresh apt package metadata',
                 )
                 mgr.submit(
-                    _debian_noninteractive_cmd(
-                        'apt-get', 'install', '-y', *pkgs
-                    ),
+                    _debian_apt_install_cmd(*pkgs),
                     sudo=True,
                     role='modify',
                     check=True,
@@ -158,9 +170,7 @@ def install_deps_debian(*, assume_yes: bool = True) -> None:
                 # Some distros split virtiofsd into a separate package; install
                 # best-effort so folder sharing can work when available.
                 virtiofsd_install = mgr.submit(
-                    _debian_noninteractive_cmd(
-                        'apt-get', 'install', '-y', 'virtiofsd'
-                    ),
+                    _debian_apt_install_cmd('virtiofsd'),
                     sudo=True,
                     role='modify',
                     check=False,

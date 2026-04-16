@@ -119,7 +119,7 @@ def test_firewall_status_uses_readonly_step(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
+        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or P(),
     )
 
     text = firewall_status(cfg)
@@ -161,7 +161,7 @@ def test_apply_firewall_runs_delete_then_apply(
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 0)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
+        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or P(),
     )
     apply_firewall(cfg, dry_run=False)
     assert calls[0][0][:4] == ['nft', 'delete', 'table', 'inet']

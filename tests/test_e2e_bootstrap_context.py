@@ -194,6 +194,8 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
         # Minimal first-layer bootstrap: install this repo as a tool in the
         # fresh guest, prepare host deps there, then exercise the documented
         # user workflows directly instead of nesting the full e2e suite again.
+        NEEDRESTART_MODE=a
+        export NEEDRESTART_MODE
         DEBIAN_FRONTEND=noninteractive
         export DEBIAN_FRONTEND
         if [ ! -e /dev/kvm ]; then
@@ -215,12 +217,10 @@ def test_e2e_bootstrap_context(tmp_path: Path) -> None:
           done
         }}
         retry sudo apt-get update -y
-        sudo apt-get install -y software-properties-common >/dev/null 2>&1 || true
-        sudo add-apt-repository -y universe >/dev/null 2>&1 || true
-        retry sudo apt-get update -y
-        retry sudo apt-get install -y \\
-          ca-certificates curl \\
-          python3 python3-venv python3-pip
+        retry sudo env DEBIAN_FRONTEND="$DEBIAN_FRONTEND" NEEDRESTART_MODE="$NEEDRESTART_MODE" \
+           apt-get install -y --no-install-recommends \
+           ca-certificates curl \
+           python3 python3-venv python3-pip
         export PATH="$HOME/.local/bin:$PATH"
         if ! command -v uv >/dev/null 2>&1; then
           curl -LsSf https://astral.sh/uv/install.sh | sh

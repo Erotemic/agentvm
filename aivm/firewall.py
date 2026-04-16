@@ -7,6 +7,8 @@ restricted" behavior unless caller config loosens/tightens policy.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping, Sequence
+from typing import TypeAlias, TypeGuard
 
 from loguru import logger
 
@@ -14,7 +16,13 @@ from .commands import CommandManager
 from .config import AgentVMConfig
 from .runtime import virsh_system_cmd
 
+JsonObj: TypeAlias = Mapping[str, object]
+
 log = logger
+
+
+def _is_json_obj(value: object) -> TypeGuard[JsonObj]:
+    return isinstance(value, Mapping)
 
 
 def _normalize_port_list(ports: list[int]) -> list[int]:
@@ -238,6 +246,174 @@ def firewall_status(cfg: AgentVMConfig) -> str:
             )
     result = res.result()
     return result.stdout + (result.stderr or '')
+
+
+def read_firewall_tcp_ports(
+    cfg: AgentVMConfig, *, use_sudo: bool
+) -> tuple[tuple[int, ...] | None, str]:
+    # TODO: this function can be a lot cleaner and server other use-cases
+    # currently only used in drift detection.
+
+    table = cfg.firewall.table
+    bridge = cfg.network.bridge
+
+    res = CommandManager.current().run(
+        ['nft', '--json', 'list', 'table', 'inet', table],
+        sudo=use_sudo,
+        check=False,
+        capture=True,
+    )
+
+    if res.code != 0:
+        raw = (res.stderr or res.stdout or 'nft list table failed').strip()
+        if 'you must be root' in res.stderr or 'not permitted' in res.stderr:
+            return None, raw
+        return None, raw
+
+    import json
+
+    text = res.stdout or ''
+    ports = set()
+    data = json.loads(text)
+
+    def _expr_is_iifname_match(expr: object, want_ifname: str) -> bool:
+        if not _is_json_obj(expr):
+            return False
+
+        match = expr.get('match')
+        if not _is_json_obj(match):
+            return False
+
+        op = match.get('op')
+        left = match.get('left')
+        right = match.get('right')
+
+        if op != '==':
+            return False
+        if left != {'meta': {'key': 'iifname'}}:
+            return False
+        return right == want_ifname
+
+    def _extract_tcp_dports(expr: object) -> tuple[int, ...]:
+        """
+        Handles forms like:
+            {"match": {"left": {"payload": {...}}, "op": "==", "right": 22}}
+            {"match": {"left": {"payload": {...}}, "op": "==", "right": {"set": [22, 80]}}}
+        """
+        if not _is_json_obj(expr):
+            return ()
+
+        match = expr.get('match')
+        if not _is_json_obj(match):
+            return ()
+
+        left = match.get('left')
+        if not _is_json_obj(left):
+            return ()
+
+        payload = left.get('payload')
+        if not _is_json_obj(payload):
+            return ()
+
+        if payload.get('protocol') != 'tcp' or payload.get('field') != 'dport':
+            return ()
+
+        right = match.get('right')
+        vals: list[int] = []
+
+        if isinstance(right, int):
+            vals.append(right)
+        elif isinstance(right, str) and right.isdigit():
+            vals.append(int(right))
+        elif _is_json_obj(right):
+            set_items = right.get('set')
+            if isinstance(set_items, list):
+                for item in set_items:
+                    if isinstance(item, int):
+                        vals.append(item)
+                    elif isinstance(item, str) and item.isdigit():
+                        vals.append(int(item))
+
+        return tuple(sorted(set(vals)))
+
+    def _rule_has_ip_daddr_constraint(exprs: Sequence[object]) -> bool:
+        """
+        Reject rules with any explicit ip daddr match, because those are
+        infrastructure/special-case rules (e.g. gateway DNS), not the user
+        allow_tcp_ports rule we want.
+        """
+        for expr in exprs:
+            if not _is_json_obj(expr):
+                continue
+
+            match = expr.get('match')
+            if not _is_json_obj(match):
+                continue
+
+            left = match.get('left')
+            if not _is_json_obj(left):
+                continue
+
+            payload = left.get('payload')
+            if not _is_json_obj(payload):
+                continue
+
+            if (
+                payload.get('protocol') == 'ip'
+                and payload.get('field') == 'daddr'
+            ):
+                return True
+        return False
+
+    ports = set()
+
+    for item in data.get('nftables', []):
+        if not _is_json_obj(item):
+            continue
+
+        rule = item.get('rule')
+        if not _is_json_obj(rule):
+            continue
+
+        if rule.get('family') != 'inet' or rule.get('table') != table:
+            continue
+
+        exprs = rule.get('expr')
+        if not isinstance(exprs, list) or not exprs:
+            continue
+
+        # Only consider rules bound to the VM bridge.
+        if not any(_expr_is_iifname_match(expr, bridge) for expr in exprs):
+            continue
+
+        # Exclude gateway/service-specific rules like tcp dport 53 to gateway.
+        if _rule_has_ip_daddr_constraint(exprs):
+            continue
+
+        # Find a plain tcp dport match in the rule.
+        rule_ports: tuple[int, ...] = ()
+        for expr in exprs:
+            extracted = _extract_tcp_dports(expr)
+            if extracted:
+                rule_ports = extracted
+                break
+
+        if not rule_ports:
+            continue
+
+        # Require terminal verdict accept.
+        has_accept = any(
+            _is_json_obj(expr)
+            and 'accept' in expr
+            and expr.get('accept') is None
+            for expr in exprs
+        )
+        if not has_accept:
+            continue
+
+        ports.update(rule_ports)
+
+    return tuple(sorted(ports)), ''
 
 
 def remove_firewall(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:

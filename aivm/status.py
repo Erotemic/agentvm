@@ -396,7 +396,7 @@ def anticipated_status_sudo_commands(
         cmds.extend(
             [
                 list(virsh_system_cmd('net-dumpxml', cfg.network.name)),
-                ['bash', '-lc', f'ls -lh {base_img} 2>&1'],
+                ['bash', '-c', f'ls -lh {base_img} 2>&1'],
                 list(virsh_system_cmd('domiflist', cfg.vm.name)),
                 list(virsh_system_cmd('domifaddr', cfg.vm.name)),
                 list(virsh_system_cmd('net-dhcp-leases', cfg.network.name)),
@@ -554,6 +554,9 @@ def render_status(
         drift = saved_vm_drift_report(cfg, reg, use_sudo=use_sudo)
         if drift.available:
             if drift.ok is True:
+                # TODO: if we don't have sudo or we can only do a partial
+                # check, we should inform the user about that here. (e.g.
+                # firewall drift)
                 lines.append(status_line(True, 'Config drift', 'in sync'))
             else:
                 # drift.ok is False here (drift detected)
@@ -703,7 +706,7 @@ def render_status(
 
         lines.append('Image')
         img_stat = mgr.run(
-            ['bash', '-lc', f'ls -lh {base_img} 2>&1'],
+            ['bash', '-c', f'ls -lh {base_img} 2>&1'],
             sudo=use_sudo,
             check=False,
             capture=True,

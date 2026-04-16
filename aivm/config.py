@@ -39,6 +39,7 @@ class FirewallConfig:
     enabled: bool = True
     table: str = 'aivm_sandbox'
     block_cidrs: list[str] = field(
+        # TODO: document why these are the defaults
         default_factory=lambda: [
             '0.0.0.0/8',
             '10.0.0.0/8',
@@ -124,6 +125,7 @@ class BehaviorConfig:
     yes_sudo: bool = False
     auto_approve_readonly_sudo: bool = True
     verbose: int = 1
+    mirror_shared_home_folders: bool = False
 
 
 @dataclass

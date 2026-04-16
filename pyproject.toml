@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aivm"
-version = "0.4.0"
+version = "0.4.1"
 description = "Local libvirt/KVM sandbox VM manager for coding agents (Ubuntu 24.04 cloud-image, SSH, optional virtiofs share, optional nftables isolation)."
 readme = "README.rst"
 requires-python = ">=3.11"
@@ -118,6 +118,7 @@ line-ending = "auto"
 docstring-code-format = false
 
 [tool.ty.rules]
+unresolved-import = "ignore"
 unused-ignore-comment = "ignore"
 unused-type-ignore-comment = "ignore"
 

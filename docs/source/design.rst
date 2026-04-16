@@ -47,6 +47,8 @@ Reconciliation model
   compound side effects.
 * Runtime-sensitive operations should prefer live inspection over stale
   assumptions.
+* Shared-root evolution should favor stable host-side staging plus persisted
+  guest-visible attachment declarations over repeated teardown/rebuild churn.
 
 
 Safety and Trust Boundaries
@@ -194,11 +196,9 @@ Consequences:
   preserving explicit visibility into the exact commands included in the
   approved step.
 Follow-ups:
-  Older ``util.run_cmd`` call sites may continue to work through a compatibility
-  shim during migration, but new code should prefer explicit plans/intents over
-  ambient sudo intent. The shared-root attach/reconcile path used by
-  ``aivm ssh .`` / ``aivm code .`` is now migrated; some older flows still use
-  the compatibility seam while migration continues.
+  All command execution now goes through ``CommandManager``. The legacy
+  ``util.run_cmd`` helper and ambient sudo-intent mechanism have been removed.
+  New code should use explicit plans/intents for all subprocess work.
 
 Intent stack semantics
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -229,18 +229,17 @@ Plan and approval semantics
 * Once a plan is approved, legacy per-command sudo prompting must not fire for
   commands inside that approved plan.
 
-Migration expectations
-~~~~~~~~~~~~~~~~~~~~~~
+Design constraints
+~~~~~~~~~~~~~~~~~~
 
-* ``aivm.util.run_cmd`` remains a compatibility seam during migration.
-* New or refactored workflow code should submit commands through
-  ``CommandManager`` and use explicit ``IntentScope`` / ``PlanScope`` blocks.
-* Legacy ambient sudo-intent helpers may exist temporarily, but they are not
-  the target API shape.
+* All workflow code should submit commands through ``CommandManager`` and use
+  explicit ``IntentScope`` / ``PlanScope`` blocks.
 * Shared-root host preparation must preserve the ownership and permissions of
   the user's source tree; qemu/libvirt-access preparation should be limited to
   aivm-managed internal directories rather than applied recursively through
   bind-mounted exports.
+* New attachment backends should preserve the single shared-root virtiofs
+  export model when they only need different replay / reconcile semantics.
 
 State management
 ~~~~~~~~~~~~~~~~

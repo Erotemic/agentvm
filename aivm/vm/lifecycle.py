@@ -20,6 +20,12 @@ from ..config import (
     SUPPORTED_IMAGE_SHA256,
     AgentVMConfig,
 )
+from ..persistent_replay import (
+    PERSISTENT_ATTACHMENT_REPLAY_BIN,
+    PERSISTENT_ATTACHMENT_REPLAY_SERVICE,
+    persistent_replay_python,
+    persistent_replay_service_unit,
+)
 from ..runtime import require_ssh_identity, ssh_base_args
 from ..util import CmdError, ensure_dir
 
@@ -251,6 +257,61 @@ def _paths(cfg: AgentVMConfig, *, dry_run: bool = False) -> dict[str, Path]:
         'ip_file': state_dir / f'{cfg.vm.name}.ip',
         'known_hosts': state_dir / 'known_hosts',
     }
+
+
+def _cloud_init_instance_id_token_path(cfg: AgentVMConfig) -> Path:
+    return _paths(cfg, dry_run=False)['state_dir'] / 'instance-id-token'
+
+
+def _cloud_init_instance_id(cfg: AgentVMConfig) -> str:
+    token_path = _cloud_init_instance_id_token_path(cfg)
+    token = ''
+    try:
+        token = token_path.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        token = ''
+    if token:
+        return f'{cfg.vm.name}-{token}'
+    return cfg.vm.name
+
+
+def refresh_cloud_init_seed_for_next_boot(
+    cfg: AgentVMConfig,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Force the next boot to see refreshed NoCloud instance metadata.
+
+    This is used for stopped-VM persistent-attachment setup where we need the
+    guest to replay cloud-init write_files/runcmd on the next boot so helper
+    installation is guaranteed before boot-time persistent attachment replay.
+    """
+    token_path = _cloud_init_instance_id_token_path(cfg)
+    if dry_run:
+        log.info(
+            'DRYRUN: would bump cloud-init instance-id token at {} and rebuild seed ISO',
+            token_path,
+        )
+        return
+    mgr = CommandManager.current()
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        current = int(token_path.read_text(encoding='utf-8').strip() or '0')
+    except Exception:
+        current = 0
+    next_token = str(current + 1)
+    with mgr.intent(
+        'Refresh cloud-init seed for next boot',
+        why='Ensure the next boot reruns cloud-init helper installation for persistent attachments on an existing stopped VM.',
+        role='modify',
+    ):
+        with mgr.step(
+            'Bump cloud-init instance-id token',
+            why='Change the NoCloud instance-id so the next boot replays the updated cloud-init write_files/runcmd payload.',
+            approval_scope=f'cloud-init-refresh:{cfg.vm.name}',
+        ):
+            token_path.write_text(next_token + '\n', encoding='utf-8')
+        _write_cloud_init(cfg, dry_run=False)
 
 
 def _resolve_expected_image_sha256(*, image_url: str) -> tuple[str | None, str]:
@@ -671,7 +732,7 @@ def _write_cloud_init(
         # cloud-localds already seeds NoCloud; repeating datasource keys in the
         # user-data blob only triggers cloud-init schema warnings.
         bootcmd:
-          - [bash, -lc, "systemctl mask systemd-networkd-wait-online.service NetworkManager-wait-online.service || true"]
+          - [bash, -c, "systemctl mask systemd-networkd-wait-online.service NetworkManager-wait-online.service || true"]
 
         package_update: true
         packages:
@@ -679,6 +740,7 @@ def _write_cloud_init(
           - ca-certificates
           - curl
           - git
+          - rsync
           - python3
           - python3-venv
           - python3-pip
@@ -694,9 +756,19 @@ def _write_cloud_init(
               X11Forwarding no
               AllowTcpForwarding yes
               GatewayPorts no
+          - path: {PERSISTENT_ATTACHMENT_REPLAY_BIN}
+            permissions: "0755"
+            content: |
+{textwrap.indent(persistent_replay_python().rstrip(), '              ')}
+          - path: /etc/systemd/system/{PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
+            permissions: "0644"
+            content: |
+{textwrap.indent(persistent_replay_service_unit().rstrip(), '              ')}
 
         runcmd:
           - systemctl mask --now systemd-networkd-wait-online.service NetworkManager-wait-online.service || true
+          - systemctl daemon-reload
+          - systemctl enable {PERSISTENT_ATTACHMENT_REPLAY_SERVICE}
           - systemctl enable --now ssh
           - systemctl enable --now unattended-upgrades || true
         """
@@ -704,7 +776,7 @@ def _write_cloud_init(
 
     meta = textwrap.dedent(
         f"""\
-        instance-id: {cfg.vm.name}
+        instance-id: {_cloud_init_instance_id(cfg)}
         local-hostname: {cfg.vm.name}
         """
     )
@@ -764,7 +836,7 @@ def _write_cloud_init(
                 summary='Create cloud-init artifact directory',
             )
             mgr.submit(
-                ['bash', '-lc', f"cat > {user_data} <<'EOF'\n{cloud}\nEOF"],
+                ['bash', '-c', f"cat > {user_data} <<'EOF'\n{cloud}\nEOF"],
                 sudo=True,
                 role='modify',
                 check=True,
@@ -772,7 +844,7 @@ def _write_cloud_init(
                 summary='Write cloud-init user-data',
             )
             mgr.submit(
-                ['bash', '-lc', f"cat > {meta_data} <<'EOF'\n{meta}\nEOF"],
+                ['bash', '-c', f"cat > {meta_data} <<'EOF'\n{meta}\nEOF"],
                 sudo=True,
                 role='modify',
                 check=True,
@@ -782,7 +854,7 @@ def _write_cloud_init(
             mgr.submit(
                 [
                     'bash',
-                    '-lc',
+                    '-c',
                     f"cat > {network_config} <<'EOF'\n{netcfg}\nEOF",
                 ],
                 sudo=True,
@@ -1285,6 +1357,332 @@ def wait_for_ip(
     )
 
 
+def _is_vm_active(state: str) -> bool:
+    """Return True if the libvirt state indicates an active domain.
+
+    Active states include 'running', 'idle', 'paused', 'blocked', 'pmsuspended',
+    and transient states like 'in shutdown' or 'shutting down'. Inactive
+    states include 'shut off', 'crashed'.
+    """
+    state = state.lower().strip()
+    # Active states: running, idle, paused, blocked, pmsuspended, in shutdown, shutting down
+    active_states = [
+        'running',
+        'idle',
+        'paused',
+        'blocked',
+        'pmsuspended',
+        'in shutdown',
+        'shutting down',
+    ]
+    return any(s in state for s in active_states)
+
+
+def _get_vm_state(name: str) -> tuple[int, str, str]:
+    """Get the current state of a VM.
+
+    Returns a tuple of (return_code, state_string, error_string).
+    The state and error strings are lowercased and stripped.
+    On success, state contains the VM state and error is empty.
+    On failure, state is empty and error contains the error message.
+    """
+    mgr = CommandManager.current()
+    res = mgr.run(
+        ['virsh', 'domstate', name],
+        sudo=True,
+        role='read',
+        check=False,
+        capture=True,
+        summary=f'Get state of VM {name}',
+    )
+    state = (res.stdout or '').strip().lower()
+    error = (res.stderr or '').strip().lower()
+    return (res.code, state, error)
+
+
+def _wait_for_vm_state(
+    name: str,
+    target_state: str,
+    *,
+    timeout_s: int = 120,
+    poll_interval_s: int = 2,
+) -> None:
+    """Wait for a VM to reach a target state.
+
+    Polls the VM state until it matches ``target_state`` or the timeout
+    expires. Raises ``RuntimeError`` if the timeout is reached before
+    the target state is observed, or if the domstate command fails.
+    """
+    import time
+
+    elapsed = 0
+    last_state = ''
+    last_error = ''
+    while elapsed < timeout_s:
+        code, state, error = _get_vm_state(name)
+        if code != 0:
+            # Command failed - this is an error, not just a state change
+            last_error = error
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). '
+                f'Error: {last_error}'
+            )
+        if target_state in state:
+            return
+        time.sleep(poll_interval_s)
+        elapsed += poll_interval_s
+        last_state = state
+    raise RuntimeError(
+        f'Timeout waiting for VM {name} to reach state {target_state!r} '
+        f'(current state: {last_state!r}) after {timeout_s}s.'
+    )
+
+
+def _wait_for_vm_not_state(
+    name: str,
+    exclude_state: str,
+    *,
+    timeout_s: int = 10,
+    poll_interval_s: int = 1,
+) -> None:
+    """Wait for a VM to leave a specific state.
+
+    Polls the VM state until it no longer matches ``exclude_state`` or the
+    timeout expires. Raises ``RuntimeError`` if the timeout is reached or
+    if the domstate command fails.
+    This is useful for waiting for a VM to transition out of a suspended state.
+    """
+    import time
+
+    elapsed = 0
+    last_state = ''
+    last_error = ''
+    while elapsed < timeout_s:
+        code, state, error = _get_vm_state(name)
+        if code != 0:
+            # Command failed - this is an error, not a state change
+            last_error = error
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). '
+                f'Error: {last_error}'
+            )
+        if exclude_state not in state:
+            return
+        time.sleep(poll_interval_s)
+        elapsed += poll_interval_s
+        last_state = state
+    raise RuntimeError(
+        f'Timeout waiting for VM {name} to leave state {exclude_state!r} '
+        f'(still in state: {last_state!r}) after {timeout_s}s.'
+    )
+
+
+def shutdown_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
+    """Gracefully shut down the VM using ACPI shutdown signal.
+
+    This sends a graceful shutdown signal to the guest OS. If the guest
+    does not shut down within a reasonable time, callers may need to use
+    ``destroy_vm`` for a forced shutdown.
+    """
+    name = cfg.vm.name
+    if dry_run:
+        log.info('DRYRUN: virsh shutdown {}', name)
+        return
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Shut down VM {name}',
+        why='Gracefully stop the VM by sending an ACPI shutdown signal to the guest OS.',
+        role='modify',
+    ):
+        # First check if VM is active
+        code, state, error = _get_vm_state(name)
+        if code != 0:
+            msg = error or 'unknown error'
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). Error: {msg}'
+            )
+        if not _is_vm_active(state):
+            log.info(
+                'VM {} is not active (state={}); nothing to do.', name, state
+            )
+            return
+
+        # Handle pmsuspended specially - resume first since ACPI shutdown
+        # requires the guest to be running to receive the signal
+        if 'pmsuspended' in state:
+            log.info('VM {} is pmsuspended; resuming first', name)
+            res = mgr.run(
+                ['virsh', 'resume', name],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary='Resume pmsuspended VM',
+            )
+            if res.code != 0:
+                msg = (res.stderr or res.stdout or '').strip()
+                raise RuntimeError(f'Failed to resume VM {name}.\n{msg}')
+            # Wait for VM to transition out of pmsuspended
+            _wait_for_vm_not_state(
+                name, 'pmsuspended', timeout_s=10, poll_interval_s=1
+            )
+            # Re-check state after resume to ensure VM is in a valid state for shutdown
+            code, state, error = _get_vm_state(name)
+            if code != 0:
+                msg = error or 'unknown error'
+                raise RuntimeError(
+                    f'Failed to get state for VM {name} after resume (code={code}). '
+                    f'Error: {msg}'
+                )
+            if not _is_vm_active(state):
+                log.info(
+                    'VM {} transitioned to inactive state {} after resume; nothing to do.',
+                    name,
+                    state,
+                )
+                return
+            log.info('VM {} resumed (state={})', name, state)
+
+        # Send ACPI shutdown signal
+        res = mgr.run(
+            ['virsh', 'shutdown', name],
+            sudo=True,
+            role='modify',
+            check=False,
+            capture=True,
+            summary=f'Send ACPI shutdown signal to VM {name}',
+        )
+        if res.code != 0:
+            msg = (res.stderr or res.stdout or '').strip()
+            raise RuntimeError(
+                f'Failed to send shutdown signal to VM {name}.\n{msg}'
+            )
+        log.info('Shutdown signal sent to VM {}', name)
+
+
+def restart_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
+    """Gracefully restart the VM (shutdown then start).
+
+    This sends a graceful shutdown signal to the guest OS, waits for it to
+    stop, and then starts the VM again. If the guest does not shut down
+    within a reasonable time, this may need to be followed by a forced
+    restart using ``destroy_vm`` and ``create_or_start_vm``.
+
+    This operation requires the VM to already exist; it will not create
+    a new VM.
+    """
+    name = cfg.vm.name
+    if dry_run:
+        log.info('DRYRUN: restart VM {}', name)
+        return
+
+    # Verify the VM exists before attempting restart
+    if not _vm_defined(name):
+        raise RuntimeError(
+            f'VM {name!r} does not exist. Restart requires an existing VM; '
+            f'use `aivm vm up` to create and start it.'
+        )
+
+    mgr = CommandManager.current()
+    with mgr.intent(
+        f'Restart VM {name}',
+        why='Gracefully stop and then start the VM to apply changes or recover from transient issues.',
+        role='modify',
+    ):
+        # First check if VM is active
+        code, state, error = _get_vm_state(name)
+        if code != 0:
+            msg = error or 'unknown error'
+            raise RuntimeError(
+                f'Failed to get state for VM {name} (code={code}). Error: {msg}'
+            )
+
+        if _is_vm_active(state):
+            # Handle pmsuspended specially - resume it first, then shutdown
+            if 'pmsuspended' in state:
+                log.info('VM {} is pmsuspended; resuming first', name)
+                res = mgr.run(
+                    ['virsh', 'resume', name],
+                    sudo=True,
+                    role='modify',
+                    check=False,
+                    capture=True,
+                    summary='Resume pmsuspended VM',
+                )
+                if res.code != 0:
+                    msg = (res.stderr or res.stdout or '').strip()
+                    raise RuntimeError(f'Failed to resume VM {name}.\n{msg}')
+                # Wait for VM to transition out of pmsuspended
+                _wait_for_vm_not_state(
+                    name, 'pmsuspended', timeout_s=10, poll_interval_s=1
+                )
+                # Re-check state after resume to ensure VM is in a valid state for shutdown
+                code, state, error = _get_vm_state(name)
+                if code != 0:
+                    msg = error or 'unknown error'
+                    raise RuntimeError(
+                        f'Failed to get state for VM {name} after resume (code={code}). '
+                        f'Error: {msg}'
+                    )
+                if not _is_vm_active(state):
+                    log.info(
+                        'VM {} transitioned to inactive state {} after resume; starting it.',
+                        name,
+                        state,
+                    )
+                    _start_vm(name)
+                    log.info('VM {} restarted', name)
+                    return
+                log.info('VM {} resumed (state={})', name, state)
+
+            log.info('Sending shutdown signal to VM {} (state={})', name, state)
+            # Send ACPI shutdown signal
+            res = mgr.run(
+                ['virsh', 'shutdown', name],
+                sudo=True,
+                role='modify',
+                check=False,
+                capture=True,
+                summary='Send ACPI shutdown signal to VM',
+            )
+            if res.code != 0:
+                msg = (res.stderr or res.stdout or '').strip()
+                raise RuntimeError(
+                    f'Failed to send shutdown signal to VM {name}.\n{msg}'
+                )
+            # Wait for the VM to actually shut down before starting it again
+            log.info('Waiting for VM {} to shut down...', name)
+            _wait_for_vm_state(
+                name, 'shut off', timeout_s=120, poll_interval_s=2
+            )
+            log.info('VM {} has shut down', name)
+        else:
+            log.info(
+                'VM {} is not active (state={}); starting it.', name, state
+            )
+
+        # Start the VM (use start_vm helper, not create_or_start_vm)
+        log.info('Starting VM {}', name)
+        _start_vm(name)
+        log.info('VM {} restarted', name)
+
+
+def _start_vm(name: str) -> None:
+    """Start a defined VM by name.
+
+    This is a low-level helper that only starts an existing domain;
+    it does not create or recreate the VM.
+    """
+    mgr = CommandManager.current()
+    mgr.run(
+        ['virsh', 'start', name],
+        sudo=True,
+        role='modify',
+        check=True,
+        summary=f'Start VM {name}',
+    )
+
+
 def destroy_vm(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:
     name = cfg.vm.name
     if dry_run:
@@ -1348,6 +1746,33 @@ def ssh_config(cfg: AgentVMConfig) -> str:
 """
 
 
+def _is_ssh_host_key_mismatch(stderr: str) -> bool:
+    text = stderr.lower()
+    patterns = [
+        'remote host identification has changed',
+        'host key verification failed',
+        'offending ',
+        'offending ecdsa key in ',
+        'offending ed25519 key in ',
+        'offending rsa key in ',
+        'it is also possible that a host key has just been changed',
+        'someone could be eavesdropping on you right now',
+    ]
+    return any(pattern in text for pattern in patterns)
+
+
+def _ssh_host_key_mismatch_message(cfg: AgentVMConfig, ip: str) -> str:
+    return textwrap.dedent(
+        f"""
+        SSH host key mismatch while waiting for VM {cfg.vm.name} at {ip}.
+        The VM appears to have booted and obtained an IP, but SSH is failing
+        because the cached host key for this address no longer matches.
+        Try removing the stale key and retrying:
+          ssh-keygen -f ~/.ssh/known_hosts -R {ip}
+        """
+    ).strip()
+
+
 def wait_for_ssh(
     cfg: AgentVMConfig,
     ip: str,
@@ -1366,6 +1791,7 @@ def wait_for_ssh(
     # CPU. Keep each probe bounded, but allow enough time for a real login
     # handshake to finish before declaring the guest unreachable.
     probe_timeout_s = 30
+    last_stderr = ''
     while time.time() < deadline:
         cmd = [
             'ssh',
@@ -1388,8 +1814,12 @@ def wait_for_ssh(
         if res.code == 0:
             log.info('SSH is ready on {}', ip)
             return
+        last_stderr = (res.stderr or '').strip()
+        if _is_ssh_host_key_mismatch(last_stderr):
+            raise RuntimeError(_ssh_host_key_mismatch_message(cfg, ip))
         time.sleep(2)
-    raise TimeoutError(f'Timed out waiting for SSH on {ip}:22')
+    detail = f' Last SSH error: {last_stderr}' if last_stderr else ''
+    raise TimeoutError(f'Timed out waiting for SSH on {ip}:22.{detail}')
 
 
 def provision(cfg: AgentVMConfig, *, dry_run: bool = False) -> None:

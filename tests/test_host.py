@@ -107,7 +107,7 @@ def test_install_deps_debian_behaviors(
     monkeypatch.setattr('aivm.commands.sys.stdin.isatty', lambda: True)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append((cmd, kwargs)) or P()),
+        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or P(),
     )
     install_deps_debian()
     assert calls[0][0][:5] == [

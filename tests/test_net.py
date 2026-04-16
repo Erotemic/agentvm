@@ -73,7 +73,7 @@ def test_ensure_network_existing_not_recreate(
     monkeypatch.setattr('aivm.commands.os.geteuid', lambda: 0)
     monkeypatch.setattr(
         'aivm.commands.subprocess.run',
-        lambda cmd, **kwargs: (calls.append(cmd) or P()),
+        lambda cmd, **kwargs: calls.append(cmd) or P(),
     )
     ensure_network(cfg, recreate=False, dry_run=False)
     assert calls == [['virsh', 'net-info', cfg.network.name]]

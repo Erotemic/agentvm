@@ -32,11 +32,13 @@ class AttachmentMode(StrEnum):
     These modes determine how host directories are shared with the VM:
     - SHARED: Direct virtiofs mount of the host directory
     - SHARED_ROOT: VM-specific bind mount via shared-root directory
+    - PERSISTENT: Persistent staged attachments replayed in-guest
     - GIT: Git clone of the host repo into the guest
     """
 
     SHARED = 'shared'
     SHARED_ROOT = 'shared-root'
+    PERSISTENT = 'persistent'
     GIT = 'git'
 
 
@@ -74,24 +76,29 @@ class ResolvedAttachment:
 def _auto_share_tag_for_path(host_src: Path, existing_tags: set[str]) -> str:
     """Generate a unique tag for a host path that doesn't conflict with existing tags.
 
+    Tags always include a short hash of the resolved host path to avoid
+    collisions between directories with the same basename.
+
     This is used for tag alignment when attaching shares to avoid virtiofs conflicts.
     """
     max_len = 36
     raw = re.sub(r'[^A-Za-z0-9_.-]+', '-', host_src.name or 'hostcode').strip(
         '-'
     )
-    base = f'hostcode-{raw}' if raw else 'hostcode'
-    base = base[:max_len]
-    if base not in existing_tags:
-        return base
-    suffix = hashlib.sha1(str(host_src).encode('utf-8')).hexdigest()[:8]
-    tag = f'{base[: max_len - 1 - len(suffix)]}-{suffix}'
+    base_name = f'hostcode-{raw}' if raw else 'hostcode'
+    # Always include a stable hash of the resolved path to avoid basename collisions
+    suffix = hashlib.sha1(str(host_src.resolve()).encode('utf-8')).hexdigest()[
+        :8
+    ]
+    # Build: hostcode-<name>-<hash>, truncating the name part to fit max_len
+    name_part = base_name[: max_len - 1 - len(suffix)]
+    tag = f'{name_part}-{suffix}'
     if tag not in existing_tags:
         return tag
     idx = 2
     while True:
         tail = f'-{suffix[:5]}-{idx}'
-        cand = f'{base[: max_len - len(tail)]}{tail}'
+        cand = f'{base_name[: max_len - len(tail)]}{tail}'
         if cand not in existing_tags:
             return cand
         idx += 1

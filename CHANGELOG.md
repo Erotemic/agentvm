@@ -2,7 +2,18 @@
 We [keep a changelog](https://keepachangelog.com/en/1.0.0/).
 We aim to adhere to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Version 0.4.0] - Unreleased
+## Version 0.4.1 - Unreleased
+
+### Changed
+* Attaching directories now has mirrors that resolve to exact path matches on the guest and paths relative to root.
+* Added an opt-in `persistent` attachment mode that uses its own `persistent-root` virtiofs export, persists desired guest-visible bind mounts as declarations, and replays them from a guest systemd helper instead of reconstructing every attachment on each `aivm code .` / `aivm ssh .` run.
+
+### Fixed
+* Attaching directories now uses consistent guest locations between different attach modes 
+* Read-only access is now documented and wired through the new persistent attachment replay path.
+
+
+## [Version 0.4.0] - Released 2026-03-27
 
 ### Added
 - New `CommandManager` module (`aivm/commands.py`) centralizing all subprocess execution with intent-based approval workflows, command plans, and role annotations (read vs modify).
@@ -32,7 +43,7 @@ We aim to adhere to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Fixed auto-approval logic for read-only sudo commands.
 - Various type annotation improvements and test fixes.
 
-## [Version 0.3.0] - Unreleased
+## [Version 0.3.0] - Released 2026-03-27
 
 ### Added
 - Added a Git-backed attachment mode that keeps a guest-local repo instead of creating a writable virtiofs share.
@@ -46,7 +57,7 @@ We aim to adhere to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Git-backed attachments currently seed committed repository state only; uncommitted host worktree changes are not copied into the guest clone.
 - Git-backed attachments currently sync committed branch state; uncommitted host worktree changes are not pushed into the guest repo.
 
-## [Version 0.2.0] - Unreleased
+## [Version 0.2.0] - Released 2026-03-27
 
 ### Added
 - New CLI package and commands: `aivm.cli` with subcommands for `config`, `firewall`, `help`, `host`, `main`, `net`, and `vm`.

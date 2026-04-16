@@ -21,6 +21,7 @@ from pathlib import Path
 
 from ..commands import CommandManager
 from ..config import AgentVMConfig
+from ..firewall import read_firewall_tcp_ports
 from ..runtime import virsh_system_cmd
 from ..store import Store, find_attachments_for_vm
 from .share import (
@@ -31,6 +32,67 @@ from .share import (
     vm_share_mappings,
 )
 
+PERSISTENT_ROOT_VIRTIOFS_TAG = 'aivm-persistent-root'
+
+
+def _normalize_tcp_ports(values) -> tuple[int, ...]:
+    """
+    Normalize configured / observed TCP ports into a sorted deduped tuple[int].
+    """
+    ports = []
+    for v in values or ():
+        try:
+            ports.append(int(v))
+        except Exception:
+            continue
+    return tuple(sorted(set(ports)))
+
+
+def firewall_drift_report(cfg: AgentVMConfig, *, use_sudo: bool) -> DriftReport:
+    """
+    Compare configured allow_tcp_ports against the live nftables state.
+    """
+    actual_ports, error = read_firewall_tcp_ports(cfg, use_sudo=use_sudo)
+    if actual_ports is None:
+        if 'you must be root' in error or 'not permitted' in error:
+            return DriftReport(
+                available=True,
+                summary='Firewall drift not fully checked',
+                diag=(
+                    'Requires sudo to inspect live nftables state; '
+                    'run `aivm status --sudo` for a complete drift report. '
+                    f'Details: {error}'
+                ),
+                items=(),
+            )
+        else:
+            return DriftReport(
+                available=False,
+                summary='Firewall state unavailable',
+                diag=error,
+            )
+
+    expected_ports = _normalize_tcp_ports(cfg.firewall.allow_tcp_ports)
+    if actual_ports == expected_ports:
+        return DriftReport(
+            available=True,
+            summary='Firewall ports match config',
+            items=(),
+        )
+
+    return DriftReport(
+        available=True,
+        summary='Firewall ports differ from config',
+        items=(
+            DriftItem(
+                key='firewall.allow_tcp_ports',
+                expected=expected_ports,
+                actual=actual_ports,
+                reason='Configured allowed TCP ports differ from live nftables rules',
+            ),
+        ),
+    )
+
 
 def _shared_root_host_dir(cfg: AgentVMConfig) -> Path:
     """Get the shared-root host directory for a VM.
@@ -38,6 +100,10 @@ def _shared_root_host_dir(cfg: AgentVMConfig) -> Path:
     Note: This is a simple path computation based on config, not a libvirt query.
     """
     return Path(cfg.paths.base_dir) / cfg.vm.name / 'shared-root'
+
+
+def _persistent_root_host_dir(cfg: AgentVMConfig) -> Path:
+    return Path(cfg.paths.base_dir) / cfg.vm.name / 'persistent-root'
 
 
 @dataclass(frozen=True)
@@ -174,6 +240,8 @@ def expected_mapping_for_attachment(
         return attachment.source_dir, attachment.tag
     if attachment.mode == AttachmentMode.SHARED_ROOT:
         return str(_shared_root_host_dir(cfg)), SHARED_ROOT_VIRTIOFS_TAG
+    if attachment.mode == AttachmentMode.PERSISTENT:
+        return str(_persistent_root_host_dir(cfg)), PERSISTENT_ROOT_VIRTIOFS_TAG
     return None
 
 
@@ -198,6 +266,12 @@ def attachment_has_mapping(
     if att.mode == AttachmentMode.SHARED_ROOT:
         expected_src = str(_shared_root_host_dir(cfg))
         expected_tag = SHARED_ROOT_VIRTIOFS_TAG
+        return any(
+            src == expected_src and tag == expected_tag for src, tag in mappings
+        )
+    if att.mode == AttachmentMode.PERSISTENT:
+        expected_src = str(_persistent_root_host_dir(cfg))
+        expected_tag = PERSISTENT_ROOT_VIRTIOFS_TAG
         return any(
             src == expected_src and tag == expected_tag for src, tag in mappings
         )
@@ -472,6 +546,10 @@ def vm_config_drift_report(
     if not hw_report.available:
         return hw_report
 
+    # TODO: provide a better status message for when we can't detect firewall
+    # drift because we don't have sudo.
+    fw_report = firewall_drift_report(cfg, use_sudo=use_sudo)
+
     # Get share mapping drift
     if expected_mappings is not None:
         # Use provided expected mappings
@@ -485,6 +563,9 @@ def vm_config_drift_report(
 
         items: list[DriftItem] = list(hw_report.items)
 
+        if fw_report.available:
+            items.extend(fw_report.items)
+
         # Use shared helper for two-way set diff
         items.extend(
             _compare_expected_vs_actual_mappings(
@@ -497,6 +578,8 @@ def vm_config_drift_report(
     else:
         # No expected mappings provided, just report hardware
         items = list(hw_report.items)
+        if fw_report.available:
+            items.extend(fw_report.items)
 
     if not items:
         return DriftReport(
@@ -533,7 +616,7 @@ def desired_saved_vm_mappings(
         if mode in ('shared', 'shared-root'):
             if mode == 'shared':
                 # For shared mode, use host_path (the store field) and tag from attachment
-                src = att.host_path 
+                src = att.host_path
                 tag = att.tag
                 if src:  # Only add non-empty sources
                     desired.add((src, tag))
