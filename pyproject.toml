@@ -95,6 +95,8 @@ remote_host = "github.com"
 remote_group = "Erotemic"
 use_setup_py = false
 use_pyproject_requirements = true
+ci_pypi_trusted_publishing = true
+ci_gpg_secret_transport = "direct_ci"
 
 
 [tool.ruff]
